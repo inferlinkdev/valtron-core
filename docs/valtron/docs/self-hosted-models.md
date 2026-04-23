@@ -6,6 +6,10 @@ sidebar_position: 10
 
 Valtron supports self-hosted LLMs through any OpenAI-compatible backend. Self-hosted models use the exact same interface as cloud LLMs and have no inference costs, though you still incur hosting and infrastructure costs (electricity, cloud compute, etc.).
 
+:::note
+These providers (Ollama, vLLM, LM Studio, TGI) communicate via HTTP APIs and require no extra dependencies beyond the standard `pip install valtron-core`. If you want to run a locally-loaded transformer model directly in Python (without a server), see [Transformer Models](./transformer-models) — that requires `pip install "valtron-core[transformers]"`.
+:::
+
 **Benefits:**
 - No inference costs
 - No rate limits

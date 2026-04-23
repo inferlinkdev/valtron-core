@@ -46,7 +46,7 @@ COPY pyproject.toml poetry.lock* ./
 # Install dependencies with cache mount for faster rebuilds
 RUN --mount=type=cache,target=/root/.cache/pypoetry \
     --mount=type=cache,target=/root/.cache/pip \
-    poetry install --no-root --with dev
+    poetry install --no-root --with dev --all-extras
 
 # Copy application code
 COPY . /app

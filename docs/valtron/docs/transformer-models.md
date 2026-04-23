@@ -14,7 +14,11 @@ Valtron can train a local DistilBERT classifier from your evaluation data, then 
 
 - Classification/label mode only. Transformer models do not support `response_format` (structured extraction).
 - Requires labeled training data (the same data you use for evaluation)
-- Training requires `torch`, `transformers`, and `datasets` to be installed
+- Requires the `transformers` extra — install with:
+
+```bash
+pip install "valtron-core[transformers]"
+```
 
 ---
 

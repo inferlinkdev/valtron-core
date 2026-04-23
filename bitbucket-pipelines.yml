@@ -8,7 +8,7 @@ pipelines:
           - pip
         script:
           - pip install poetry
-          - poetry install --with dev
+          - poetry install --with dev --all-extras
           - mkdir -p test-reports
           - poetry run pytest tests/ -v --junitxml=test-reports/report.xml --cov=src/valtron_core --cov-branch --cov-report=term-missing --cov-report=xml:test-reports/coverage.xml --cov-report=html:test-reports/htmlcov
         artifacts:

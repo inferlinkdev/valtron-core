@@ -38,7 +38,11 @@ from valtron_core.recipes.config import (
     STRUCTURED_MANIPULATIONS,
 )
 from valtron_core.runner import EvaluationResult, EvaluationRunner
-from valtron_core.transformer_wrapper import TransformerModelWrapper
+
+try:
+    from valtron_core.transformer_wrapper import TransformerModelWrapper
+except ImportError:
+    TransformerModelWrapper = None  # type: ignore[assignment,misc]
 from valtron_core.utilities.field_config_generator import infer_field_config
 
 logger = structlog.get_logger()

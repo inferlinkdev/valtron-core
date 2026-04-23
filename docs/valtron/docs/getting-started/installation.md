@@ -15,6 +15,18 @@ sidebar_position: 1
 pip install valtron-core
 ```
 
+This installs the core package including reporting, the configuration wizard, and evaluation utilities.
+
+## Optional extras
+
+To train or run inference on local transformer models (DistilBERT, etc.), install the `transformers` extra:
+
+```bash
+pip install "valtron-core[transformers]"
+```
+
+This adds `torch`, `transformers`, `scikit-learn`, and `datasets`. See [Transformer Models](../transformer-models) for details.
+
 ## Configure API keys
 
 Valtron reads credentials from environment variables or a `.env` file in your working directory.
