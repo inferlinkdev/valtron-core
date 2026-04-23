@@ -1,0 +1,555 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Valtron Evaluation Report</title>
+    <style>
+        @page {
+            size: letter;
+            margin: 0.75in;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.5;
+            color: #1a1a1a;
+            font-size: 10pt;
+            background: #ffffff;
+        }
+
+        .header {
+            background: #f8f9fa;
+            padding: 25px 30px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            font-size: 1.8em;
+            font-weight: 700;
+            color: #2563eb;
+            margin: 0;
+        }
+
+        .subtitle {
+            font-size: 1em;
+            color: #6b7280;
+            margin-top: 8px;
+        }
+
+        .timestamp {
+            font-size: 0.85em;
+            color: #9ca3af;
+            margin-top: 5px;
+        }
+
+        .section {
+            background: #ffffff;
+            padding: 20px 25px;
+            margin-bottom: 15px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            page-break-inside: avoid;
+        }
+
+        h2 {
+            color: #2563eb;
+            border-bottom: 1px solid #dee2e6;
+            padding-bottom: 10px;
+            margin-bottom: 15px;
+            font-size: 1.3em;
+            font-weight: 600;
+        }
+
+        h3 {
+            color: #4b5563;
+            margin-top: 15px;
+            margin-bottom: 10px;
+            font-size: 1.1em;
+            font-weight: 600;
+        }
+
+        p {
+            color: #1a1a1a;
+            margin-bottom: 10px;
+        }
+
+        p strong {
+            color: #2563eb;
+        }
+
+        .metrics-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 15px 0;
+            font-size: 9pt;
+        }
+
+        .metrics-table th {
+            background: #f3f4f6;
+            color: #1a1a1a;
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 600;
+            border: 1px solid #dee2e6;
+            text-transform: uppercase;
+            font-size: 0.8em;
+        }
+
+        .metrics-table td {
+            padding: 10px 12px;
+            border: 1px solid #dee2e6;
+            color: #1a1a1a;
+            background: #ffffff;
+        }
+
+        .best-value {
+            color: #2563eb;
+            font-weight: 700;
+            background: #eff6ff;
+        }
+
+        .recommendation {
+            background: #f5f3ff;
+            padding: 20px;
+            border-left: 4px solid #7c3aed;
+            border-radius: 6px;
+            margin: 15px 0;
+            color: #1a1a1a;
+            line-height: 1.6;
+        }
+
+        .chart-container {
+            margin: 20px 0;
+            text-align: center;
+            page-break-inside: avoid;
+        }
+
+        .chart-container h3 {
+            color: #4b5563;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+
+        .chart-container img {
+            max-width: 500px;
+            width: 100%;
+            height: auto;
+            border-radius: 6px;
+            border: 1px solid #dee2e6;
+            display: block;
+            margin: 0 auto;
+        }
+
+        .charts-grid {
+            display: block;
+            margin: 15px 0;
+        }
+
+        .charts-grid .chart-container {
+            margin-bottom: 30px;
+            page-break-inside: avoid;
+        }
+
+        .field-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 10px 0;
+            font-size: 9pt;
+        }
+
+        .field-table th {
+            background: #f3f4f6;
+            color: #1a1a1a;
+            padding: 8px 10px;
+            text-align: left;
+            font-weight: 600;
+            border: 1px solid #dee2e6;
+            text-transform: uppercase;
+            font-size: 0.8em;
+        }
+
+        .field-table td {
+            padding: 8px 10px;
+            border: 1px solid #dee2e6;
+            color: #1a1a1a;
+        }
+
+        .field-scoring-note {
+            font-size: 0.85em;
+            color: #4b5563;
+            font-style: italic;
+            margin: 2px 0 8px;
+        }
+
+        .prompt-box {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 12px;
+            font-family: monospace;
+            font-size: 9pt;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+            margin: 10px 0;
+        }
+
+        .footer {
+            text-align: center;
+            color: #6b7280;
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #dee2e6;
+            font-size: 0.9em;
+        }
+
+        .footer strong {
+            color: #2563eb;
+        }
+
+        .table-note {
+            font-size: 0.8em;
+            color: #6b7280;
+            margin-top: 4px;
+            font-style: italic;
+        }
+
+        .appendix {
+            page-break-before: always;
+        }
+
+        .appendix h2 {
+            color: #2563eb;
+        }
+
+        .appendix-entry {
+            margin-bottom: 16px;
+        }
+
+        .appendix-entry h4 {
+            font-size: 1em;
+            font-weight: 600;
+            color: #1a1a1a;
+            margin-bottom: 3px;
+        }
+
+        .appendix-entry .tech-term {
+            font-size: 0.85em;
+            color: #6b7280;
+            font-weight: normal;
+            margin-left: 4px;
+        }
+
+        .appendix-entry p {
+            color: #374151;
+            margin-bottom: 0;
+            font-size: 0.95em;
+        }
+
+        .appendix-subheading {
+            font-size: 1.05em;
+            font-weight: 600;
+            color: #2563eb;
+            margin: 18px 0 10px;
+            padding-bottom: 4px;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .appendix-note {
+            background: #f8f9fa;
+            border-left: 3px solid #9ca3af;
+            padding: 10px 14px;
+            border-radius: 0 4px 4px 0;
+            font-size: 0.9em;
+            color: #374151;
+            margin-top: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Valtron Evaluation Report</h1>
+        <p class="subtitle">LLM Model Comparison Analysis</p>
+        <p class="timestamp">Generated: {{ timestamp }}</p>
+    </div>
+
+    <div class="section">
+        <h2>Summary</h2>
+        <p><strong>Models Evaluated:</strong> {{ num_models }}</p>
+        <p><strong>Documents Tested:</strong> {{ num_documents }}</p>
+        {% if original_prompt %}
+        <h3>Prompt Template</h3>
+        <div class="prompt-box">{{ original_prompt|e }}</div>
+        {% endif %}
+    </div>
+
+    <div class="section">
+        <h2>Performance Metrics</h2>
+        <table class="metrics-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    <th>Prompt</th>
+                    {% if has_field_metrics and all_field_names|length > 1 %}<th>Performance Rank</th>{% else %}<th>Accuracy</th>{% endif %}
+                    <th>Total Cost</th>
+                    <th>Avg Cost/Doc</th>
+                    <th>Total Time</th>
+                    <th>Avg Time/Doc</th>
+                    {% if has_optimizations %}
+                    <th>Optimizations</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for result in results %}
+                {% if result.metrics %}
+                <tr>
+                    <td>{{ result.model.split('/')[-1] if '/' in result.model else result.model }}</td>
+                    <td>{{ 'Overridden' if model_override_prompts.get(result.model) else 'Base' }}</td>
+                    {% if has_field_metrics and all_field_names|length > 1 %}
+                    {% set rank_info = performance_ranks[result.model] %}
+                    <td class="{{ 'best-value' if rank_info.rank == 1 else '' }}">
+                        #{{ rank_info.rank }}{% if rank_info.delta_pct < 0 %} ({{ "%.2f"|format(rank_info.delta_pct) }}%){% endif %}
+                    </td>
+                    {% elif has_field_metrics and all_field_names|length == 1 %}
+                    {% set _sf = all_field_names[0] %}
+                    {% set _fm = result.metrics.aggregated_field_metrics.get(_sf) if result.metrics and result.metrics.aggregated_field_metrics else none %}
+                    <td class="{{ 'best-value' if _fm and _fm.precision >= field_max_values[_sf].precision else '' }}">
+                        {{ "%.2f"|format(_fm.precision * 100) if _fm else 'N/A' }}%
+                    </td>
+                    {% else %}
+                    <td class="{{ 'best-value' if result.metrics.accuracy == performance_best.best_accuracy else '' }}">
+                        {{ "%.2f"|format(result.metrics.accuracy * 100) }}%
+                    </td>
+                    {% endif %}
+                    {% set _has_custom_cost_rate = result.llm_config and result.llm_config.cost_rate is defined %}
+                    <td class="{{ 'best-value' if result.metrics.total_cost == performance_best.best_total_cost else '' }}">
+                        ${{ "%.1f"|format(result.metrics.total_cost) }}{% if _has_custom_cost_rate %}*{% endif %}
+                    </td>
+                    <td class="{{ 'best-value' if result.metrics.average_cost_per_document == performance_best.best_avg_cost else '' }}">
+                        ${{ "%.1f"|format(result.metrics.average_cost_per_document) }}{% if _has_custom_cost_rate %}*{% endif %}
+                    </td>
+                    <td class="{{ 'best-value' if result.metrics.total_time == performance_best.best_total_time else '' }}">
+                        {{ "%.2f"|format(result.metrics.total_time) }}s
+                    </td>
+                    <td class="{{ 'best-value' if result.metrics.average_time_per_document == performance_best.best_avg_time else '' }}">
+                        {{ "%.3f"|format(result.metrics.average_time_per_document) }}s
+                    </td>
+                    {% if has_optimizations %}
+                    <td>{{ prompt_optimizations.get(result.model, [])|join(', ') or 'None' }}</td>
+                    {% endif %}
+                </tr>
+                {% endif %}
+                {% endfor %}
+            </tbody>
+        </table>
+        <p class="table-note">* See Appendix A for metric definitions.</p>
+        {% for result in results %}
+        {% if result.metrics and result.llm_config and result.llm_config.cost_rate is defined %}
+        <p class="table-note">* Cost for {{ result.model.split('/')[-1] if '/' in result.model else result.model }} was estimated using a custom rate of ${{ "%.2f"|format(result.llm_config.cost_rate) }} per {{ result.llm_config.cost_rate_time_unit | default('1hr') }}.</p>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    {% if has_field_metrics and all_field_names|length > 1 %}
+    <div class="section">
+        <h2>Per-Field Metrics</h2>
+        <p>Detailed accuracy metrics for individual fields in structured outputs.
+           Precision and Recall for each field are determined by its configured scoring function — see Appendix A for how fields are scored.</p>
+        {% for field_name in all_field_names %}
+        <h3>Field: {{ field_name }}</h3>
+        {%- set ns = namespace(seen=[]) %}
+        {%- for fm in field_metrics_data.get(field_name, []) %}
+          {%- if fm.metric_display not in ns.seen %}
+            {%- set ns.seen = ns.seen + [fm.metric_display] %}
+          {%- endif %}
+        {%- endfor %}
+        <p class="field-scoring-note">Scored using: {{ ns.seen | join(' / ') }}</p>
+        {%- set is_agg_field = ns.seen and ns.seen[0].startswith('Aggregated') %}
+        <table class="field-table">
+            <thead>
+                <tr>
+                    <th>Model</th>
+                    {% if is_agg_field %}
+                    <th>Average Precision of Subfields</th>
+                    <th>Average Recall of Subfields</th>
+                    <th>Average F1 Measure of Subfields</th>
+                    {% else %}
+                    <th>Precision</th>
+                    <th>Recall</th>
+                    <th>F1 Score</th>
+                    {% endif %}
+                </tr>
+            </thead>
+            <tbody>
+                {% for fm in field_metrics_data.get(field_name, []) %}
+                <tr>
+                    <td>{{ fm.model.split('/')[-1] if '/' in fm.model else fm.model }}</td>
+                    <td class="{{ 'best-value' if fm.precision == field_max_values[field_name].precision else '' }}">
+                        {{ "%.2f"|format(fm.precision * 100) }}%
+                    </td>
+                    <td class="{{ 'best-value' if fm.recall == field_max_values[field_name].recall else '' }}">
+                        {{ "%.2f"|format(fm.recall * 100) }}%
+                    </td>
+                    <td class="{{ 'best-value' if fm.f1_score == field_max_values[field_name].f1_score else '' }}">
+                        {{ "%.2f"|format(fm.f1_score * 100) }}%
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% endfor %}
+        <p class="table-note">* Precision, Recall, and F1 Score — see Appendix A for definitions.</p>
+    </div>
+    {% endif %}
+
+    {% if recommendation %}
+    <div class="section">
+        <h2>AI-Powered Recommendation</h2>
+        <div class="recommendation">{{ recommendation|e }}</div>
+    </div>
+    {% endif %}
+
+    <div class="section">
+        <h2>Visual Analysis</h2>
+        <div class="charts-grid">
+            {% if (not has_field_metrics or all_field_names|length == 1) and chart_images.get('chart_accuracy') %}
+            <div class="chart-container">
+                <h3>Quality: Accuracy by Model</h3>
+                <img src="data:image/png;base64,{{ chart_images.chart_accuracy }}" alt="Accuracy Chart">
+            </div>
+            {% endif %}
+            {% if chart_images.get('chart_cost') %}
+            <div class="chart-container">
+                <h3>Cost: Total Cost by Model</h3>
+                <img src="data:image/png;base64,{{ chart_images.chart_cost }}" alt="Cost Chart">
+            </div>
+            {% endif %}
+            {% if chart_images.get('chart_time') %}
+            <div class="chart-container">
+                <h3>Speed: Total Time by Model</h3>
+                <img src="data:image/png;base64,{{ chart_images.chart_time }}" alt="Time Chart">
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <div class="section appendix">
+        <h2>Appendix A: Metric Definitions</h2>
+
+        <p class="appendix-subheading">Performance Metrics</p>
+
+        {% if has_field_metrics and all_field_names|length > 1 %}
+        <div class="appendix-entry">
+            <h4>Performance Rank</h4>
+            <p>Models are ranked by their mean per-document score — a continuous 0–100% value that averages
+               each field's score across all documents. Unlike binary accuracy (all-or-nothing per document),
+               this gives partial credit for partially correct results, making it a more sensitive indicator of
+               true model quality. The delta shown in parentheses is the percentage-point gap from the
+               top-scoring model.</p>
+        </div>
+        {% else %}
+        <div class="appendix-entry">
+            <h4>Accuracy</h4>
+            <p>The percentage of documents where the model's output matched the expected output correctly,
+               averaged across all evaluated examples. Higher is better.</p>
+        </div>
+        {% endif %}
+
+        <p class="appendix-subheading">Per-Field Metrics</p>
+
+        <p style="font-size:0.9em;color:#374151;margin-bottom:14px;">
+            These columns appear in the Per-Field Metrics tables. Precision, Recall, and F1 Score
+            are computed using <em>micro</em> aggregation — predictions are pooled across all
+            examples before dividing, so fields with more examples contribute proportionally more.
+            The scoring function used for each field is shown beneath its name in the tables above.
+        </p>
+
+        <div class="appendix-entry">
+            <h4>Precision <span class="tech-term">(micro)</span></h4>
+            <p>Out of everything the model predicted for this field, how much of it was correct,
+               as determined by the field's configured scoring function.
+               For list fields, longer lists have more influence on this number than shorter ones.</p>
+        </div>
+
+        <div class="appendix-entry">
+            <h4>Recall <span class="tech-term">(micro)</span></h4>
+            <p>Out of all the values that were expected for this field, how many did the model get right,
+               as determined by the field's configured scoring function.
+               For list fields, longer lists have more influence on this number than shorter ones.</p>
+        </div>
+
+        <div class="appendix-entry">
+            <h4>F1 Score <span class="tech-term">(micro-F1)</span></h4>
+            <p>A single score that balances Precision and Recall by taking their harmonic mean —
+               a high F1 requires both good precision and good recall.
+               Can differ from Precision and Recall individually when list lengths or sub-field counts vary between examples.</p>
+        </div>
+
+        <p class="appendix-subheading">How Fields Are Scored</p>
+
+        <p style="font-size:0.9em;color:#374151;margin-bottom:14px;">
+            Precision and Recall for each field are determined by its configured scoring function —
+            for example, <strong>exact match</strong>, <strong>fuzzy similarity</strong>, or other comparators.
+            The specific function is shown beneath each field name in the Per-Field Metrics tables.
+        </p>
+
+        <div class="appendix-entry">
+            <h4>When the field holds a single value</h4>
+            <p>The predicted value is compared directly to the expected value using the field's
+               configured scoring function (e.g. Exact Match, Text Similarity, LLM Judge).
+               Precision, Recall, and F1 all agree for standalone value fields.</p>
+        </div>
+
+        <div class="appendix-entry">
+            <h4>When the field holds a list of items</h4>
+            <p>Each predicted item is matched to the closest available expected item (greedy matching),
+               or compared position-by-position (ordered matching). Unmatched expected items count
+               against Recall; unmatched predicted items count against Precision.</p>
+        </div>
+
+        <div class="appendix-entry">
+            <h4>When the field holds an object or dictionary</h4>
+            <p>The weighted average of each sub-field's aggregated Precision, Recall, and F1 is reported —
+               so the object-level figures always match the average of the sub-field values shown.
+               Sub-fields with a higher configured weight contribute more to these averages.</p>
+        </div>
+
+        <div class="appendix-entry">
+            <h4>When a value field is nested inside a list object</h4>
+            <p>Precision and Recall reflect how well the predicted object matched the expected object
+               it was paired with. Extra predicted items that had no matching expected item are penalized
+               at the parent list field level — not at the individual sub-field level.</p>
+        </div>
+    </div>
+
+    <div class="section appendix">
+        <h2>Appendix B: Prompts</h2>
+
+        <div class="appendix-entry">
+            <h4>Base Prompt</h4>
+            <div class="prompt-box">{{ original_prompt | e if original_prompt else 'No base prompt recorded.' }}</div>
+        </div>
+
+        {% for result in results %}
+        {% if model_override_prompts.get(result.model) %}
+        <div class="appendix-entry">
+            <h4>Override Prompt — {{ result.model.split('/')[-1] if '/' in result.model else result.model }}</h4>
+            <div class="prompt-box">{{ model_override_prompts[result.model] | e }}</div>
+        </div>
+        {% endif %}
+        {% endfor %}
+    </div>
+
+    <div class="footer">
+        <p>Generated by <strong>evaltron_core</strong> - LLM Optimization Framework</p>
+    </div>
+</body>
+</html>

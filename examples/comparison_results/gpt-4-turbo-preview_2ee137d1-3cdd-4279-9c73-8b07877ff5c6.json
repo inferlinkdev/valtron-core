@@ -1,0 +1,102 @@
+[
+  {
+    "id": "1",
+    "content": "This product is absolutely amazing! Best purchase I've made all year.",
+    "label": "positive",
+    "predicted_label": "positive",
+    "response_time": 0.36800551414489746,
+    "cost": 0.00059,
+    "is_correct": true,
+    "example_score": 1.0
+  },
+  {
+    "id": "2",
+    "content": "Terrible experience. Would not recommend to anyone.",
+    "label": "negative",
+    "predicted_label": "negative",
+    "response_time": 0.3627955913543701,
+    "cost": 0.00055,
+    "is_correct": true,
+    "example_score": 1.0
+  },
+  {
+    "id": "3",
+    "content": "The item is okay. Nothing special but does the job.",
+    "label": "neutral",
+    "predicted_label": "neutral",
+    "response_time": 0.4979517459869385,
+    "cost": 0.00057,
+    "is_correct": true,
+    "example_score": 1.0
+  },
+  {
+    "id": "4",
+    "content": "I love this! Exceeded all my expectations!",
+    "label": "positive",
+    "predicted_label": "positive",
+    "response_time": 0.3304758071899414,
+    "cost": 0.00055,
+    "is_correct": true,
+    "example_score": 1.0
+  },
+  {
+    "id": "5",
+    "content": "Complete waste of money. Very disappointed.",
+    "label": "negative",
+    "predicted_label": "negative",
+    "response_time": 0.33733606338500977,
+    "cost": 0.00053,
+    "is_correct": true,
+    "example_score": 1.0
+  },
+  {
+    "id": "6",
+    "content": "It's fine. Met my basic requirements.",
+    "label": "neutral",
+    "predicted_label": "neutral",
+    "response_time": 0.31178808212280273,
+    "cost": 0.00054,
+    "is_correct": true,
+    "example_score": 1.0
+  },
+  {
+    "id": "7",
+    "content": "Outstanding quality and great customer service!",
+    "label": "positive",
+    "predicted_label": "positive",
+    "response_time": 0.45557355880737305,
+    "cost": 0.0005200000000000001,
+    "is_correct": true,
+    "example_score": 1.0
+  },
+  {
+    "id": "8",
+    "content": "Broke after two days. Don't buy this.",
+    "label": "negative",
+    "predicted_label": "negative",
+    "response_time": 0.42767953872680664,
+    "cost": 0.0005600000000000001,
+    "is_correct": true,
+    "example_score": 1.0
+  },
+  {
+    "id": "9",
+    "content": "Average product at an average price.",
+    "label": "neutral",
+    "predicted_label": "neutral",
+    "response_time": 0.3146829605102539,
+    "cost": 0.0005200000000000001,
+    "is_correct": true,
+    "example_score": 1.0
+  },
+  {
+    "id": "10",
+    "content": "Highly recommend! This changed my life!",
+    "label": "positive",
+    "predicted_label": "positive",
+    "response_time": 0.3682847023010254,
+    "cost": 0.00053,
+    "is_correct": true,
+    "example_score": 1.0
+  }
+]

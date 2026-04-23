@@ -1,0 +1,167 @@
+[
+  {
+    "id": "all-correct",
+    "description": "All fields match exactly",
+    "predicted": {"name": "John", "city": "NYC", "role": "engineer"},
+    "expected": {"name": "John", "city": "NYC", "role": "engineer"},
+    "expected_scores": {"name": true, "city": true, "role": true}
+  },
+  {
+    "id": "some-wrong",
+    "description": "Some fields correct, some wrong",
+    "predicted": {"name": "John", "city": "Boston", "role": "engineer"},
+    "expected": {"name": "John", "city": "NYC", "role": "engineer"},
+    "expected_scores": {"name": true, "city": false, "role": true}
+  },
+  {
+    "id": "all-wrong",
+    "description": "All fields wrong",
+    "predicted": {"name": "Jane", "city": "Boston", "role": "designer"},
+    "expected": {"name": "John", "city": "NYC", "role": "engineer"},
+    "expected_scores": {"name": false, "city": false, "role": false}
+  },
+  {
+    "id": "missing-key",
+    "description": "Predicted is missing a key",
+    "predicted": {"name": "John"},
+    "expected": {"name": "John", "city": "NYC"},
+    "expected_scores": {"name": true, "city": false}
+  },
+  {
+    "id": "extra-key",
+    "description": "Predicted has extra keys (only expected keys are scored)",
+    "predicted": {"name": "John", "city": "NYC", "age": "30"},
+    "expected": {"name": "John", "city": "NYC"},
+    "expected_scores": {"name": true, "city": true}
+  },
+  {
+    "id": "nested-all-correct",
+    "description": "Nested dict with all fields correct",
+    "predicted": {"person": {"name": "John", "age": "30"}, "city": "NYC"},
+    "expected": {"person": {"name": "John", "age": "30"}, "city": "NYC"},
+    "expected_scores": {"person": {"name": true, "age": true}, "city": true}
+  },
+  {
+    "id": "nested-partial",
+    "description": "Nested dict with partial match",
+    "predicted": {"person": {"name": "John", "age": "25"}, "city": "NYC"},
+    "expected": {"person": {"name": "John", "age": "30"}, "city": "NYC"},
+    "expected_scores": {"person": {"name": true, "age": false}, "city": true}
+  },
+  {
+    "id": "nested-missing",
+    "description": "Predicted missing entire nested dict",
+    "predicted": {"city": "NYC"},
+    "expected": {"person": {"name": "John"}, "city": "NYC"},
+    "expected_scores": {"person": {"name": false}, "city": true}
+  },
+  {
+    "id": "list-match",
+    "description": "List field with matching items",
+    "predicted": {"tags": ["python", "ml", "ai"]},
+    "expected": {"tags": ["python", "ml", "ai"]},
+    "expected_scores": {"tags": [true, true, true]}
+  },
+  {
+    "id": "list-partial",
+    "description": "List field with partial match",
+    "predicted": {"tags": ["python", "java", "ai"]},
+    "expected": {"tags": ["python", "ml", "ai"]},
+    "expected_scores": {"tags": [true, false, true]}
+  },
+  {
+    "id": "list-length-mismatch",
+    "description": "Predicted list shorter than expected",
+    "predicted": {"tags": ["python"]},
+    "expected": {"tags": ["python", "ml", "ai"]},
+    "expected_scores_failure": {"tags": [false, false, false]},
+    "note": "Length mismatch triggers ValueError caught in grade_json, returns failure values"
+  },
+  {
+    "id": "list-with-avg-agg",
+    "description": "List field with avg aggregation",
+    "predicted": {"tags": ["python", "java", "ai"]},
+    "expected": {"tags": ["python", "ml", "ai"]},
+    "aggregation": "avg",
+    "expected_scores": {"tags": 0.6667}
+  },
+  {
+    "id": "type-coercion",
+    "description": "Number values get stringified for comparison",
+    "predicted": {"count": 42, "name": "test"},
+    "expected": {"count": 42, "name": "test"},
+    "expected_scores": {"count": true, "name": true},
+    "note": "Non-string values are cast to str() before comparison"
+  },
+  {
+    "id": "deeply-nested",
+    "description": "Three levels of nesting",
+    "predicted": {
+      "org": {
+        "department": {
+          "team": "alpha",
+          "lead": "John"
+        },
+        "name": "Engineering"
+      }
+    },
+    "expected": {
+      "org": {
+        "department": {
+          "team": "alpha",
+          "lead": "Jane"
+        },
+        "name": "Engineering"
+      }
+    },
+    "expected_scores": {
+      "org": {
+        "department": {
+          "team": true,
+          "lead": false
+        },
+        "name": true
+      }
+    }
+  },
+  {
+    "id": "mixed-types",
+    "description": "Dict with mix of string, list, and nested dict values",
+    "predicted": {
+      "name": "Acme Corp",
+      "locations": ["NYC", "LA"],
+      "info": {"founded": "2020", "sector": "tech"}
+    },
+    "expected": {
+      "name": "Acme Corp",
+      "locations": ["NYC", "SF"],
+      "info": {"founded": "2020", "sector": "finance"}
+    },
+    "expected_scores": {
+      "name": true,
+      "locations": [true, false],
+      "info": {"founded": true, "sector": false}
+    }
+  },
+  {
+    "id": "empty-predicted",
+    "description": "Completely empty predicted dict",
+    "predicted": {},
+    "expected": {"name": "John", "city": "NYC"},
+    "expected_scores": {"name": false, "city": false}
+  },
+  {
+    "id": "string-input",
+    "description": "JSON string inputs instead of dicts",
+    "predicted_str": "{\"name\": \"John\", \"city\": \"NYC\"}",
+    "expected_str": "{\"name\": \"John\", \"city\": \"NYC\"}",
+    "expected_scores": {"name": true, "city": true}
+  },
+  {
+    "id": "list-missing-key",
+    "description": "Missing key where expected value is a list",
+    "predicted": {},
+    "expected": {"items": ["a", "b", "c"]},
+    "expected_scores": {"items": [false, false, false]}
+  }
+]

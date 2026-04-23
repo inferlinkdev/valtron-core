@@ -1,0 +1,238 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;600;800&display=swap');
+
+/* ── Light mode ── */
+:root {
+  --ifm-color-primary: #2563eb;
+  --ifm-color-primary-dark: #1d4ed8;
+  --ifm-color-primary-darker: #1e40af;
+  --ifm-color-primary-darkest: #1e3a8a;
+  --ifm-color-primary-light: #3b82f6;
+  --ifm-color-primary-lighter: #60a5fa;
+  --ifm-color-primary-lightest: #93c5fd;
+
+  --ifm-font-family-base: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  --ifm-font-family-monospace: 'JetBrains Mono', 'Fira Code', Consolas, monospace;
+  --ifm-code-font-size: 90%;
+  --ifm-heading-font-weight: 600;
+  --docusaurus-highlighted-code-line-bg: rgba(37, 99, 235, 0.08);
+}
+
+/* ── Dark mode: match index.html palette ── */
+[data-theme='dark'] {
+  --ifm-color-primary: #3b82f6;
+  --ifm-color-primary-dark: #2563eb;
+  --ifm-color-primary-darker: #1d4ed8;
+  --ifm-color-primary-darkest: #1e40af;
+  --ifm-color-primary-light: #60a5fa;
+  --ifm-color-primary-lighter: #93c5fd;
+  --ifm-color-primary-lightest: #bfdbfe;
+
+  --ifm-background-color: #0a0c10;
+  --ifm-background-surface-color: #12161f;
+
+  --ifm-color-content: #94a3b8;
+  --ifm-color-content-secondary: #64748b;
+  --ifm-heading-color: #f8fafc;
+
+  --ifm-navbar-background-color: transparent;
+  --ifm-navbar-shadow: none;
+
+  --ifm-toc-border-color: #2a313c;
+  --ifm-color-emphasis-300: #2a313c;
+  --ifm-table-border-color: #2a313c;
+  --ifm-hr-border-color: #2a313c;
+
+  --docusaurus-highlighted-code-line-bg: rgba(59, 130, 246, 0.1);
+}
+
+/* ── Global typography ── */
+body {
+  font-family: var(--ifm-font-family-base);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.02em;
+}
+
+/* ── Navbar: glassmorphism ── */
+[data-theme='dark'] .navbar {
+  background: rgba(10, 12, 16, 0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid #2a313c;
+}
+
+.navbar__title {
+  font-family: var(--ifm-font-family-monospace);
+  font-weight: 800;
+  letter-spacing: -0.5px;
+  font-size: 1.05rem;
+}
+
+[data-theme='dark'] .navbar__title {
+  color: #f8fafc;
+}
+
+[data-theme='dark'] .navbar__link {
+  color: #94a3b8;
+}
+
+[data-theme='dark'] .navbar__link:hover,
+[data-theme='dark'] .navbar__link--active {
+  color: #f8fafc;
+}
+
+/* ── Sidebar ── */
+[data-theme='dark'] .theme-doc-sidebar-container {
+  background: #0d1117;
+  border-right: 1px solid #2a313c !important;
+}
+
+[data-theme='dark'] .menu {
+  background: #0d1117;
+}
+
+[data-theme='dark'] .menu__link {
+  color: #94a3b8;
+  border-radius: 6px;
+}
+
+[data-theme='dark'] .menu__link:hover {
+  background: #12161f;
+  color: #f8fafc;
+}
+
+[data-theme='dark'] .menu__link--active {
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+}
+
+[data-theme='dark'] .menu__link--active:hover {
+  background: rgba(59, 130, 246, 0.12);
+}
+
+[data-theme='dark'] .menu__list-item-collapsible:hover {
+  background: #12161f;
+}
+
+/* ── Main content ── */
+[data-theme='dark'] .main-wrapper {
+  background: #0a0c10;
+}
+
+[data-theme='dark'] article {
+  color: #94a3b8;
+}
+
+[data-theme='dark'] article h1,
+[data-theme='dark'] article h2,
+[data-theme='dark'] article h3,
+[data-theme='dark'] article h4 {
+  color: #f8fafc;
+}
+
+/* Horizontal rules */
+[data-theme='dark'] hr {
+  border-color: #2a313c;
+}
+
+/* ── Table of contents ── */
+[data-theme='dark'] .table-of-contents {
+  border-left-color: #2a313c;
+}
+
+[data-theme='dark'] .table-of-contents__link {
+  color: #64748b;
+}
+
+[data-theme='dark'] .table-of-contents__link:hover,
+[data-theme='dark'] .table-of-contents__link--active {
+  color: #3b82f6;
+}
+
+/* ── Inline code ── */
+[data-theme='dark'] :not(pre) > code {
+  background: #12161f;
+  border: 1px solid #2a313c;
+  color: #79c0ff;
+  border-radius: 4px;
+}
+
+/* ── Code blocks: border only — let the Dracula theme control background/colors ── */
+[data-theme='dark'] div[class^='codeBlockContainer'] {
+  border: 1px solid #2a313c;
+}
+
+/* ── Tables ── */
+[data-theme='dark'] table thead tr {
+  background: #12161f;
+  border-bottom-color: #2a313c;
+}
+
+[data-theme='dark'] table thead th {
+  color: #f8fafc;
+  border-color: #2a313c;
+}
+
+[data-theme='dark'] table td {
+  border-color: #2a313c;
+}
+
+[data-theme='dark'] table tr:nth-child(2n) {
+  background: rgba(18, 22, 31, 0.6);
+}
+
+/* ── Admonitions ── */
+[data-theme='dark'] .alert {
+  border-left-width: 3px;
+  background: #12161f;
+}
+
+[data-theme='dark'] .alert--success {
+  --ifm-alert-border-color: #3b82f6;
+  --ifm-alert-background-color: #12161f;
+  box-shadow: none;
+}
+
+/* ── Pagination / prev-next ── */
+[data-theme='dark'] .pagination-nav__link {
+  background: #12161f;
+  border-color: #2a313c;
+}
+
+[data-theme='dark'] .pagination-nav__link:hover {
+  border-color: #3b82f6;
+}
+
+[data-theme='dark'] .pagination-nav__label {
+  color: #f8fafc;
+}
+
+/* ── Footer ── */
+.footer {
+  font-family: var(--ifm-font-family-monospace);
+  font-size: 0.8rem;
+}
+
+[data-theme='dark'] .footer {
+  background: #0a0c10;
+  border-top: 1px solid #2a313c;
+}
+
+[data-theme='dark'] .footer__copyright {
+  color: #475569;
+}
+
+/* ── Breadcrumbs ── */
+[data-theme='dark'] .breadcrumbs__item--active .breadcrumbs__link {
+  color: #94a3b8;
+}
+
+[data-theme='dark'] .breadcrumbs__link {
+  color: #64748b;
+}
+
+[data-theme='dark'] .breadcrumbs__link:hover {
+  color: #f8fafc;
+  background: #12161f;
+}

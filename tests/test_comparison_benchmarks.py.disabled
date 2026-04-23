@@ -1,0 +1,370 @@
+"""Benchmark-driven tests for comparison functions using parametrized test data."""
+
+import json
+
+import pytest
+
+from valtron_core.evaluation.comparison_functions import Comparator, Grader
+from valtron_core.evaluation.comparison_functions import (
+    compare_json_lists_with_field_metrics,
+    compute_item_match_score,
+    match_items_greedy,
+)
+from tests.conftest import load_benchmark
+
+# ---------------------------------------------------------------------------
+# Load benchmark data once at module level for parametrize
+# ---------------------------------------------------------------------------
+TEXT_PAIRS = load_benchmark("text_pairs.json")
+LIST_CASES = load_benchmark("list_matching.json")
+JSON_CASES = load_benchmark("json_grading.json")
+FIELD_CASES = load_benchmark("field_matching.json")
+
+
+def _pair_id(pair: dict) -> str:
+    return pair["id"]
+
+
+def _case_id(case: dict) -> str:
+    return case["id"]
+
+
+# ===========================================================================
+# Text Pair Benchmarks
+# ===========================================================================
+
+
+class TestTextPairExactComparison:
+    """Verify exact comparison results against benchmark text pairs."""
+
+    @pytest.mark.parametrize("pair", TEXT_PAIRS, ids=_pair_id)
+    def test_exact_match(self, pair: dict) -> None:
+        comparator = Comparator(element_compare="exact")
+        result = comparator.compare(pair["a"], pair["b"])
+        assert result is pair["exact_expected"], (
+            f"[{pair['id']}] exact({pair['a']!r}, {pair['b']!r}) = {result}, "
+            f"expected {pair['exact_expected']}"
+        )
+
+
+class TestTextPairFuzzRatio:
+    """Verify fuzz_ratio scores against benchmark text pairs."""
+
+    @pytest.mark.parametrize("pair", TEXT_PAIRS, ids=_pair_id)
+    def test_fuzz_ratio_score(self, pair: dict) -> None:
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="fuzz_ratio",
+        )
+        score = comparator.compare(pair["a"], pair["b"])
+        assert isinstance(score, float)
+
+        # Check bounds
+        if "min_fuzz_ratio" in pair:
+            assert score >= pair["min_fuzz_ratio"], (
+                f"[{pair['id']}] fuzz_ratio({pair['a']!r}, {pair['b']!r}) = {score:.4f}, "
+                f"expected >= {pair['min_fuzz_ratio']}"
+            )
+        if "max_fuzz_ratio" in pair:
+            assert score <= pair["max_fuzz_ratio"], (
+                f"[{pair['id']}] fuzz_ratio({pair['a']!r}, {pair['b']!r}) = {score:.4f}, "
+                f"expected <= {pair['max_fuzz_ratio']}"
+            )
+
+    @pytest.mark.parametrize(
+        "pair",
+        [p for p in TEXT_PAIRS if p["category"] == "identical"],
+        ids=_pair_id,
+    )
+    def test_identical_pairs_score_one(self, pair: dict) -> None:
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="fuzz_ratio",
+        )
+        score = comparator.compare(pair["a"], pair["b"])
+        assert score == pytest.approx(1.0)
+
+
+class TestTextPairBleu:
+    """Verify BLEU scores against benchmark text pairs."""
+
+    @pytest.mark.parametrize(
+        "pair",
+        [p for p in TEXT_PAIRS if p["category"] == "identical"],
+        ids=_pair_id,
+    )
+    def test_identical_pairs_score_positive(self, pair: dict) -> None:
+        """BLEU scores < 1.0 on short identical text due to brevity penalty."""
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="bleu",
+        )
+        score = comparator.compare(pair["a"], pair["b"])
+        assert score > 0.0
+
+    @pytest.mark.parametrize(
+        "pair",
+        [p for p in TEXT_PAIRS if p["category"] == "completely_different"],
+        ids=_pair_id,
+    )
+    def test_different_pairs_score_low(self, pair: dict) -> None:
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="bleu",
+        )
+        score = comparator.compare(pair["a"], pair["b"])
+        assert score < 0.5
+
+
+class TestTextPairGleu:
+    """Verify GLEU scores against benchmark text pairs."""
+
+    @pytest.mark.parametrize(
+        "pair",
+        [p for p in TEXT_PAIRS if p["category"] == "identical"],
+        ids=_pair_id,
+    )
+    def test_identical_pairs_score_one(self, pair: dict) -> None:
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="gleu",
+        )
+        score = comparator.compare(pair["a"], pair["b"])
+        assert score == pytest.approx(1.0)
+
+    @pytest.mark.parametrize(
+        "pair",
+        [p for p in TEXT_PAIRS if p["category"] == "completely_different"],
+        ids=_pair_id,
+    )
+    def test_different_pairs_score_low(self, pair: dict) -> None:
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="gleu",
+        )
+        score = comparator.compare(pair["a"], pair["b"])
+        assert score < 0.5
+
+
+# ===========================================================================
+# List Matching Benchmarks
+# ===========================================================================
+
+
+class TestListMatchingOrdered:
+    """Verify ordered list matching against benchmark data."""
+
+    @pytest.mark.parametrize(
+        "case",
+        [c for c in LIST_CASES if c.get("ordered_scores") is not None],
+        ids=_case_id,
+    )
+    def test_ordered_scores(self, case: dict) -> None:
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_list(
+            case["predicted"], case["expected"], order_matters=True
+        )
+        assert result == case["ordered_scores"], (
+            f"[{case['id']}] ordered result {result} != expected {case['ordered_scores']}"
+        )
+
+    @pytest.mark.parametrize(
+        "case",
+        [c for c in LIST_CASES if c.get("ordered_error") is not None],
+        ids=_case_id,
+    )
+    def test_ordered_length_mismatch_raises(self, case: dict) -> None:
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        with pytest.raises(ValueError, match=case["ordered_error"]):
+            grader.grade_list(
+                case["predicted"], case["expected"], order_matters=True
+            )
+
+
+class TestListMatchingUnordered:
+    """Verify unordered list matching against benchmark data."""
+
+    @pytest.mark.parametrize("case", LIST_CASES, ids=_case_id)
+    def test_unordered_avg(self, case: dict) -> None:
+        if case.get("unordered_avg") is None:
+            pytest.skip("No unordered_avg defined")
+
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_list(
+            case["predicted"],
+            case["expected"],
+            order_matters=False,
+            aggregation="avg",
+        )
+        assert result == pytest.approx(case["unordered_avg"], abs=0.001), (
+            f"[{case['id']}] unordered avg {result} != expected {case['unordered_avg']}"
+        )
+
+    @pytest.mark.parametrize("case", LIST_CASES, ids=_case_id)
+    def test_unordered_all(self, case: dict) -> None:
+        if case.get("unordered_all") is None:
+            pytest.skip("No unordered_all defined")
+
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_list(
+            case["predicted"],
+            case["expected"],
+            order_matters=False,
+            aggregation="all",
+        )
+        assert result is case["unordered_all"], (
+            f"[{case['id']}] unordered all {result} != expected {case['unordered_all']}"
+        )
+
+
+# ===========================================================================
+# JSON Grading Benchmarks
+# ===========================================================================
+
+
+class TestJSONGrading:
+    """Verify JSON grading against benchmark data."""
+
+    @pytest.mark.parametrize(
+        "case",
+        [c for c in JSON_CASES if "expected_scores" in c and "aggregation" not in c and "predicted" in c],
+        ids=_case_id,
+    )
+    def test_json_grading_no_aggregation(self, case: dict) -> None:
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_json(case["predicted"], case["expected"])
+        assert result == case["expected_scores"], (
+            f"[{case['id']}] json result {result} != expected {case['expected_scores']}"
+        )
+
+    @pytest.mark.parametrize(
+        "case",
+        [c for c in JSON_CASES if "aggregation" in c],
+        ids=_case_id,
+    )
+    def test_json_grading_with_aggregation(self, case: dict) -> None:
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_json(
+            case["predicted"],
+            case["expected"],
+            aggregation=case["aggregation"],
+        )
+        expected = case["expected_scores"]
+        # Compare with tolerance for float values
+        for key in expected:
+            if isinstance(expected[key], float):
+                assert result[key] == pytest.approx(expected[key], abs=0.001), (
+                    f"[{case['id']}] key={key}: {result[key]} != {expected[key]}"
+                )
+            else:
+                assert result[key] == expected[key]
+
+    def test_json_string_input(self) -> None:
+        """Test grade_json with string inputs."""
+        case = next(c for c in JSON_CASES if c["id"] == "string-input")
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_json(case["predicted_str"], case["expected_str"])
+        assert result == case["expected_scores"]
+
+    @pytest.mark.parametrize(
+        "case",
+        [c for c in JSON_CASES if "expected_scores_failure" in c],
+        ids=_case_id,
+    )
+    def test_json_grading_length_mismatch(self, case: dict) -> None:
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_json(case["predicted"], case["expected"])
+        assert result == case["expected_scores_failure"], (
+            f"[{case['id']}] json result {result} != expected {case['expected_scores_failure']}"
+        )
+
+
+# ===========================================================================
+# Field Matching Benchmarks
+# ===========================================================================
+
+
+class TestFieldMatching:
+    """Verify field-level matching against benchmark data."""
+
+    @pytest.mark.parametrize("case", FIELD_CASES, ids=_case_id)
+    def test_item_matching(self, case: dict) -> None:
+        item_matches = match_items_greedy(
+            predicted_list=case["predicted_list"],
+            expected_list=case["expected_list"],
+            fields=case["fields"],
+            match_threshold=case["match_threshold"],
+        )
+
+        expected_results = case["expected_item_results"]
+        assert len(item_matches) == len(expected_results), (
+            f"[{case['id']}] got {len(item_matches)} matches, expected {len(expected_results)}"
+        )
+
+        for i, (match, expected) in enumerate(zip(item_matches, expected_results)):
+            assert match.matched is expected["matched"], (
+                f"[{case['id']}] item {i}: matched={match.matched}, expected {expected['matched']}"
+            )
+            assert match.match_score == pytest.approx(expected["match_score"], abs=0.01), (
+                f"[{case['id']}] item {i}: score={match.match_score}, expected {expected['match_score']}"
+            )
+
+    @pytest.mark.parametrize("case", FIELD_CASES, ids=_case_id)
+    def test_overall_match(self, case: dict) -> None:
+        predicted_json = json.dumps({"items": case["predicted_list"]})
+        expected_json = json.dumps({"items": case["expected_list"]})
+
+        overall, field_metrics, item_matches = compare_json_lists_with_field_metrics(
+            predicted_json=predicted_json,
+            expected_json=expected_json,
+            list_key="items",
+            fields=case["fields"],
+            match_threshold=case["match_threshold"],
+        )
+
+        assert overall is case["overall_match"], (
+            f"[{case['id']}] overall_match={overall}, expected {case['overall_match']}"
+        )
+
+    @pytest.mark.parametrize(
+        "case",
+        [c for c in FIELD_CASES if "expected_field_metrics" in c],
+        ids=_case_id,
+    )
+    def test_field_metrics(self, case: dict) -> None:
+        predicted_json = json.dumps({"items": case["predicted_list"]})
+        expected_json = json.dumps({"items": case["expected_list"]})
+
+        _, field_metrics, _ = compare_json_lists_with_field_metrics(
+            predicted_json=predicted_json,
+            expected_json=expected_json,
+            list_key="items",
+            fields=case["fields"],
+            match_threshold=case["match_threshold"],
+        )
+
+        metrics_by_name = {m.field_name: m for m in field_metrics}
+        expected_metrics = case["expected_field_metrics"]
+
+        for field_name, expected in expected_metrics.items():
+            assert field_name in metrics_by_name, (
+                f"[{case['id']}] missing field metric for {field_name}"
+            )
+            actual = metrics_by_name[field_name]
+            assert actual.precision == pytest.approx(expected["precision"], abs=0.01), (
+                f"[{case['id']}] {field_name} precision={actual.precision}, expected {expected['precision']}"
+            )
+            assert actual.recall == pytest.approx(expected["recall"], abs=0.01), (
+                f"[{case['id']}] {field_name} recall={actual.recall}, expected {expected['recall']}"
+            )
+            assert actual.f1_score == pytest.approx(expected["f1_score"], abs=0.01), (
+                f"[{case['id']}] {field_name} f1={actual.f1_score}, expected {expected['f1_score']}"
+            )

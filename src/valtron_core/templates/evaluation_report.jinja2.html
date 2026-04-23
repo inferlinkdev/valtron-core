@@ -1,0 +1,3143 @@
+{# ============================================================
+   DISPLAY SETTINGS
+   field_table_decimal_places: number of decimal places shown in
+   the per-field metric tables (score, precision, recall, F1).
+   Default is 4. Change to e.g. 2 for "0.85" style or 6 for more precision.
+   ============================================================ #}
+{% set field_table_decimal_places = 2 %}
+{% set _field_fmt = "%." ~ field_table_decimal_places ~ "f" %}
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Valtron Evaluation Report</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+      {% include 'common.css' %}
+
+      body {
+          max-width: 1400px;
+          padding: 40px 20px;
+          background-attachment: fixed;
+      }
+
+      code, .monospace {
+          font-family: 'JetBrains Mono', 'Courier New', monospace;
+          font-size: 0.9em;
+      }
+
+      .header {
+          background: #161b22;
+          color: #c9d1d9;
+          padding: 40px;
+          border-radius: 6px;
+          margin-bottom: 30px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+          border: 1px solid #30363d;
+      }
+
+      h1 {
+          font-size: 2.8em;
+          letter-spacing: 0.05em;
+      }
+
+      .subtitle {
+          font-size: 1.15em;
+          color: #8b949e;
+          margin-top: 12px;
+          font-weight: 400;
+      }
+
+      .timestamp {
+          font-size: 0.9em;
+          color: #7d8590;
+          margin-top: 8px;
+          font-family: 'JetBrains Mono', monospace;
+      }
+
+      .section {
+          background: #161b22;
+          padding: 30px;
+          margin-bottom: 25px;
+          border-radius: 6px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+          border: 1px solid #30363d;
+      }
+
+      h2 {
+          color: #58a6ff;
+          border-bottom: 1px solid #30363d;
+          padding-bottom: 12px;
+          margin-top: 0;
+          margin-bottom: 24px;
+          font-size: 1.6em;
+          font-weight: 600;
+          letter-spacing: 0.03em;
+      }
+
+      h3 {
+          color: #8b949e;
+          margin-top: 25px;
+          margin-bottom: 15px;
+          font-size: 1.2em;
+          font-weight: 600;
+      }
+
+      p {
+          color: #c9d1d9;
+          margin-bottom: 12px;
+      }
+
+      p strong {
+          color: #58a6ff;
+          font-weight: 600;
+      }
+
+      .metrics-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 20px 0;
+          font-size: 0.95em;
+      }
+
+      .metrics-table th {
+          background: #21262d;
+          color: #c9d1d9;
+          padding: 14px 16px;
+          text-align: left;
+          font-weight: 600;
+          border-bottom: 1px solid #30363d;
+          border-top: 1px solid #30363d;
+          letter-spacing: 0.05em;
+          text-transform: uppercase;
+          font-size: 0.85em;
+      }
+
+      .metrics-table td {
+          padding: 14px 16px;
+          border-bottom: 1px solid #21262d;
+          color: #c9d1d9;
+          background-color: #0d1117;
+      }
+
+      .metrics-table tr:hover td {
+          background-color: #161b22;
+      }
+
+      .best-model td {
+          background: #161b22 !important;
+          color: #c9d1d9 !important;
+          font-weight: 600;
+          border-left: 3px solid #58a6ff;
+      }
+
+      .recommendation {
+          background: #161b22;
+          padding: 24px;
+          border-left: 4px solid #a371f7;
+          border-radius: 6px;
+          margin: 20px 0;
+          color: #c9d1d9;
+          line-height: 1.7;
+      }
+
+      .chart-container {
+          margin: 30px 0;
+          text-align: center;
+      }
+
+      .chart-container h3 {
+          margin-bottom: 20px;
+          color: #8b949e;
+      }
+
+      .chart-container img {
+          max-width: 100%;
+          height: auto;
+          border-radius: 6px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+          border: 1px solid #30363d;
+      }
+
+      .footer {
+          text-align: center;
+          color: #8b949e;
+          margin-top: 50px;
+          padding-top: 30px;
+          border-top: 1px solid #30363d;
+      }
+
+      .footer p {
+          color: #8b949e;
+      }
+
+      .footer strong {
+          color: #58a6ff;
+          font-weight: 600;
+      }
+
+      .field-metrics {
+          margin-top: 30px;
+      }
+
+      .field-metrics h3 {
+          color: #8b949e;
+          font-size: 1.15em;
+      }
+
+      .field-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin: 15px 0;
+          font-size: 0.92em;
+      }
+
+      .field-table th {
+          background: #21262d;
+          color: #c9d1d9;
+          padding: 12px 14px;
+          text-align: left;
+          font-weight: 600;
+          border-bottom: 1px solid #30363d;
+          border-top: 1px solid #30363d;
+          text-transform: uppercase;
+          font-size: 0.82em;
+          letter-spacing: 0.05em;
+      }
+
+      .field-table td {
+          padding: 12px 14px;
+          border-bottom: 1px solid #21262d;
+          color: #c9d1d9;
+          background-color: #0d1117;
+      }
+
+      .field-table tr:hover td {
+          background-color: #161b22;
+      }
+
+      .metric-value {
+          color: #c9d1d9;
+          font-weight: 400;
+      }
+
+      .metric-best {
+          color: #58a6ff;
+          font-weight: 700;
+          background: rgba(88, 166, 255, 0.15);
+          padding: 2px 6px;
+          border-radius: 4px;
+      }
+
+      .metric-best-custom-cost {
+          color: #58a6ff;
+          font-weight: 700;
+          background: rgba(88, 166, 255, 0.15);
+          padding: 2px 6px;
+          border-radius: 4px;
+      }
+
+      /* View toggle buttons */
+      .view-toggle {
+          display: inline-flex;
+          background: #21262d;
+          border-radius: 6px;
+          overflow: hidden;
+          border: 1px solid #30363d;
+      }
+
+      .view-toggle-btn {
+          padding: 6px 16px;
+          border: none;
+          background: transparent;
+          color: #8b949e;
+          cursor: pointer;
+          font-size: 0.85em;
+          font-weight: 500;
+          font-family: inherit;
+          transition: all 0.2s;
+      }
+
+      .view-toggle-btn.active {
+          background: #58a6ff;
+          color: #fff;
+      }
+
+      .view-toggle-btn:hover:not(.active) {
+          background: #30363d;
+          color: #c9d1d9;
+      }
+
+      /* JSON Tree View */
+      .json-tree-view {
+          font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+          font-size: 0.9em;
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 8px;
+          padding: 20px 24px;
+          line-height: 1.6;
+          overflow-x: auto;
+          position: relative;
+      }
+
+      .json-tree-node {
+          position: relative;
+      }
+
+      .json-tree-line {
+          display: flex;
+          align-items: flex-start;
+          padding: 1px 0;
+      }
+
+      .json-tree-toggle {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 18px;
+          height: 18px;
+          margin-right: 4px;
+          cursor: pointer;
+          color: #8b949e;
+          background: #21262d;
+          border: 1px solid #30363d;
+          border-radius: 3px;
+          font-size: 10px;
+          line-height: 1;
+          transition: all 0.15s;
+          flex-shrink: 0;
+          margin-top: 2px;
+      }
+
+      .json-tree-toggle:hover {
+          background: #30363d;
+          color: #58a6ff;
+          border-color: #58a6ff;
+      }
+
+      .json-tree-toggle.expanded {
+          color: #58a6ff;
+          background: rgba(88, 166, 255, 0.15);
+          border-color: #58a6ff;
+      }
+
+      .json-tree-key {
+          color: #a5d6ff;
+      }
+
+      .json-tree-bracket {
+          color: #8b949e;
+      }
+
+      .json-tree-children {
+          padding-left: 24px;
+          border-left: 1px solid #21262d;
+          margin-left: 8px;
+      }
+
+      .json-tree-hidden {
+          display: none;
+      }
+
+      .json-tree-ellipsis {
+          color: #484f58;
+          font-style: italic;
+      }
+
+      /* Inline metrics table within tree */
+      .json-tree-metrics {
+          margin: 4px 0 4px 28px;
+          background: #161b22;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          overflow: hidden;
+      }
+
+      .json-tree-metrics-header {
+          display: flex;
+          align-items: center;
+          padding: 6px 12px;
+          background: #21262d;
+          border-bottom: 1px solid #30363d;
+          gap: 8px;
+      }
+
+      .method-name {
+          font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;
+          color: #5f8f91;
+          font-weight: 600;
+      }
+
+      .json-tree-metrics table {
+          width: 100%;
+          border-collapse: collapse;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          font-size: 0.85em;
+      }
+
+      .json-tree-metrics th {
+          padding: 6px 12px;
+          text-align: left;
+          color: #8b949e;
+          font-weight: 600;
+          font-size: 0.8em;
+          text-transform: uppercase;
+          letter-spacing: 0.04em;
+          background: #21262d;
+          border-bottom: 1px solid #30363d;
+      }
+
+      .json-tree-metrics td {
+          padding: 5px 12px;
+          color: #c9d1d9;
+          border-bottom: 1px solid #1c2128;
+      }
+
+      .json-tree-metrics tr:last-child td {
+          border-bottom: none;
+      }
+
+      .json-tree-metrics tr:hover td {
+          background: rgba(88, 166, 255, 0.05);
+      }
+
+
+      /* Field scoring info icon + popover */
+      .field-info-icon {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          width: 15px;
+          height: 15px;
+          background: #21262d;
+          color: #58a6ff;
+          border-radius: 50%;
+          font-size: 11px;
+          font-weight: normal;
+          font-style: italic;
+          font-family: Georgia, 'Times New Roman', serif;
+          text-transform: lowercase;
+          cursor: pointer;
+          margin-left: 7px;
+          vertical-align: middle;
+          border: 1px solid #388bfd55;
+          transition: background 0.15s, color 0.15s;
+          line-height: 1;
+          user-select: none;
+      }
+      .field-info-icon:hover {
+          background: #388bfd33;
+          color: #79c0ff;
+      }
+      .field-info-popover {
+          position: absolute;
+          background: #161b22;
+          border: 1px solid #30363d;
+          border-radius: 8px;
+          padding: 14px 16px;
+          z-index: 2000;
+          font-size: 0.82em;
+          color: #c9d1d9;
+          width: 420px;
+          max-width: calc(100vw - 32px);
+          box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+          display: none;
+          line-height: 1.55;
+      }
+      .field-info-popover .fip-title {
+          color: #58a6ff;
+          font-weight: 700;
+          font-size: 1.05em;
+          margin-bottom: 6px;
+      }
+      .field-info-popover .fip-desc {
+          color: #8b949e;
+          margin-bottom: 8px;
+      }
+      .field-info-popover .fip-example {
+          background: #0d1117;
+          border: 1px solid #21262d;
+          border-radius: 4px;
+          padding: 8px 10px;
+          margin: 8px 0;
+          font-family: 'JetBrains Mono', 'Courier New', monospace;
+          font-size: 0.85em;
+          color: #e6edf3;
+          white-space: pre;
+      }
+      .field-info-popover .fip-metrics {
+          margin-top: 9px;
+          display: grid;
+          grid-template-columns: auto 1fr;
+          gap: 4px 10px;
+      }
+      .field-info-popover .fip-metric-name {
+          color: #e3b341;
+          font-weight: 600;
+          white-space: nowrap;
+      }
+      .field-info-popover .fip-metric-desc {
+          color: #c9d1d9;
+      }
+      .field-info-popover .fip-note {
+          margin-top: 10px;
+          padding: 7px 10px;
+          background: #1c2128;
+          border-left: 3px solid #388bfd55;
+          border-radius: 0 4px 4px 0;
+          color: #8b949e;
+          font-size: 0.95em;
+          line-height: 1.5;
+      }
+      .field-info-popover .fip-note strong {
+          color: #c9d1d9;
+      }
+
+      /* Modal styles */
+      .modal {
+          display: none;
+          position: fixed;
+          z-index: 1000;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+          background-color: rgba(0, 0, 0, 0.8);
+          backdrop-filter: blur(4px);
+      }
+
+      .modal-content {
+          background: #161b22;
+          margin: 5% auto;
+          padding: 0;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          width: 80%;
+          max-width: 900px;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+          max-height: 80vh;
+          display: flex;
+          flex-direction: column;
+      }
+
+      .modal-header {
+          padding: 24px 30px;
+          border-bottom: 1px solid #30363d;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: #21262d;
+      }
+
+      .modal-header h3 {
+          margin: 0;
+          color: #58a6ff;
+          font-size: 1.4em;
+          font-weight: 600;
+      }
+
+      .modal-body {
+          padding: 30px;
+          overflow-y: auto;
+          flex: 1;
+          background: #161b22;
+      }
+
+      .modal-footer {
+          padding: 20px 30px;
+          border-top: 1px solid #30363d;
+          display: flex;
+          justify-content: flex-end;
+          gap: 12px;
+          background: #21262d;
+      }
+
+      .close-btn {
+          color: #8b949e;
+          font-size: 32px;
+          font-weight: 300;
+          cursor: pointer;
+          transition: all 0.2s;
+          line-height: 1;
+      }
+
+      .close-btn:hover {
+          color: #c9d1d9;
+      }
+
+      .btn {
+          padding: 10px 20px;
+          border: none;
+          border-radius: 6px;
+          cursor: pointer;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.95em;
+          font-weight: 500;
+          transition: all 0.2s;
+      }
+
+      .btn-primary {
+          background: #21262d;
+          color: #58a6ff;
+          border: 1px solid #30363d;
+      }
+
+      .btn-primary:hover {
+          background: #30363d;
+          border-color: #58a6ff;
+      }
+
+      .btn-success {
+          background: #238636;
+          color: #ffffff;
+          border: 1px solid #238636;
+      }
+
+      .btn-success:hover {
+          background: #2ea043;
+          border-color: #2ea043;
+      }
+
+      .btn-link {
+          background: transparent;
+          color: #a371f7;
+          padding: 8px 14px;
+          font-size: 0.9em;
+          text-decoration: none;
+          border: 1px solid #a371f7;
+      }
+
+      .btn-link:hover {
+          background: rgba(163, 113, 247, 0.15);
+      }
+
+      /* Print specific styles */
+      @media print {
+          .modal,
+          .copy-notification {
+              display: none !important;
+          }
+
+          body {
+              background: #ffffff;
+              color: #000000;
+              max-width: 100%;
+              padding: 20px 10px;
+              margin: 0 auto;
+          }
+
+          .echarts-container {
+              height: 350px !important;
+              page-break-inside: avoid;
+          }
+
+          .section {
+              page-break-inside: avoid;
+              padding: 20px;
+          }
+
+          .charts-grid,
+          .charts-grid.histogram-grid {
+              grid-template-columns: 1fr;
+              gap: 20px;
+          }
+
+          .charts-grid > div {
+              page-break-inside: avoid;
+          }
+
+          h1 {
+              font-size: 2em;
+          }
+
+          h2 {
+              font-size: 1.3em;
+          }
+      }
+
+      /* Responsive styles for tablets and smaller devices */
+      @media (max-width: 1024px) {
+          body {
+              padding: 30px 15px;
+              max-width: 100%;
+              margin: 0 auto;
+          }
+
+          h1 {
+              font-size: 2.2em;
+          }
+
+          h2 {
+              font-size: 1.4em;
+          }
+
+          .header {
+              padding: 30px 25px;
+          }
+
+          .section {
+              padding: 25px 20px;
+          }
+
+          .echarts-container {
+              height: 400px;
+              min-height: 350px;
+          }
+
+          .charts-grid {
+              grid-template-columns: 1fr;
+              gap: 20px;
+          }
+
+          .charts-grid.histogram-grid {
+              grid-template-columns: 1fr;
+          }
+
+          .metrics-table,
+          .field-table {
+              font-size: 0.85em;
+          }
+
+          .metrics-table th,
+          .metrics-table td,
+          .field-table th,
+          .field-table td {
+              padding: 10px 12px;
+          }
+
+          .modal-content {
+              width: 90%;
+              max-width: 100%;
+          }
+      }
+
+      /* Responsive styles for mobile devices */
+      @media (max-width: 768px) {
+          body {
+              padding: 20px 10px;
+              margin: 0 auto;
+          }
+
+          h1 {
+              font-size: 1.8em;
+          }
+
+          h2 {
+              font-size: 1.2em;
+          }
+
+          h3 {
+              font-size: 1em;
+          }
+
+          .header {
+              padding: 25px 15px;
+          }
+
+          .section {
+              padding: 20px 15px;
+              margin-bottom: 20px;
+          }
+
+          .echarts-container {
+              height: 300px;
+              min-height: 250px;
+          }
+
+          .charts-grid,
+          .charts-grid.histogram-grid {
+              grid-template-columns: 1fr;
+              gap: 15px;
+          }
+
+          .charts-grid > div {
+              padding: 15px;
+          }
+
+          /* Make tables scrollable horizontally */
+          .metrics-table,
+          .field-table {
+              display: block;
+              overflow-x: auto;
+              font-size: 0.8em;
+              -webkit-overflow-scrolling: touch;
+          }
+
+          .metrics-table thead,
+          .metrics-table tbody,
+          .field-table thead,
+          .field-table tbody {
+              display: table;
+              width: 100%;
+          }
+
+          .metrics-table th,
+          .metrics-table td,
+          .field-table th,
+          .field-table td {
+              padding: 8px 10px;
+              white-space: nowrap;
+          }
+
+          .recommendation {
+              padding: 15px;
+              font-size: 0.9em;
+          }
+
+          .modal-content {
+              width: 95%;
+              margin: 2% auto;
+              max-height: 90vh;
+          }
+
+          .modal-header,
+          .modal-footer {
+              padding: 15px 20px;
+          }
+
+          .modal-body {
+              padding: 20px 15px;
+          }
+
+      }
+
+      /* Responsive styles for very small devices */
+      @media (max-width: 480px) {
+          body {
+              padding: 15px 8px;
+              margin: 0 auto;
+          }
+
+          h1 {
+              font-size: 1.5em;
+          }
+
+          h2 {
+              font-size: 1.1em;
+          }
+
+          h3 {
+              font-size: 0.95em;
+          }
+
+          .header {
+              padding: 20px 12px;
+          }
+
+          .section {
+              padding: 15px 12px;
+          }
+
+          .echarts-container {
+              height: 250px;
+              min-height: 200px;
+          }
+
+          .charts-grid,
+          .charts-grid.histogram-grid {
+              grid-template-columns: 1fr;
+              gap: 12px;
+          }
+
+          .charts-grid > div {
+              padding: 12px;
+          }
+
+          .metrics-table,
+          .field-table {
+              font-size: 0.75em;
+          }
+
+          .metrics-table th,
+          .metrics-table td,
+          .field-table th,
+          .field-table td {
+              padding: 6px 8px;
+          }
+
+          .recommendation {
+              padding: 12px;
+              font-size: 0.85em;
+          }
+
+          .btn {
+              padding: 8px 15px;
+              font-size: 0.85em;
+          }
+      }
+
+      .prompt-display {
+          background-color: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 20px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.9em;
+          line-height: 1.6;
+          color: #c9d1d9;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+          max-height: 50vh;
+          overflow-y: auto;
+      }
+
+      .copy-notification {
+          display: none;
+          position: fixed;
+          top: 20px;
+          right: 20px;
+          background: #238636;
+          color: #ffffff;
+          padding: 16px 24px;
+          border-radius: 6px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+          border: 1px solid #238636;
+          z-index: 2000;
+          font-weight: 500;
+          font-family: 'JetBrains Mono', monospace;
+      }
+
+      /* ECharts container styles */
+      .echarts-container {
+          width: 100%;
+          height: 500px;
+          min-height: 400px;
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 10px;
+          margin: 10px 0;
+      }
+
+      .charts-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(500px, 1fr));
+          gap: 30px;
+          margin: 20px 0;
+      }
+
+      .charts-grid > div {
+          background: #161b22;
+          padding: 20px;
+      }
+
+      /* Override for histogram grid to be responsive */
+      .charts-grid.histogram-grid {
+          grid-template-columns: repeat(auto-fit, minmax(min(100%, 500px), 1fr));
+      }
+
+      .btn-graph {
+          background: #21262d;
+          color: #a371f7;
+          padding: 8px 16px;
+          border: 1px solid #a371f7;
+          border-radius: 6px;
+          cursor: pointer;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.9em;
+          font-weight: 500;
+          transition: all 0.2s;
+      }
+
+      .btn-graph:hover {
+          background: rgba(163, 113, 247, 0.15);
+      }
+
+      .analysis-link {
+          display: inline-block;
+          margin-top: 15px;
+          padding: 12px 24px;
+          background: #21262d;
+          color: #58a6ff;
+          text-decoration: none;
+          border: 1px solid #58a6ff;
+          border-radius: 6px;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.95em;
+          font-weight: 500;
+          transition: all 0.2s;
+      }
+
+      .analysis-link:hover {
+          background: rgba(88, 166, 255, 0.15);
+          color: #79c0ff;
+          border-color: #79c0ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header" data-section="header" data-section-name="Header">
+      <h1>Valtron Evaluation Report</h1>
+      <div class="subtitle">Model Comparison and Performance Analysis</div>
+      <div class="timestamp">Generated: {{ timestamp }}</div>
+    </div>
+
+    <div class="section" data-section="summary" data-section-name="Summary">
+      <h2>Summary</h2>
+      <p><strong>Models Evaluated:</strong> {{ num_models }}</p>
+      <p><strong>Documents Tested:</strong> {{ num_documents }}</p>
+      <p>
+        <strong>Original Prompt Template:</strong>
+        <code>{{ prompt_template|e }}</code>
+      </p>
+      <a href="detailed_analysis.html" class="analysis-link"
+        >View Detailed Input/Output Analysis</a
+      >
+    </div>
+
+    <div
+      class="section"
+      data-section="metrics"
+      data-section-name="Performance Metrics"
+    >
+      {% if has_field_metrics and all_field_names|length == 1 %}
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:24px;">
+        <h2 style="margin:0; border-bottom:none; padding-bottom:0;">Performance Metrics</h2>
+        <button class="btn-graph" onclick="showFieldConfigModal()">Field Config</button>
+      </div>
+      {% else %}
+      <h2>Performance Metrics</h2>
+      {% endif %}
+      <table class="metrics-table">
+        <thead>
+          <tr>
+            <th>Documents</th>
+            <th>Model</th>
+            <th>Prompt</th>
+            {% if has_field_metrics and all_field_names|length > 1 %}<th>Performance Rank <span class="field-info-icon" onclick="showPerformanceRankTooltip(this)">i</span></th>{% else %}<th>Accuracy</th>{% endif %}
+            <th>Total Cost</th>
+            <th>Avg Cost/Doc</th>
+            <th>Total Time</th>
+            <th>Avg Time/Doc</th>
+            {% if has_optimizations %}
+            <th>Prompt Manipulation</th>
+            {% endif %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for result in results %} {% if result.metrics %}
+          <tr>
+            <td>{{ result.metrics.total_documents }}</td>
+            <td>{{ result.model }}</td>
+            <td>
+              {% if model_override_prompts.get(result.model) %}
+              <button class="btn btn-link" onclick="showPromptColumnModal('{{ result.model }}', true)">Overridden</button>
+              {% else %}
+              <button class="btn btn-link" onclick="showPromptColumnModal('{{ result.model }}', false)">Base</button>
+              {% endif %}
+            </td>
+            <td>
+              {% if has_field_metrics and all_field_names|length > 1 %}
+              {% set rank_info = performance_ranks[result.model] %}
+              <span class="{% if rank_info.rank == 1 %}metric-best{% else %}metric-value{% endif %}">
+                #{{ rank_info.rank }}{% if rank_info.delta_pct < 0 %} <span style="font-size:0.85em;opacity:0.7">{{ "%.2f"|format(rank_info.delta_pct) }}%</span>{% endif %}
+              </span>
+              {% elif has_field_metrics and all_field_names|length == 1 %}
+              {% set _sf = all_field_names | first %}
+              {% set _fm = result.metrics.aggregated_field_metrics.get(_sf) if result.metrics and result.metrics.aggregated_field_metrics else none %}
+              <span class="{% if _fm and _fm.precision >= field_max_values[_sf].max_precision %}metric-best{% else %}metric-value{% endif %}">
+                {{ "%.2f"|format(_fm.precision * 100) if _fm else 'N/A' }}%
+              </span>
+              {% else %}
+              <span
+                class="{% if result.metrics.accuracy >= performance_best.best_accuracy %}metric-best{% else %}metric-value{% endif %}"
+              >
+                {{ "%.2f"|format(result.metrics.accuracy * 100) }}%
+              </span>
+              {% endif %}
+            </td>
+            <td>
+              {% set _has_custom_cost_rate = result.llm_config and (result.llm_config.cost_rate is defined or result.llm_config.cost_rate_imputed is defined) %}
+              {% set _is_best_cost = result.metrics.total_cost <= performance_best.best_total_cost %}
+              <span
+                class="{% if _is_best_cost %}metric-best{% else %}metric-value{% endif %}"
+              >
+                ${{ "%.2f"|format(result.metrics.total_cost) }}{% if _has_custom_cost_rate %} (est){% endif %}
+              </span>
+              {% if result.llm_config %}
+                {% if result.llm_config.cost_rate is defined %}
+                  <span class="field-info-icon" onclick="showCostRateTooltip(this, {{ result.llm_config.cost_rate }}, '{{ result.llm_config.cost_rate_time_unit | default('1hr') }}', false)">i</span>
+                {% elif result.llm_config.cost_rate_imputed is defined %}
+                  <span class="field-info-icon" onclick="showCostRateTooltip(this, {{ result.llm_config.cost_rate_imputed }}, '{{ result.llm_config.time_unit_imputed }}', true)">i</span>
+                {% endif %}
+              {% endif %}
+            </td>
+            <td>
+              <span
+                class="{% if result.metrics.average_cost_per_document <= performance_best.best_avg_cost %}metric-best{% else %}metric-value{% endif %}"
+              >
+                ${{ "%.6f"|format(result.metrics.average_cost_per_document) }}
+              </span>
+            </td>
+            <td>
+              <span
+                class="{% if result.metrics.total_time <= performance_best.best_total_time %}metric-best{% else %}metric-value{% endif %}"
+              >
+                {{ "%.2f"|format(result.metrics.total_time) }}s
+              </span>
+            </td>
+            <td>
+              <span
+                class="{% if result.metrics.average_time_per_document <= performance_best.best_avg_time %}metric-best{% else %}metric-value{% endif %}"
+              >
+                {{ "%.2f"|format(result.metrics.average_time_per_document) }}s
+              </span>
+            </td>
+            {% if has_optimizations %}
+            <td>
+              {% set manipulations = prompt_optimizations.get(result.model, [])
+              %} {% if manipulations %} {{ ', '.join(manipulations) }}
+              <button
+                class="btn btn-link"
+                onclick="showPromptModal('{{ result.model }}')"
+              >
+                View Prompt
+              </button>
+              {% else %} None {% endif %}
+            </td>
+            {% endif %}
+          </tr>
+          {% endif %} {% endfor %}
+        </tbody>
+      </table>
+      {% if has_optimizations %}
+      <p style="margin-top: 15px; font-size: 0.95em; color: #666">
+        <strong>Note:</strong> Prompt manipulations can include: "explanation"
+        (chain-of-thought reasoning), "few_shot" (example injection), and
+        others. Click "View Prompt" to see the enhanced prompt for each model.
+      </p>
+      {% endif %}
+    </div>
+
+    {% if has_field_metrics and all_field_names|length > 1 %}
+    <div
+      class="section"
+      data-section="field-metrics"
+      data-section-name="Per-Field Metrics"
+    >
+      <div
+        style="
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 10px;
+        "
+      >
+        <h2 style="margin: 0">Per-Field Metrics</h2>
+        <div style="display: inline-flex; align-items: center; gap: 8px;">
+          <button class="btn-graph" onclick="showFieldConfigModal()">Field Config</button>
+          <div class="view-toggle">
+            <button
+              class="view-toggle-btn active"
+              id="btnTreeView"
+              onclick="switchFieldView('tree')"
+            >
+              Structure View
+            </button>
+            <button
+              class="view-toggle-btn"
+              id="btnTableView"
+              onclick="switchFieldView('table')"
+            >
+              Table View
+            </button>
+          </div>
+        </div>
+      </div>
+      <p>
+        Detailed accuracy metrics for individual fields in structured outputs. <br/>
+        <em><span style="color: #8b949e; text-decoration: underline; cursor: pointer; white-space: nowrap;" onclick="showFieldScoringInfo(this)">How are fields scored?</span></em>
+      </p>
+
+      <!-- JSON Tree View (default) -->
+      <div id="fieldMetricsTreeView">
+        <div class="json-tree-view" id="jsonTreeContainer">
+          <button
+            id="btnCollapseAll"
+            onclick="collapseAllTreeMetrics()"
+            style="position: absolute; top: 10px; right: 12px; padding: 4px 10px; background: #21262d; border: 1px solid #58a6ff; border-radius: 5px; color: #58a6ff; font-size: 0.78em; cursor: pointer; white-space: nowrap; z-index: 1;"
+            onmouseover="this.style.background='#1f6feb33';this.style.color='#79c0ff';"
+            onmouseout="this.style.background='#21262d';this.style.color='#58a6ff';"
+          >Collapse All</button>
+        </div>
+      </div>
+
+      <!-- Table View (hidden by default) -->
+      <div id="fieldMetricsTableView" style="display: none">
+        {% for field_name in all_field_names %}
+        {% set _fm_methods = field_metrics_data[field_name]['comparison_methods'] if field_metrics_data[field_name] else [] %}
+        {% set _fm_method = _fm_methods[0] if _fm_methods else '' %}
+        {% set _fm_configs = field_metrics_data[field_name].get('comparison_configs', []) if field_metrics_data[field_name] else [] %}
+        {% set _fm_first_config = _fm_configs[0] if _fm_configs else {} %}
+        <div class="field-metrics">
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: {% if _fm_method %}8px{% else %}15px{% endif %};
+            "
+          >
+            <h3 style="margin: 0">
+              {% if field_name == '[*]' %}Root List <span style="color:#8b949e;font-weight:400;font-size:0.85em;">[ ]</span>{% else %}Field: {{ field_name }}{% endif %}
+            </h3>
+            <button
+              class="btn-graph"
+              onclick="showFieldGraphs('{{ field_name }}')"
+            >
+              View Graphs
+            </button>
+          </div>
+          {% if _fm_method %}
+          <p style="margin: 0 0 12px 0; color: #8b949e; font-size: 0.82em; font-family: 'SF Mono', 'Fira Code', 'Consolas', monospace;">
+            Scored using <span class="method-name">{{ _fm_method }}</span>{% if _fm_first_config %} ({% for k, v in _fm_first_config.items() %}{{ k }}: {{ v }}{% if not loop.last %}, {% endif %}{% endfor %}){% endif %}
+          </p>
+          {% endif %}
+          <table class="field-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                {% if _fm_method and _fm_method.startswith('agg:') %}
+                <th>Average Precision of Subfields <span class="field-info-icon" onclick="showColumnTooltip(this,'precision','{{ _fm_method }}','{{ field_name }}')">i</span></th>
+                <th>Average Recall of Subfields <span class="field-info-icon" onclick="showColumnTooltip(this,'recall','{{ _fm_method }}','{{ field_name }}')">i</span></th>
+                <th>Average F1 Measure of Subfields <span class="field-info-icon" onclick="showColumnTooltip(this,'f1_score','{{ _fm_method }}','{{ field_name }}')">i</span></th>
+                {% else %}
+                <th>Precision <span class="field-info-icon" onclick="showColumnTooltip(this,'precision','{{ _fm_method }}','{{ field_name }}')">i</span></th>
+                <th>Recall <span class="field-info-icon" onclick="showColumnTooltip(this,'recall','{{ _fm_method }}','{{ field_name }}')">i</span></th>
+                <th>F1 Score <span class="field-info-icon" onclick="showColumnTooltip(this,'f1_score','{{ _fm_method }}','{{ field_name }}')">i</span></th>
+                {% endif %}
+              </tr>
+            </thead>
+            <tbody>
+              {% for result in results %} {% if result.metrics and
+              result.metrics.aggregated_field_metrics %} {% set field_metric =
+              result.metrics.aggregated_field_metrics.get(field_name) %} {% if
+              field_metric %}
+              <tr>
+                <td>{{ result.model }}</td>
+                <td>
+                  <span
+                    class="{% if field_metric.precision >= field_max_values[field_name].max_precision %}metric-best{% else %}metric-value{% endif %}"
+                  >
+                    {{ _field_fmt|format(field_metric.precision * 100) }}%
+                  </span>
+                </td>
+                <td>
+                  <span
+                    class="{% if field_metric.recall >= field_max_values[field_name].max_recall %}metric-best{% else %}metric-value{% endif %}"
+                  >
+                    {{ _field_fmt|format(field_metric.recall * 100) }}%
+                  </span>
+                </td>
+                <td>
+                  <!-- calculate F1 score  from tp, tn, fp, fn values -->
+                  {% set f1_score = 2 * (field_metric.precision *
+                  field_metric.recall) / (field_metric.precision +
+                  field_metric.recall) if field_metric.precision +
+                  field_metric.recall > 0 else 0 %}
+                  <span
+                    class="{% if f1_score >= field_max_values[field_name].max_f1 %}metric-best{% else %}metric-value{% endif %}"
+                  >
+                    {{ _field_fmt|format(f1_score * 100) }}%
+                  </span>
+                </td>
+              </tr>
+              {% endif %} {% endif %} {% endfor %}
+            </tbody>
+          </table>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    {% endif %}
+
+    <!-- Field scoring info popover (always present; used by field headers and cost rate icons) -->
+    <div id="fieldInfoPopover" class="field-info-popover"></div>
+
+    {% if recommendation %}
+    <div
+      class="section"
+      data-section="recommendation"
+      data-section-name="AI Recommendation"
+    >
+      <h2>AI-Powered Recommendation</h2>
+      <div class="recommendation">
+        {{ recommendation | replace('\n', '<br />') | safe }}
+      </div>
+    </div>
+    {% endif %}
+
+    <div
+      class="section"
+      data-section="charts"
+      data-section-name="Visual Analysis"
+    >
+      <h2>Visual Analysis</h2>
+
+      <h3 style="color: #8b949e; margin-top: 30px; margin-bottom: 15px">
+        Aggregate Metrics Comparison
+      </h3>
+      <div class="charts-grid">
+        {% if not has_field_metrics or all_field_names|length == 1 %}
+        <div>
+          <h3 style="color: #8b949e; text-align: center">
+            Quality: Accuracy by Model
+          </h3>
+          <div id="accuracyChart" class="echarts-container"></div>
+        </div>
+        {% endif %}
+        <div>
+          <h3 style="color: #8b949e; text-align: center">
+            Speed: Average Time per Document
+          </h3>
+          <div id="speedChart" class="echarts-container"></div>
+        </div>
+        <div>
+          <h3 style="color: #8b949e; text-align: center">
+            Cost: Average Cost per Document
+          </h3>
+          <div id="costChart" class="echarts-container"></div>
+        </div>
+      </div>
+
+      <h3 style="color: #8b949e; margin-top: 40px; margin-bottom: 15px">
+        Distribution Histograms
+      </h3>
+      <div class="charts-grid histogram-grid">
+        <div>
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 10px;
+            "
+          >
+            <h3 style="color: #8b949e; margin: 0">{% if has_field_metrics and all_field_names|length == 1 %}Accuracy Distribution{% else %}Score Distribution{% endif %}</h3>
+            <button class="btn-graph" onclick="downloadCSV('score')">
+              Download CSV
+            </button>
+          </div>
+          <div id="scoreHistogramChart" class="echarts-container"></div>
+        </div>
+        <div>
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 10px;
+            "
+          >
+            <h3 style="color: #8b949e; margin: 0">
+              Processing Time Distribution
+            </h3>
+            <button class="btn-graph" onclick="downloadCSV('time')">
+              Download CSV
+            </button>
+          </div>
+          <div id="timeHistogramChart" class="echarts-container"></div>
+        </div>
+        <div>
+          <div
+            style="
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              margin-bottom: 10px;
+            "
+          >
+            <h3 style="color: #8b949e; margin: 0">Cost Distribution</h3>
+            <button class="btn-graph" onclick="downloadCSV('cost')">
+              Download CSV
+            </button>
+          </div>
+          <div id="costHistogramChart" class="echarts-container"></div>
+        </div>
+      </div>
+
+      <h3 style="color: #8b949e; margin-top: 40px; margin-bottom: 15px">
+        Model Comparison Scatter Plot
+      </h3>
+      <div style="background: #161b22; padding: 20px">
+        <div
+          style="
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+            align-items: center;
+          "
+        >
+          <div>
+            <label for="scatterXAxis" style="color: #8b949e; margin-right: 10px"
+              >X-Axis:</label
+            >
+            <select
+              id="scatterXAxis"
+              style="
+                background: #21262d;
+                color: #c9d1d9;
+                border: 1px solid #30363d;
+                border-radius: 4px;
+                padding: 8px 12px;
+                font-family: inherit;
+              "
+            >
+              <option value="accuracy">Accuracy (%)</option>
+              <option value="avg_cost">Avg Cost per Document ($)</option>
+              <option value="avg_time">Avg Time per Document (s)</option>
+            </select>
+          </div>
+          <div>
+            <label for="scatterYAxis" style="color: #8b949e; margin-right: 10px"
+              >Y-Axis:</label
+            >
+            <select
+              id="scatterYAxis"
+              style="
+                background: #21262d;
+                color: #c9d1d9;
+                border: 1px solid #30363d;
+                border-radius: 4px;
+                padding: 8px 12px;
+                font-family: inherit;
+              "
+            >
+              <option value="avg_cost">Avg Cost per Document ($)</option>
+              <option value="accuracy">Accuracy (%)</option>
+              <option value="avg_time">Avg Time per Document (s)</option>
+            </select>
+          </div>
+        </div>
+        <div
+          id="scatterChart"
+          class="echarts-container"
+          style="height: 500px"
+        ></div>
+      </div>
+    </div>
+
+    <div class="footer" data-section="footer" data-section-name="Footer">
+      <p>Generated by <strong>evaltron_core</strong> - LLM Optimization Framework</p>
+    </div>
+
+    <!-- Modal for viewing enhanced prompts -->
+    <div id="promptModal" class="modal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h3 id="modalTitle">Enhanced Prompt</h3>
+          <span class="close-btn" onclick="closePromptModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+          <pre id="promptContent" class="prompt-display"></pre>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-success" onclick="copyPrompt()">
+            Copy to Clipboard
+          </button>
+          <button class="btn btn-success" onclick="copyPrompt()">
+            Copy to Clipboard
+          </button>
+          <button class="btn btn-primary" onclick="closePromptModal()">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Copy notification -->
+    <div id="copyNotification" class="copy-notification">
+      Copied to clipboard
+    </div>
+
+    <!-- Modal for field metric graphs -->
+    <div id="fieldGraphModal" class="modal">
+      <div class="modal-content" style="width: 90%; max-width: 1400px">
+        <div class="modal-header">
+          <h3 id="fieldGraphTitle">Field Metrics Graphs</h3>
+          <span class="close-btn" onclick="closeFieldGraphModal()"
+            >&times;</span
+          >
+        </div>
+        <div class="modal-body">
+          <div
+            style="
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 30px;
+              margin-bottom: 20px;
+            "
+          >
+            <div>
+              <h4
+                style="color: #8b949e; text-align: center; margin-bottom: 10px"
+              >
+                Precision by Model
+              </h4>
+              <div
+                id="fieldPrecisionChart"
+                class="echarts-container"
+                style="height: 400px"
+              ></div>
+            </div>
+            <div>
+              <h4
+                style="color: #8b949e; text-align: center; margin-bottom: 10px"
+              >
+                Recall by Model
+              </h4>
+              <div
+                id="fieldRecallChart"
+                class="echarts-container"
+                style="height: 400px"
+              ></div>
+            </div>
+            <div>
+              <h4
+                style="color: #8b949e; text-align: center; margin-bottom: 10px"
+              >
+                F1 Score by Model
+              </h4>
+              <div
+                id="fieldF1Chart"
+                class="echarts-container"
+                style="height: 400px"
+              ></div>
+            </div>
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" onclick="closeFieldGraphModal()">
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal for field metrics configuration -->
+    {% if has_field_metrics %}
+    <div id="fieldConfigModal" class="modal">
+      <div class="modal-content" style="max-width: 700px;">
+        <div class="modal-header">
+          <h3>Field Metrics Configuration</h3>
+          <span class="close-btn" onclick="closeFieldConfigModal()">&times;</span>
+        </div>
+        <div class="modal-body">
+          <p style="color:#8b949e; margin-bottom:20px; font-size:0.9em;">
+            Field metrics configuration as provided.
+          </p>
+          <div id="fieldConfigContent"></div>
+        </div>
+        <div class="modal-footer">
+          <button class="btn btn-primary" onclick="closeFieldConfigModal()">Close</button>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    <script>
+      // Decimal places for per-field metric tables (controlled at top of template)
+      const fieldTableDecimalPlaces = {{ field_table_decimal_places }};
+
+      // Store prompts in a JavaScript object
+      const modelPrompts = {{ model_prompts | tojson }};
+      const modelOverridePrompts = {{ model_override_prompts | tojson }};
+      const basePrompt = {{ prompt_template | tojson }};
+
+      // Store field metrics data
+      const fieldMetricsData = {{ field_metrics_data | tojson }};
+
+      // Full field config with implicit defaults (null when not available)
+      const fieldConfigJson = {{ field_config_json | tojson if field_config_json else 'null' }};
+
+      // Store field metrics tree and max values
+      const fieldMetricsTree = {{ field_metrics_tree | tojson }};
+      const fieldMaxValues = {{ field_max_values | tojson }};
+      const rootListFieldKey = {{ root_list_field_key | tojson if root_list_field_key else 'null' }};
+
+      // ---- Field metrics view toggle ----
+      function switchFieldView(view) {
+          const treeView = document.getElementById('fieldMetricsTreeView');
+          const tableView = document.getElementById('fieldMetricsTableView');
+          const btnTree = document.getElementById('btnTreeView');
+          const btnTable = document.getElementById('btnTableView');
+          if (!treeView) return;
+          const btnCollapse = document.getElementById('btnCollapseAll');
+          if (view === 'tree') {
+              treeView.style.display = '';
+              tableView.style.display = 'none';
+              btnTree.classList.add('active');
+              btnTable.classList.remove('active');
+              if (btnCollapse) btnCollapse.style.display = '';
+          } else {
+              treeView.style.display = 'none';
+              tableView.style.display = '';
+              btnTree.classList.remove('active');
+              btnTable.classList.add('active');
+              if (btnCollapse) btnCollapse.style.display = 'none';
+          }
+      }
+
+      function collapseAllTreeMetrics() {
+          document.querySelectorAll('#jsonTreeContainer .json-tree-toggle.expanded').forEach(function(toggle) {
+              const path = toggle.dataset.path;
+              const nodeId = 'jtnode-' + path.replace(/[.]/g, '-');
+              const metricsEl = document.getElementById('metrics-' + nodeId);
+              if (metricsEl) {
+                  metricsEl.classList.add('json-tree-hidden');
+                  toggle.classList.remove('expanded');
+                  toggle.innerHTML = '&#9654;';
+              }
+          });
+      }
+
+      // ---- JSON Tree View Builder ----
+      function buildMetricsTable(fullPath) {
+          const data = fieldMetricsData[fullPath];
+          const maxVals = fieldMaxValues[fullPath];
+          if (!data || !data.models || data.models.length === 0) return '';
+
+          // Group by method to show method in header
+          const methods = [...new Set(data.comparison_methods || [])];
+          const methodLabel = methods.length === 1 ? methods[0] : 'mixed';
+
+          // Determine method badge class
+          let methodClass = 'method-' + methodLabel;
+
+          const infoMethod = methods.length > 0 ? methods[0] : '';
+          let html = '<div class="json-tree-metrics">';
+          html += '<div class="json-tree-metrics-header">';
+          if (methods.length === 1) {
+              const firstConfig = data.comparison_configs ? (data.comparison_configs[0] || {}) : {};
+              const firstConfigStr = JSON.stringify(firstConfig);
+              const paramParts = Object.entries(firstConfig).map(([k, v]) => escapeHtml(String(k)) + ': ' + escapeHtml(String(v)));
+              const paramsText = paramParts.length > 0 ? ' (' + paramParts.join(', ') + ')' : '';
+              html += '<span style="color: #8b949e; font-size: 0.8em; font-family: \'SF Mono\',\'Fira Code\',\'Consolas\',monospace;">'
+                  + 'Field scored using <span class="method-name">' + escapeHtml(methodLabel) + '</span>'
+                  + (paramsText ? paramsText : '')
+                  + '</span>';
+          } else {
+              html += '<span style="color: #8b949e; font-size: 0.8em; font-weight: 600;">Metrics</span>';
+          }
+          html += '<button class="btn-graph" style="margin-left: auto; padding: 2px 10px; font-size: 0.75em;" data-field="' + escapeHtml(fullPath) + '" onclick="showFieldGraphs(this.dataset.field)">Graphs</button>';
+          html += '</div>';
+          const isObjField = resolveMethodType(infoMethod) === 'object';
+          html += '<table><thead><tr>';
+          html += '<th>Model</th>';
+          if (methods.length > 1) html += '<th>Method</th>';
+          html += '<th>' + (isObjField ? 'Average Precision of Subfields' : 'Precision') + ' <span class="field-info-icon" onclick="showColumnTooltip(this,\'precision\',\'' + escapeHtml(infoMethod) + '\',\'' + escapeHtml(fullPath) + '\')">i</span></th>';
+          html += '<th>' + (isObjField ? 'Average Recall of Subfields' : 'Recall') + ' <span class="field-info-icon" onclick="showColumnTooltip(this,\'recall\',\'' + escapeHtml(infoMethod) + '\',\'' + escapeHtml(fullPath) + '\')">i</span></th>';
+          html += '<th>' + (isObjField ? 'Average F1 Measure of Subfields' : 'F1 Score') + ' <span class="field-info-icon" onclick="showColumnTooltip(this,\'f1_score\',\'' + escapeHtml(infoMethod) + '\',\'' + escapeHtml(fullPath) + '\')">i</span></th>';
+          html += '</tr></thead><tbody>';
+
+          // Compute max values from the already-rounded data arrays to avoid
+          // rounding mismatches (data values are pre-rounded percentages, but
+          // fieldMaxValues stores raw 0-1 floats).
+          let maxP = -1, maxR = -1, maxF1 = -1;
+          for (let j = 0; j < data.models.length; j++) {
+              maxP = Math.max(maxP, data.precision[j]);
+              maxR = Math.max(maxR, data.recall[j]);
+              maxF1 = Math.max(maxF1, data.f1_score[j]);
+          }
+
+          for (let i = 0; i < data.models.length; i++) {
+              const p = data.precision[i];
+              const r = data.recall[i];
+              const f1 = data.f1_score[i];
+
+              html += '<tr>';
+              html += '<td>' + escapeHtml(data.models[i]) + '</td>';
+              if (methods.length > 1) {
+                  const rowConfig = data.comparison_configs ? (data.comparison_configs[i] || {}) : {};
+                  const rowParamParts = Object.entries(rowConfig).map(([k, v]) => escapeHtml(String(k)) + ': ' + escapeHtml(String(v)));
+                  const rowParamsText = rowParamParts.length > 0 ? ' (' + rowParamParts.join(', ') + ')' : '';
+                  html += '<td style="font-family:\'SF Mono\',\'Fira Code\',monospace;font-size:0.82em;color:#8b949e;">'
+                      + '<span class="method-name">' + escapeHtml(data.comparison_methods[i]) + '</span>'
+                      + rowParamsText + '</td>';
+              }
+              html += '<td><span class="' + (p >= maxP ? 'metric-best' : 'metric-value') + '">' + p.toFixed(fieldTableDecimalPlaces) + '%</span></td>';
+              html += '<td><span class="' + (r >= maxR ? 'metric-best' : 'metric-value') + '">' + r.toFixed(fieldTableDecimalPlaces) + '%</span></td>';
+              html += '<td><span class="' + (f1 >= maxF1 ? 'metric-best' : 'metric-value') + '">' + f1.toFixed(fieldTableDecimalPlaces) + '%</span></td>';
+              html += '</tr>';
+          }
+
+          html += '</tbody></table></div>';
+          return html;
+      }
+
+      function escapeHtml(str) {
+          if (typeof str !== 'string') return str;
+          return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      }
+
+      function buildTreeNode(nodeMap, indent, isLast, isRoot, isListRoot) {
+          let html = '';
+          const keys = Object.keys(nodeMap);
+
+          if (isRoot) {
+              if (isListRoot) {
+                  const hasRootMetrics = !!(rootListFieldKey && fieldMetricsData[rootListFieldKey]);
+                  html += '<div class="json-tree-line">';
+                  if (hasRootMetrics) {
+                      html += '<span class="json-tree-toggle" data-path="__root__" onclick="toggleTreeMetrics(this, \'__root__\')" title="Show metrics">&#9654;</span>';
+                  }
+                  html += '<span class="json-tree-bracket">[</span></div>';
+                  if (hasRootMetrics) {
+                      html += '<div class="json-tree-hidden" id="metrics-jtnode-__root__">';
+                      html += buildMetricsTable(rootListFieldKey);
+                      html += '</div>';
+                  }
+                  html += '<div class="json-tree-children">';
+              }
+              html += '<div class="json-tree-line"><span class="json-tree-bracket">{</span></div>';
+          }
+
+          keys.forEach((key, idx) => {
+              const node = nodeMap[key];
+              const hasChildren = Object.keys(node.children).length > 0;
+              const last = idx === keys.length - 1;
+              const nodeId = 'jtnode-' + node.full_path.replace(/[.]/g, '-');
+              const comma = last ? '' : '<span class="json-tree-bracket">,</span>';
+              // Spacer that matches the toggle button width so closing brackets
+              // align with the key text on lines that have a toggle button.
+              const toggleSpacer = '<span style="width:22px;flex-shrink:0;display:inline-block;"></span>';
+
+              html += '<div class="json-tree-node" id="' + nodeId + '">';
+              html += '<div class="json-tree-line">';
+
+              // Toggle button (only if has metrics)
+              if (node.has_metrics) {
+                  html += '<span class="json-tree-toggle" data-path="' + escapeHtml(node.full_path) + '" onclick="toggleTreeMetrics(this, this.dataset.path)" title="Show metrics">&#9654;</span>';
+              }
+
+              // Key
+              html += '<span class="json-tree-key">"' + escapeHtml(key) + '"</span>';
+              html += '<span class="json-tree-bracket">: </span>';
+
+              if (hasChildren) {
+                  // Object or array opener
+                  if (node.is_array) {
+                      html += '<span class="json-tree-bracket">[</span>';
+                  } else {
+                      html += '<span class="json-tree-bracket">{</span>';
+                  }
+                  html += '</div>'; // close line
+
+                  // Metrics table (hidden by default)
+                  if (node.has_metrics) {
+                      html += '<div class="json-tree-hidden" id="metrics-' + nodeId + '">';
+                      html += buildMetricsTable(node.full_path);
+                      html += '</div>';
+                  }
+
+                  // Children
+                  html += '<div class="json-tree-children">';
+                  html += buildTreeNode(node.children, indent + 1, last, false, false);
+                  html += '</div>';
+
+                  // Closer — spacer keeps the bracket aligned with the key text above
+                  html += '<div class="json-tree-line">';
+                  if (node.has_metrics) html += toggleSpacer;
+                  if (node.is_array) {
+                      html += '<span class="json-tree-bracket">]</span>' + comma;
+                  } else {
+                      html += '<span class="json-tree-bracket">}</span>' + comma;
+                  }
+                  html += '</div>';
+              } else {
+                  // Leaf node - show value placeholder based on type
+                  if (node.is_array) {
+                      html += '<span class="json-tree-bracket">[]</span>' + comma;
+                  } else {
+                      html += '<span class="json-tree-ellipsis">...</span>' + comma;
+                  }
+                  html += '</div>'; // close line
+
+                  // Metrics table (hidden by default)
+                  if (node.has_metrics) {
+                      html += '<div class="json-tree-hidden" id="metrics-' + nodeId + '">';
+                      html += buildMetricsTable(node.full_path);
+                      html += '</div>';
+                  }
+              }
+
+              html += '</div>'; // close node
+          });
+
+          if (isRoot) {
+              html += '<div class="json-tree-line"><span class="json-tree-bracket">}</span></div>';
+              if (isListRoot) {
+                  html += '</div>'; // close json-tree-children
+                  html += '<div class="json-tree-line"><span class="json-tree-bracket">]</span></div>';
+              }
+          }
+
+          return html;
+      }
+
+      function toggleTreeMetrics(toggleEl, fullPath) {
+          const nodeId = 'jtnode-' + fullPath.replace(/[.]/g, '-');
+          const metricsEl = document.getElementById('metrics-' + nodeId);
+          if (!metricsEl) return;
+
+          const isHidden = metricsEl.classList.contains('json-tree-hidden');
+          if (isHidden) {
+              metricsEl.classList.remove('json-tree-hidden');
+              toggleEl.classList.add('expanded');
+              toggleEl.innerHTML = '&#9660;';
+          } else {
+              metricsEl.classList.add('json-tree-hidden');
+              toggleEl.classList.remove('expanded');
+              toggleEl.innerHTML = '&#9654;';
+          }
+      }
+
+      // Build tree on page load
+      function initFieldMetricsTree() {
+          try {
+              const container = document.getElementById('jsonTreeContainer');
+              if (!container) { console.error('jsonTreeContainer not found'); return; }
+              if (!fieldMetricsTree || Object.keys(fieldMetricsTree).length === 0) { console.error('fieldMetricsTree is empty', fieldMetricsTree); return; }
+              const isListRoot = !!(fieldConfigJson && fieldConfigJson.type === 'list');
+              const html = buildTreeNode(fieldMetricsTree, 0, true, true, isListRoot);
+              const btn = container.querySelector('#btnCollapseAll');
+              container.innerHTML = html;
+              if (btn) container.appendChild(btn);
+          } catch (e) {
+              console.error('Error building field metrics tree:', e);
+          }
+      }
+
+      // Ensure tree init runs even if other DOMContentLoaded handlers fail
+      document.addEventListener('DOMContentLoaded', function() {
+          initFieldMetricsTree();
+      });
+
+      function showPromptModal(modelName) {
+          const modal = document.getElementById('promptModal');
+          const title = document.getElementById('modalTitle');
+          const content = document.getElementById('promptContent');
+
+          title.textContent = 'Enhanced Prompt for ' + modelName;
+          content.textContent = modelPrompts[modelName] || 'Prompt not available';
+
+          modal.style.display = 'block';
+      }
+
+      function showPromptColumnModal(modelName, isOverride) {
+          const modal = document.getElementById('promptModal');
+          const title = document.getElementById('modalTitle');
+          const content = document.getElementById('promptContent');
+          if (isOverride) {
+              title.textContent = 'Override Prompt for ' + modelName;
+              content.textContent = modelOverridePrompts[modelName] || 'Override prompt not available';
+          } else {
+              title.textContent = 'Base Prompt';
+              content.textContent = basePrompt || 'Base prompt not available';
+          }
+          modal.style.display = 'block';
+      }
+
+      function closePromptModal() {
+          const modal = document.getElementById('promptModal');
+          modal.style.display = 'none';
+      }
+
+      async function copyPrompt() {
+          const content = document.getElementById('promptContent').textContent;
+
+          try {
+              await navigator.clipboard.writeText(content);
+              showCopyNotification();
+          } catch (err) {
+              // Fallback for older browsers
+              const textarea = document.createElement('textarea');
+              textarea.value = content;
+              textarea.style.position = 'fixed';
+              textarea.style.opacity = '0';
+              document.body.appendChild(textarea);
+              textarea.select();
+              document.execCommand('copy');
+              document.body.removeChild(textarea);
+              showCopyNotification();
+          }
+      }
+
+      function showCopyNotification() {
+          const notification = document.getElementById('copyNotification');
+          notification.style.display = 'block';
+
+          setTimeout(() => {
+              notification.style.display = 'none';
+          }, 2000);
+      }
+
+      // Method config tooltip function
+
+      // ---------------------------------------------------------------------------
+      // Per-column tooltip definitions for the Per-Field Metrics table.
+      //
+      // METHOD TYPES
+      //   'list'   → list_greedy_f1 or list_ordered_f1
+      //   'object' → method name starts with 'agg:'
+      //   'leaf'   → everything else (direct value comparison)
+      //
+      // HOW TO EXTEND
+      //   To add or change the description shown for a column under a specific
+      //   field type, edit the matching entry in `byMethodType` below.
+      //   Each entry is a plain string of HTML (bold/em tags are fine).
+      // ---------------------------------------------------------------------------
+      const COLUMN_TOOLTIPS = {
+          precision: {
+              title: 'Precision',
+              titleByMethodType: {
+                  list:   'Precision',
+                  object: 'Average Precision of Subfields',
+                  leaf:   'Precision',
+              },
+              techByMethodType: {
+                  list:   'micro',
+                  object: 'weighted average',
+                  leaf:   'micro',
+              },
+              byMethodType: {
+                  list:   'Out of all the list items the model predicted across every example, how many were correctly matched to an expected item. Longer lists have more influence on this number than shorter ones.',
+                  object: 'The weighted average of each sub-field\'s aggregated Precision, using each sub-field\'s configured weight. This value will always equal the weighted average of the Precision figures shown for the individual sub-fields below.',
+                  leaf:   'Out of everything the model predicted for this field, how much of it was correct. For standalone leaf fields this equals the Average Score.',
+              },
+          },
+          recall: {
+              title: 'Recall',
+              titleByMethodType: {
+                  list:   'Recall',
+                  object: 'Average Recall of Subfields',
+                  leaf:   'Recall',
+              },
+              techByMethodType: {
+                  list:   'micro',
+                  object: 'weighted average',
+                  leaf:   'micro',
+              },
+              byMethodType: {
+                  list:   'Out of all the list items that were expected across every example, how many did the model correctly predict. Longer lists have more influence on this number than shorter ones.',
+                  object: 'The weighted average of each sub-field\'s aggregated Recall, using each sub-field\'s configured weight. This value will always equal the weighted average of the Recall figures shown for the individual sub-fields below.',
+                  leaf:   'Out of all the values that were expected for this field, how many did the model get right. For standalone leaf fields this is the same as Precision.',
+              },
+          },
+          f1_score: {
+              title: 'F1 Score',
+              titleByMethodType: {
+                  list:   'F1 Score',
+                  object: 'Average F1 Measure of Subfields',
+                  leaf:   'F1 Score',
+              },
+              techByMethodType: {
+                  list:   'micro',
+                  object: 'weighted average',
+                  leaf:   'micro',
+              },
+              byMethodType: {
+                  list:   'A single score that balances Precision and Recall by taking their harmonic mean. This can differ from the Average Score when list lengths vary between examples \u2014 the Average Score weights each example equally, while F1 Score weights each item equally.',
+                  object: 'The weighted average of each sub-field\'s aggregated F1 Measure, using each sub-field\'s configured weight. This value will always equal the weighted average of the F1 figures shown for the individual sub-fields below.',
+                  leaf:   'A single score that balances Precision and Recall by taking their harmonic mean. For standalone leaf fields this agrees with the Average Score.',
+              },
+          },
+      };
+
+      // Shown only when the field is nested inside a list (isNestedInList returns true).
+      const LEAF_NESTING_NOTE = 'Only predicted items that were matched to an expected item and expected items the model missed are counted here. '
+          + 'Expected items the model missed count against Recall. '
+          + 'Extra items the model predicted that had no match to an expected element are not penalized at this level \u2014 the parent list field already handles that.';
+
+      // Resolve a method string to one of the three canonical method types.
+      function resolveMethodType(method) {
+          if (method === 'list_greedy_f1' || method === 'list_ordered_f1') return 'list';
+          if (method && method.startsWith('agg:')) return 'object';
+          return 'leaf';
+      }
+
+      // Returns true if the field at fullPath is a direct child of a list/array node.
+      // Walks fieldMetricsTree using the dot-separated path parts.
+      function isNestedInList(fullPath) {
+          const parts = fullPath ? fullPath.split('.') : [];
+          if (parts.length < 2) return false;  // top-level field has no parent
+          let node = fieldMetricsTree;
+          for (let i = 0; i < parts.length - 1; i++) {
+              if (!node[parts[i]]) return false;
+              if (i < parts.length - 2) {
+                  node = node[parts[i]]['children'];  // step through intermediates
+              } else {
+                  node = node[parts[i]];              // stop at the parent node
+              }
+          }
+          return node['is_array'] === true;
+      }
+
+      // Show a focused popover for a single column header ? click.
+      // el     – the clicked ? element
+      // column – key into COLUMN_TOOLTIPS ('precision' | 'recall' | 'f1_score')
+      // method – raw comparison method string from the data
+      // path   – full dot-separated field path (used to detect list nesting)
+      function showColumnTooltip(el, column, method, path) {
+          const popover = document.getElementById('fieldInfoPopover');
+          const colInfo = COLUMN_TOOLTIPS[column];
+          const methodType = resolveMethodType(method);
+          const desc = colInfo.byMethodType[methodType] || colInfo.byMethodType.leaf;
+          const techTerm = colInfo.techByMethodType[methodType];
+          const titleStr = (colInfo.titleByMethodType && colInfo.titleByMethodType[methodType]) || colInfo.title;
+
+          let html = '<div class="fip-title">' + titleStr
+              + (techTerm ? ' <span style="font-weight:normal;color:#8b949e;">(' + techTerm + ')</span>' : '')
+              + '</div>';
+          html += '<div class="fip-desc">' + desc + '</div>';
+          if (methodType === 'leaf' && isNestedInList(path)) {
+              html += '<div class="fip-note">' + LEAF_NESTING_NOTE + '</div>';
+          }
+
+          popover.innerHTML = html;
+
+          const rect = el.getBoundingClientRect();
+          const popWidth = 420;
+          let left = rect.left + window.scrollX;
+          if (left + popWidth > window.innerWidth - 16) {
+              left = window.innerWidth - popWidth - 16 + window.scrollX;
+          }
+          popover.style.left = Math.max(8, left) + 'px';
+          popover.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+          popover.style.display = 'block';
+
+          setTimeout(() => {
+              document.addEventListener('click', function hidePopover(e) {
+                  if (!popover.contains(e.target) && e.target !== el) {
+                      popover.style.display = 'none';
+                      document.removeEventListener('click', hidePopover);
+                  }
+              });
+          }, 100);
+
+          event.stopPropagation();
+      }
+
+      // Global "How are fields scored?" popup shown after the section description
+      function showFieldScoringInfo(el) {
+          const popover = document.getElementById('fieldInfoPopover');
+
+          let html = '<div class="fip-title">How Fields Are Scored</div>';
+          html += '<div class="fip-desc">Precision and Recall for each field are determined by its configured scoring function — for example, <strong>exact match</strong>, <strong>fuzzy similarity</strong>, or other comparators. The specific function used is shown below each field name in the tables.</div>';
+          html += '<ul style="margin: 10px 0 0 0; padding-left: 18px; color: #8b949e; font-size: 0.95em; line-height: 1.6;">'
+              + '<li><strong style="color:#c9d1d9;">Lists:</strong> Precision and Recall reflect how well the predicted object matched the expected object it was paired with. Extra predicted items with no matching expected item are penalized at the parent list field level — not at the individual sub-field level.</li>'
+              + '<li style="margin-top: 6px;"><strong style="color:#c9d1d9;">Dicts / Objects:</strong> The weighted average of each sub-field\'s aggregated Precision, Recall, and F1 is reported — so the object-level figures always match the average of the sub-field values shown.</li>'
+              + '</ul>';
+
+          popover.innerHTML = html;
+
+          const rect = el.getBoundingClientRect();
+          const popWidth = 420;
+          let left = rect.left + window.scrollX;
+          if (left + popWidth > window.innerWidth - 16) {
+              left = window.innerWidth - popWidth - 16 + window.scrollX;
+          }
+          popover.style.left = Math.max(8, left) + 'px';
+          popover.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+          popover.style.display = 'block';
+
+          setTimeout(() => {
+              document.addEventListener('click', function hidePopover(e) {
+                  if (!popover.contains(e.target) && e.target !== el) {
+                      popover.style.display = 'none';
+                      document.removeEventListener('click', hidePopover);
+                  }
+              });
+          }, 100);
+
+          event.stopPropagation();
+      }
+
+      // Performance Rank column header tooltip for the summary table (shown when per-field metrics are used)
+      function formatCostRate(costRate, timeUnit) {
+          const m = timeUnit.match(/^(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?)$/i);
+          if (!m) return `$${costRate.toFixed(2)} per ${timeUnit}`;
+          const val = parseFloat(m[1]);
+          const unit = m[2].toLowerCase();
+          let unitName;
+          if (['s', 'sec', 'second', 'seconds'].includes(unit)) {
+              unitName = val === 1 ? 'second' : `${val} seconds`;
+          } else if (['m', 'min', 'minute', 'minutes'].includes(unit)) {
+              unitName = val === 1 ? 'minute' : `${val} minutes`;
+          } else {
+              unitName = val === 1 ? 'hour' : `${val} hours`;
+          }
+          return `$${costRate.toFixed(2)} per ${unitName}`;
+      }
+
+      function showCostRateTooltip(el, costRate, timeUnit, isImputed) {
+          const popover = document.getElementById('fieldInfoPopover');
+          const rateStr = formatCostRate(costRate, timeUnit);
+          const title = isImputed ? 'Estimated Cost Rate' : 'Custom Cost Rate';
+          const desc = isImputed
+              ? `Cost was estimated at <strong>${rateStr}</strong> — LiteLLM had no pricing data for this model so a default rate was applied.`
+              : `Cost was calculated at <strong>${rateStr}</strong> using a custom rate set in the model config.`;
+
+          popover.innerHTML = `<div class="fip-title">${title}</div><div class="fip-desc">${desc}</div>`;
+
+          const rect = el.getBoundingClientRect();
+          const popWidth = 380;
+          let left = rect.left + window.scrollX;
+          if (left + popWidth > window.innerWidth - 16) {
+              left = window.innerWidth - popWidth - 16 + window.scrollX;
+          }
+          popover.style.left = Math.max(8, left) + 'px';
+          popover.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+          popover.style.display = 'block';
+
+          setTimeout(() => {
+              document.addEventListener('click', function hidePopover(e) {
+                  if (!popover.contains(e.target) && e.target !== el) {
+                      popover.style.display = 'none';
+                      document.removeEventListener('click', hidePopover);
+                  }
+              });
+          }, 100);
+
+          event.stopPropagation();
+      }
+
+      function showPerformanceRankTooltip(el) {
+          const popover = document.getElementById('fieldInfoPopover');
+
+          let html = '<div class="fip-title">Performance Rank</div>';
+          html += '<div class="fip-desc">Models are ranked by their mean per-document score — a continuous 0–100% value that averages each field\'s score across all documents. Unlike binary accuracy (all-or-nothing per document), this gives partial credit for partially correct results, making it a more sensitive indicator of true model quality. The delta shown below the rank is the percentage-point gap from the top-scoring model.</div>';
+
+          popover.innerHTML = html;
+
+          const rect = el.getBoundingClientRect();
+          const popWidth = 420;
+          let left = rect.left + window.scrollX;
+          if (left + popWidth > window.innerWidth - 16) {
+              left = window.innerWidth - popWidth - 16 + window.scrollX;
+          }
+          popover.style.left = Math.max(8, left) + 'px';
+          popover.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+          popover.style.display = 'block';
+
+          setTimeout(() => {
+              document.addEventListener('click', function hidePopover(e) {
+                  if (!popover.contains(e.target) && e.target !== el) {
+                      popover.style.display = 'none';
+                      document.removeEventListener('click', hidePopover);
+                  }
+              });
+          }, 100);
+
+          event.stopPropagation();
+      }
+
+      // Field metrics graph functions
+      function showFieldGraphs(fieldName) {
+          const modal = document.getElementById('fieldGraphModal');
+          const title = document.getElementById('fieldGraphTitle');
+
+          title.textContent = 'Field Metrics: ' + fieldName;
+          modal.style.display = 'block';
+
+          // Get data for this field
+          const data = fieldMetricsData[fieldName];
+          if (!data) {
+              console.error('No data found for field:', fieldName);
+              return;
+          }
+
+          // Create charts
+          createFieldCharts(data, fieldName);
+      }
+
+      function closeFieldGraphModal() {
+          const modal = document.getElementById('fieldGraphModal');
+          modal.style.display = 'none';
+      }
+
+      // Field Config modal
+      function showFieldConfigModal() {
+          const modal = document.getElementById('fieldConfigModal');
+          const container = document.getElementById('fieldConfigContent');
+          if (!modal || !container) return;
+
+          let html = '';
+
+          if (fieldConfigJson) {
+              // Full config with defaults — render as syntax-highlighted JSON
+              const jsonStr = JSON.stringify(fieldConfigJson, null, 2);
+              html = '<pre style="'
+                  + 'background:#0d1117; border:1px solid #30363d; border-radius:6px;'
+                  + 'padding:16px 18px; margin:0; font-family:\'SF Mono\',\'Fira Code\',\'JetBrains Mono\',monospace;'
+                  + 'font-size:0.85em; line-height:1.6; color:#c9d1d9;'
+                  + 'overflow-x:auto; white-space:pre; max-height:60vh; overflow-y:auto;'
+                  + '">' + syntaxHighlightJson(jsonStr) + '</pre>';
+          } else {
+              // Fallback: show method + params summary from fieldMetricsData
+              const fields = Object.keys(fieldMetricsData);
+              if (fields.length === 0) {
+                  html = '<p style="color:#8b949e;">No field configuration available.</p>';
+              } else {
+                  fields.forEach(function(fieldName) {
+                      const data = fieldMetricsData[fieldName];
+                      const method = data.comparison_methods && data.comparison_methods[0] ? data.comparison_methods[0] : '—';
+                      const config = data.comparison_configs && data.comparison_configs[0] ? data.comparison_configs[0] : null;
+                      const fallback = {};
+                      fallback[fieldName] = { method: method };
+                      if (config && Object.keys(config).length > 0) fallback[fieldName].params = config;
+                      const jsonStr = JSON.stringify(fallback, null, 2);
+                      html += '<pre style="'
+                          + 'background:#0d1117; border:1px solid #30363d; border-radius:6px;'
+                          + 'padding:12px 14px; margin-bottom:10px; font-family:\'SF Mono\',\'Fira Code\',monospace;'
+                          + 'font-size:0.85em; line-height:1.6; color:#c9d1d9; overflow-x:auto; white-space:pre;'
+                          + '">' + syntaxHighlightJson(jsonStr) + '</pre>';
+                  });
+              }
+          }
+
+          container.innerHTML = html;
+          modal.style.display = 'block';
+      }
+
+      function syntaxHighlightJson(json) {
+          return json
+              .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+              .replace(/("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?)/g,
+                  function(match) {
+                      let cls = 'color:#79c0ff';  // number
+                      if (/^"/.test(match)) {
+                          cls = /:$/.test(match) ? 'color:#a5d6ff' : 'color:#a8dabc';  // key : string value
+                      } else if (/true|false/.test(match)) {
+                          cls = 'color:#e3b341';
+                      } else if (/null/.test(match)) {
+                          cls = 'color:#8b949e';
+                      }
+                      return '<span style="' + cls + '">' + match + '</span>';
+                  }
+              );
+      }
+
+      function closeFieldConfigModal() {
+          const modal = document.getElementById('fieldConfigModal');
+          if (modal) modal.style.display = 'none';
+      }
+
+      function createFieldCharts(data, fieldName) {
+          // Precision Chart
+          const precisionChart = echarts.init(document.getElementById('fieldPrecisionChart'), 'dark');
+          const precisionOption = {
+              backgroundColor: '#0d1117',
+              tooltip: {
+                  trigger: 'axis',
+                  axisPointer: { type: 'shadow' },
+                  backgroundColor: '#161b22',
+                  borderColor: '#30363d',
+                  textStyle: { color: '#c9d1d9' },
+                  formatter: function(params) {
+                      return params[0].name + '<br/>Precision: ' + params[0].value + '%';
+                  }
+              },
+              xAxis: {
+                  type: 'category',
+                  data: data.models,
+                  axisLabel: {
+                      color: '#8b949e',
+                      rotate: 45,
+                      fontSize: 10
+                  },
+                  axisLine: { lineStyle: { color: '#30363d' } }
+              },
+              yAxis: {
+                  type: 'value',
+                  name: 'Precision (%)',
+                  nameTextStyle: { color: '#8b949e' },
+                  axisLabel: { color: '#8b949e' },
+                  axisLine: { lineStyle: { color: '#30363d' } },
+                  splitLine: { lineStyle: { color: '#21262d' } },
+                  min: 0,
+                  max: 100
+              },
+              grid: {
+                  left: '60px',
+                  right: '40px',
+                  bottom: '40px',
+                  top: '40px',
+                  containLabel: true
+              },
+              series: [{
+                  name: 'Precision',
+                  type: 'bar',
+                  data: data.precision,
+                  barMaxWidth: 60,
+                  itemStyle: {
+                      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                          { offset: 0, color: '#58a6ff' },
+                          { offset: 1, color: '#388bfd' }
+                      ]),
+                      borderRadius: [4, 4, 0, 0]
+                  },
+                  label: {
+                      show: true,
+                      position: 'top',
+                      color: '#c9d1d9',
+                      formatter: '{c}%'
+                  }
+              }]
+          };
+          precisionChart.setOption(precisionOption);
+
+          // Recall Chart
+          const recallChart = echarts.init(document.getElementById('fieldRecallChart'), 'dark');
+          const recallOption = {
+              backgroundColor: '#0d1117',
+              tooltip: {
+                  trigger: 'axis',
+                  axisPointer: { type: 'shadow' },
+                  backgroundColor: '#161b22',
+                  borderColor: '#30363d',
+                  textStyle: { color: '#c9d1d9' },
+                  formatter: function(params) {
+                      return params[0].name + '<br/>Recall: ' + params[0].value + '%';
+                  }
+              },
+              xAxis: {
+                  type: 'category',
+                  data: data.models,
+                  axisLabel: {
+                      color: '#8b949e',
+                      rotate: 45,
+                      fontSize: 10
+                  },
+                  axisLine: { lineStyle: { color: '#30363d' } }
+              },
+              yAxis: {
+                  type: 'value',
+                  name: 'Recall (%)',
+                  nameTextStyle: { color: '#8b949e' },
+                  axisLabel: { color: '#8b949e' },
+                  axisLine: { lineStyle: { color: '#30363d' } },
+                  splitLine: { lineStyle: { color: '#21262d' } },
+                  min: 0,
+                  max: 100
+              },
+              grid: {
+                  left: '60px',
+                  right: '40px',
+                  bottom: '80px',
+                  top: '40px',
+                  containLabel: true
+              },
+              series: [{
+                  name: 'Recall',
+                  type: 'bar',
+                  data: data.recall,
+                  barMaxWidth: 60,
+                  itemStyle: {
+                      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                          { offset: 0, color: '#7ee787' },
+                          { offset: 1, color: '#3fb950' }
+                      ]),
+                      borderRadius: [4, 4, 0, 0]
+                  },
+                  label: {
+                      show: true,
+                      position: 'top',
+                      color: '#c9d1d9',
+                      formatter: '{c}%'
+                  }
+              }]
+          };
+          recallChart.setOption(recallOption);
+
+          // F1 Score Chart
+          const f1Chart = echarts.init(document.getElementById('fieldF1Chart'), 'dark');
+          const f1Option = {
+              backgroundColor: '#0d1117',
+              tooltip: {
+                  trigger: 'axis',
+                  axisPointer: { type: 'shadow' },
+                  backgroundColor: '#161b22',
+                  borderColor: '#30363d',
+                  textStyle: { color: '#c9d1d9' },
+                  formatter: function(params) {
+                      return params[0].name + '<br/>F1 Score: ' + params[0].value + '%';
+                  }
+              },
+              xAxis: {
+                  type: 'category',
+                  data: data.models,
+                  axisLabel: {
+                      color: '#8b949e',
+                      rotate: 45,
+                      fontSize: 10
+                  },
+                  axisLine: { lineStyle: { color: '#30363d' } }
+              },
+              yAxis: {
+                  type: 'value',
+                  name: 'F1 Score (%)',
+                  nameTextStyle: { color: '#8b949e' },
+                  axisLabel: { color: '#8b949e' },
+                  axisLine: { lineStyle: { color: '#30363d' } },
+                  splitLine: { lineStyle: { color: '#21262d' } },
+                  min: 0,
+                  max: 100
+              },
+              grid: {
+                  left: '60px',
+                  right: '40px',
+                  bottom: '0px',
+                  top: '40px',
+                  containLabel: true
+              },
+              series: [{
+                  name: 'F1 Score',
+                  type: 'bar',
+                  data: data.f1_score,
+                  barMaxWidth: 60,
+                  itemStyle: {
+                      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                          { offset: 0, color: '#a371f7' },
+                          { offset: 1, color: '#8957e5' }
+                      ]),
+                      borderRadius: [4, 4, 0, 0]
+                  },
+                  label: {
+                      show: true,
+                      position: 'top',
+                      color: '#c9d1d9',
+                      formatter: '{c}%'
+                  }
+              }]
+          };
+          f1Chart.setOption(f1Option);
+
+          // Make charts responsive
+          window.addEventListener('resize', function() {
+              precisionChart.resize();
+              recallChart.resize();
+              f1Chart.resize();
+          });
+      }
+
+      // Close modal when clicking outside of it
+      window.onclick = function(event) {
+          const promptModal = document.getElementById('promptModal');
+          const fieldModal = document.getElementById('fieldGraphModal');
+          const fieldConfigModal = document.getElementById('fieldConfigModal');
+          if (event.target === promptModal) {
+              closePromptModal();
+          }
+          if (event.target === fieldModal) {
+              closeFieldGraphModal();
+          }
+          if (event.target === fieldConfigModal) {
+              closeFieldConfigModal();
+          }
+      }
+
+      // Close modal with Escape key
+      document.addEventListener('keydown', function(event) {
+          if (event.key === 'Escape') {
+              closePromptModal();
+              closeFieldGraphModal();
+          }
+      });
+
+      // ECharts initialization
+      const chartData = {{ chart_data | tojson }};
+
+      // Accuracy Chart
+      {% if not has_field_metrics or all_field_names|length == 1 %}
+      const accuracyChart = echarts.init(document.getElementById('accuracyChart'), 'dark');
+      const accuracyOption = {
+          backgroundColor: '#0d1117',
+          title: {
+              text: '',
+              textStyle: { color: '#8b949e' }
+          },
+          tooltip: {
+              trigger: 'axis',
+              axisPointer: { type: 'shadow' },
+              backgroundColor: '#161b22',
+              borderColor: '#30363d',
+              textStyle: { color: '#c9d1d9' }
+          },
+          legend: {
+              data: ['Accuracy'],
+              textStyle: { color: '#8b949e' }
+          },
+          toolbox: {
+              feature: {
+                  saveAsImage: {
+                      title: 'Save',
+                      backgroundColor: '#0d1117',
+                      iconStyle: { borderColor: '#58a6ff' }
+                  },
+                  dataZoom: { title: { zoom: 'Zoom', back: 'Reset' } },
+                  restore: { title: 'Restore' }
+              },
+              iconStyle: { borderColor: '#58a6ff' }
+          },
+          xAxis: {
+              type: 'category',
+              data: chartData.models,
+              axisLabel: {
+                  color: '#8b949e',
+                  rotate: 45,
+                  fontSize: 11
+              },
+              axisLine: { lineStyle: { color: '#30363d' } }
+          },
+          yAxis: {
+              type: 'value',
+              name: 'Accuracy (%)',
+              nameTextStyle: { color: '#8b949e' },
+              axisLabel: { color: '#8b949e' },
+              axisLine: { lineStyle: { color: '#30363d' } },
+              splitLine: { lineStyle: { color: '#21262d' } },
+              min: 0,
+              max: 100
+          },
+          grid: {
+              left: '60px',
+              right: '40px',
+              bottom: '60px',
+              top: '40px',
+              containLabel: true
+          },
+          series: [{
+              name: 'Score',
+              type: 'bar',
+              barMaxWidth: 60,
+              data: chartData.accuracy,
+              itemStyle: {
+                  color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                      { offset: 0, color: '#58a6ff' },
+                      { offset: 1, color: '#388bfd' }
+                  ]),
+                  borderRadius: [4, 4, 0, 0]
+              },
+              emphasis: {
+                  itemStyle: {
+                      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                          { offset: 0, color: '#79c0ff' },
+                          { offset: 1, color: '#58a6ff' }
+                      ])
+                  }
+              },
+              label: {
+                  show: true,
+                  position: 'top',
+                  color: '#c9d1d9',
+                  formatter: '{c}%'
+              }
+          }]
+      };
+      accuracyChart.setOption(accuracyOption);
+      {% endif %}
+
+      // Speed Chart (simplified to show only avg time)
+      const speedChart = echarts.init(document.getElementById('speedChart'), 'dark');
+      const speedOption = {
+          backgroundColor: '#0d1117',
+          title: {
+              text: '',
+              textStyle: { color: '#8b949e' }
+          },
+          tooltip: {
+              trigger: 'axis',
+              axisPointer: { type: 'shadow' },
+              backgroundColor: '#161b22',
+              borderColor: '#30363d',
+              textStyle: { color: '#c9d1d9' },
+              formatter: function(params) {
+                  return params[0].name + '<br/>' +
+                         'Avg Time: ' + params[0].value + 's';
+              }
+          },
+          legend: {
+              data: ['Avg Time/Doc'],
+              textStyle: { color: '#8b949e' }
+          },
+          toolbox: {
+              feature: {
+                  saveAsImage: {
+                      title: 'Save',
+                      backgroundColor: '#0d1117',
+                      iconStyle: { borderColor: '#a371f7' }
+                  },
+                  dataZoom: { title: { zoom: 'Zoom', back: 'Reset' } },
+                  restore: { title: 'Restore' }
+              },
+              iconStyle: { borderColor: '#a371f7' }
+          },
+          xAxis: {
+              type: 'category',
+              data: chartData.models,
+              axisLabel: {
+                  color: '#8b949e',
+                  rotate: 45,
+                  fontSize: 11
+              },
+              axisLine: { lineStyle: { color: '#30363d' } }
+          },
+          yAxis: {
+              type: 'value',
+              name: 'Time (seconds)',
+              nameTextStyle: { color: '#8b949e' },
+              axisLabel: { color: '#8b949e' },
+              axisLine: { lineStyle: { color: '#30363d' } },
+              splitLine: { lineStyle: { color: '#21262d' } },
+              min: 0
+          },
+          grid: {
+              left: '60px',
+              right: '40px',
+              bottom: '60px',
+              top: '40px',
+              containLabel: true
+          },
+          series: [{
+              name: 'Avg Time/Doc',
+              type: 'bar',
+              data: chartData.avg_time,
+              barMaxWidth: 60,
+              itemStyle: {
+                  color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                      { offset: 0, color: '#a371f7' },
+                      { offset: 1, color: '#8957e5' }
+                  ]),
+                  borderRadius: [4, 4, 0, 0]
+              },
+              emphasis: {
+                  itemStyle: {
+                      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                          { offset: 0, color: '#c49bff' },
+                          { offset: 1, color: '#a371f7' }
+                      ])
+                  }
+              },
+              label: {
+                  show: true,
+                  position: 'top',
+                  color: '#c9d1d9',
+                  formatter: '{c}s'
+              }
+          }]
+      };
+      speedChart.setOption(speedOption);
+
+      // Cost Chart (simplified to show only avg cost)
+      const costChart = echarts.init(document.getElementById('costChart'), 'dark');
+      const costOption = {
+          backgroundColor: '#0d1117',
+          title: {
+              text: '',
+              textStyle: { color: '#8b949e' }
+          },
+          tooltip: {
+              trigger: 'axis',
+              axisPointer: { type: 'shadow' },
+              backgroundColor: '#161b22',
+              borderColor: '#30363d',
+              textStyle: { color: '#c9d1d9' },
+              formatter: function(params) {
+                  return params[0].name + '<br/>' +
+                         'Avg Cost: $' + params[0].value.toFixed(6);
+              }
+          },
+          legend: {
+              data: ['Avg Cost/Doc'],
+              textStyle: { color: '#8b949e' }
+          },
+          toolbox: {
+              feature: {
+                  saveAsImage: {
+                      title: 'Save',
+                      backgroundColor: '#0d1117',
+                      iconStyle: { borderColor: '#d29922' }
+                  },
+                  dataZoom: { title: { zoom: 'Zoom', back: 'Reset' } },
+                  restore: { title: 'Restore' }
+              },
+              iconStyle: { borderColor: '#d29922' }
+          },
+          xAxis: {
+              type: 'category',
+              data: chartData.models,
+              axisLabel: {
+                  color: '#8b949e',
+                  rotate: 45,
+                  fontSize: 11
+              },
+              axisLine: { lineStyle: { color: '#30363d' } }
+          },
+          yAxis: {
+              type: 'value',
+              name: 'Cost ($)',
+              nameTextStyle: { color: '#8b949e' },
+              axisLabel: {
+                  color: '#8b949e',
+                  formatter: '${value}'
+              },
+              axisLine: { lineStyle: { color: '#30363d' } },
+              splitLine: { lineStyle: { color: '#21262d' } },
+              min: 0
+          },
+          grid: {
+              left: '70px',
+              right: '40px',
+              bottom: '60px',
+              top: '40px',
+              containLabel: true
+          },
+          series: [{
+              name: 'Avg Cost/Doc',
+              type: 'bar',
+              data: chartData.avg_cost,
+              barMaxWidth: 60,
+              itemStyle: {
+                  color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                      { offset: 0, color: '#d29922' },
+                      { offset: 1, color: '#bb8009' }
+                  ]),
+                  borderRadius: [4, 4, 0, 0]
+              },
+              emphasis: {
+                  itemStyle: {
+                      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                          { offset: 0, color: '#e3b341' },
+                          { offset: 1, color: '#d29922' }
+                      ])
+                  }
+              },
+              label: {
+                  show: true,
+                  position: 'top',
+                  color: '#c9d1d9',
+                  formatter: '${c}'
+              }
+          }]
+      };
+      costChart.setOption(costOption);
+
+      // Histogram Chart Colors
+      const colors = ['#58a6ff', '#7ee787', '#a371f7', '#d29922', '#f778ba', '#79c0ff', '#a5d6ff', '#56d4dd'];
+
+      // CSV Download function
+      function downloadCSV(metricType) {
+          const histogramData = chartData['histogram_' + metricType];
+          const rawData = histogramData.raw_data;
+          const models = chartData.models;
+
+          // Build CSV content
+          let csvContent = 'document,' + models.join(',') + '\n';
+
+          rawData.forEach(row => {
+              const values = [row.document];
+              models.forEach(model => {
+                  const val = row[model];
+                  values.push(val !== null && val !== undefined ? val : '');
+              });
+              csvContent += values.join(',') + '\n';
+          });
+
+          // Create download
+          const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+          const link = document.createElement('a');
+          const url = URL.createObjectURL(blob);
+          link.setAttribute('href', url);
+          link.setAttribute('download', metricType + '_distribution_data.csv');
+          link.style.visibility = 'hidden';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+      }
+
+      // Helper function to create histogram series for multiple models
+      function createHistogramSeries(histogramData, models) {
+          const series = [];
+          models.forEach((model, idx) => {
+              const modelData = histogramData.models[model];
+              if (modelData) {
+                  series.push({
+                      name: model,
+                      type: 'bar',
+                      barMaxWidth: 60,
+                      data: modelData.counts,
+                      itemStyle: {
+                          color: colors[idx % colors.length],
+                          borderRadius: [2, 2, 0, 0]
+                      },
+                      emphasis: {
+                          itemStyle: {
+                              shadowBlur: 10,
+                              shadowColor: 'rgba(0, 0, 0, 0.3)'
+                          }
+                      },
+                      barGap: '10%'
+                  });
+              }
+          });
+          return series;
+      }
+
+      // Simple tooltip formatter for histograms
+      function histogramTooltipFormatter(params, binLabels) {
+          const binLabel = binLabels[params.dataIndex];
+          return '<strong>' + params.seriesName + '</strong><br/>' +
+                 'Range: ' + binLabel + '<br/>' +
+                 'Count: ' + params.value;
+      }
+
+      // Score Histogram Chart
+      const scoreHistogramChart = echarts.init(document.getElementById('scoreHistogramChart'), 'dark');
+      const scoreHistogramOption = {
+          backgroundColor: '#0d1117',
+          tooltip: {
+              trigger: 'item',
+              backgroundColor: '#161b22',
+              borderColor: '#30363d',
+              textStyle: { color: '#c9d1d9' },
+              formatter: function(params) {
+                  return histogramTooltipFormatter(params, chartData.histogram_score.bin_labels);
+              }
+          },
+          legend: {
+              data: chartData.models,
+              textStyle: { color: '#8b949e' },
+              type: 'scroll',
+              bottom: 0
+          },
+          toolbox: {
+              feature: {
+                  saveAsImage: {
+                      title: 'Save',
+                      backgroundColor: '#0d1117',
+                      iconStyle: { borderColor: '#58a6ff' }
+                  },
+                  dataZoom: { title: { zoom: 'Zoom', back: 'Reset' } },
+                  restore: { title: 'Restore' }
+              },
+              iconStyle: { borderColor: '#58a6ff' }
+          },
+          xAxis: {
+              type: 'category',
+              name: {% if has_field_metrics and all_field_names|length == 1 %}'Accuracy Range'{% else %}'Score Range'{% endif %},
+              nameLocation: 'middle',
+              nameGap: 55,
+              nameTextStyle: { color: '#8b949e' },
+              data: chartData.histogram_score.bin_labels,
+              axisLabel: {
+                  color: '#8b949e',
+                  rotate: 45,
+                  fontSize: 9
+              },
+              axisLine: { lineStyle: { color: '#30363d' } }
+          },
+          yAxis: {
+              type: 'value',
+              name: 'Number of Documents',
+              nameTextStyle: { color: '#8b949e' },
+              axisLabel: { color: '#8b949e' },
+              axisLine: { lineStyle: { color: '#30363d' } },
+              splitLine: { lineStyle: { color: '#21262d' } },
+              min: 0
+          },
+          series: createHistogramSeries(chartData.histogram_score, chartData.models),
+          grid: {
+              left: '70px',
+              right: '40px',
+              bottom: '110px',
+              top: '50px',
+              containLabel: true
+          }
+      };
+      scoreHistogramChart.setOption(scoreHistogramOption);
+
+      // Time Histogram Chart
+      const timeHistogramChart = echarts.init(document.getElementById('timeHistogramChart'), 'dark');
+      const timeHistogramOption = {
+          backgroundColor: '#0d1117',
+          tooltip: {
+              trigger: 'item',
+              backgroundColor: '#161b22',
+              borderColor: '#30363d',
+              textStyle: { color: '#c9d1d9' },
+              formatter: function(params) {
+                  return histogramTooltipFormatter(params, chartData.histogram_time.bin_labels);
+              }
+          },
+          legend: {
+              data: chartData.models,
+              textStyle: { color: '#8b949e' },
+              type: 'scroll',
+              bottom: 0
+          },
+          toolbox: {
+              feature: {
+                  saveAsImage: {
+                      title: 'Save',
+                      backgroundColor: '#0d1117',
+                      iconStyle: { borderColor: '#a371f7' }
+                  },
+                  dataZoom: { title: { zoom: 'Zoom', back: 'Reset' } },
+                  restore: { title: 'Restore' }
+              },
+              iconStyle: { borderColor: '#a371f7' }
+          },
+          xAxis: {
+              type: 'category',
+              name: 'Time Range',
+              nameLocation: 'middle',
+              nameGap: 55,
+              nameTextStyle: { color: '#8b949e' },
+              data: chartData.histogram_time.bin_labels,
+              axisLabel: {
+                  color: '#8b949e',
+                  rotate: 45,
+                  fontSize: 9
+              },
+              axisLine: { lineStyle: { color: '#30363d' } }
+          },
+          yAxis: {
+              type: 'value',
+              name: 'Number of Documents',
+              nameTextStyle: { color: '#8b949e' },
+              axisLabel: { color: '#8b949e' },
+              axisLine: { lineStyle: { color: '#30363d' } },
+              splitLine: { lineStyle: { color: '#21262d' } },
+              min: 0
+          },
+          series: createHistogramSeries(chartData.histogram_time, chartData.models),
+          grid: {
+              left: '70px',
+              right: '40px',
+              bottom: '110px',
+              top: '50px',
+              containLabel: true
+          }
+      };
+      timeHistogramChart.setOption(timeHistogramOption);
+
+      // Cost Histogram Chart
+      const costHistogramChart = echarts.init(document.getElementById('costHistogramChart'), 'dark');
+      const costHistogramOption = {
+          backgroundColor: '#0d1117',
+          tooltip: {
+              trigger: 'item',
+              backgroundColor: '#161b22',
+              borderColor: '#30363d',
+              textStyle: { color: '#c9d1d9' },
+              formatter: function(params) {
+                  return histogramTooltipFormatter(params, chartData.histogram_cost.bin_labels);
+              }
+          },
+          legend: {
+              data: chartData.models,
+              textStyle: { color: '#8b949e' },
+              type: 'scroll',
+              bottom: 0
+          },
+          toolbox: {
+              feature: {
+                  saveAsImage: {
+                      title: 'Save',
+                      backgroundColor: '#0d1117',
+                      iconStyle: { borderColor: '#d29922' }
+                  },
+                  dataZoom: { title: { zoom: 'Zoom', back: 'Reset' } },
+                  restore: { title: 'Restore' }
+              },
+              iconStyle: { borderColor: '#d29922' }
+          },
+          xAxis: {
+              type: 'category',
+              name: 'Cost Range',
+              nameLocation: 'middle',
+              nameGap: 55,
+              nameTextStyle: { color: '#8b949e' },
+              data: chartData.histogram_cost.bin_labels,
+              axisLabel: {
+                  color: '#8b949e',
+                  rotate: 45,
+                  fontSize: 9
+              },
+              axisLine: { lineStyle: { color: '#30363d' } }
+          },
+          yAxis: {
+              type: 'value',
+              name: 'Number of Documents',
+              nameTextStyle: { color: '#8b949e' },
+              axisLabel: { color: '#8b949e' },
+              axisLine: { lineStyle: { color: '#30363d' } },
+              splitLine: { lineStyle: { color: '#21262d' } },
+              min: 0
+          },
+          series: createHistogramSeries(chartData.histogram_cost, chartData.models),
+          grid: {
+              left: '70px',
+              right: '40px',
+              bottom: '110px',
+              top: '50px',
+              containLabel: true
+          }
+      };
+      costHistogramChart.setOption(costHistogramOption);
+
+      // Scatter Plot Chart with dropdown selection
+      const scatterChart = echarts.init(document.getElementById('scatterChart'), 'dark');
+      const scatterColors = ['#58a6ff', '#7ee787', '#a371f7', '#d29922', '#f778ba', '#79c0ff', '#a5d6ff', '#56d4dd'];
+
+      const axisConfig = {
+          accuracy: { name: 'Accuracy (%)', unit: '%', decimals: 2 },
+          avg_cost: { name: 'Avg Cost per Document ($)', unit: '$', decimals: 6 },
+          avg_time: { name: 'Avg Time per Document (s)', unit: 's', decimals: 3 }
+      };
+
+      function updateScatterChart() {
+          const xAxis = document.getElementById('scatterXAxis').value;
+          const yAxis = document.getElementById('scatterYAxis').value;
+
+          const xConfig = axisConfig[xAxis];
+          const yConfig = axisConfig[yAxis];
+
+          // Build scatter data with model names
+          const scatterData = chartData.models.map((model, idx) => {
+              let xVal, yVal;
+
+              if (xAxis === 'accuracy') xVal = chartData.accuracy[idx];
+              else if (xAxis === 'avg_cost') xVal = chartData.avg_cost[idx];
+              else if (xAxis === 'avg_time') xVal = chartData.avg_time[idx];
+
+              if (yAxis === 'accuracy') yVal = chartData.accuracy[idx];
+              else if (yAxis === 'avg_cost') yVal = chartData.avg_cost[idx];
+              else if (yAxis === 'avg_time') yVal = chartData.avg_time[idx];
+
+              return {
+                  name: model,
+                  value: [xVal, yVal],
+                  itemStyle: { color: scatterColors[idx % scatterColors.length] }
+              };
+          });
+
+          const scatterOption = {
+              backgroundColor: '#0d1117',
+              tooltip: {
+                  trigger: 'item',
+                  backgroundColor: '#161b22',
+                  borderColor: '#30363d',
+                  textStyle: { color: '#c9d1d9' },
+                  formatter: function(params) {
+                      const xFormatted = xConfig.unit === '$'
+                          ? '$' + params.value[0].toFixed(xConfig.decimals)
+                          : params.value[0].toFixed(xConfig.decimals) + xConfig.unit;
+                      const yFormatted = yConfig.unit === '$'
+                          ? '$' + params.value[1].toFixed(yConfig.decimals)
+                          : params.value[1].toFixed(yConfig.decimals) + yConfig.unit;
+                      return '<strong>' + params.name + '</strong><br/>' +
+                             xConfig.name + ': ' + xFormatted + '<br/>' +
+                             yConfig.name + ': ' + yFormatted;
+                  }
+              },
+              toolbox: {
+                  feature: {
+                      saveAsImage: {
+                          title: 'Save',
+                          backgroundColor: '#0d1117',
+                          iconStyle: { borderColor: '#58a6ff' }
+                      },
+                      dataZoom: { title: { zoom: 'Zoom', back: 'Reset' } },
+                      restore: { title: 'Restore' }
+                  },
+                  iconStyle: { borderColor: '#58a6ff' }
+              },
+              xAxis: {
+                  type: 'value',
+                  name: xConfig.name,
+                  nameLocation: 'middle',
+                  nameGap: 35,
+                  nameTextStyle: { color: '#8b949e', fontSize: 12 },
+                  axisLabel: {
+                      color: '#8b949e',
+                      formatter: function(value) {
+                          if (xConfig.unit === '$') return '$' + value.toFixed(xConfig.decimals > 3 ? 4 : 2);
+                          return value.toFixed(xConfig.decimals > 2 ? 2 : xConfig.decimals) + (xConfig.unit !== '%' ? xConfig.unit : '');
+                      }
+                  },
+                  axisLine: { lineStyle: { color: '#30363d' } },
+                  splitLine: { lineStyle: { color: '#21262d' } }
+              },
+              yAxis: {
+                  type: 'value',
+                  name: yConfig.name,
+                  nameLocation: 'middle',
+                  nameGap: 60,
+                  nameTextStyle: { color: '#8b949e', fontSize: 12 },
+                  axisLabel: {
+                      color: '#8b949e',
+                      formatter: function(value) {
+                          if (yConfig.unit === '$') return '$' + value.toFixed(yConfig.decimals > 3 ? 4 : 2);
+                          return value.toFixed(yConfig.decimals > 2 ? 2 : yConfig.decimals) + (yConfig.unit !== '%' ? yConfig.unit : '');
+                      }
+                  },
+                  axisLine: { lineStyle: { color: '#30363d' } },
+                  splitLine: { lineStyle: { color: '#21262d' } }
+              },
+              grid: {
+                  left: '80px',
+                  right: '40px',
+                  bottom: '60px',
+                  top: '40px'
+              },
+              series: [{
+                  type: 'scatter',
+                  data: scatterData,
+                  symbolSize: 20,
+                  emphasis: {
+                      itemStyle: {
+                          shadowBlur: 10,
+                          shadowColor: 'rgba(88, 166, 255, 0.5)'
+                      }
+                  },
+                  label: {
+                      show: true,
+                      position: 'right',
+                      color: '#c9d1d9',
+                      fontSize: 11,
+                      formatter: function(params) {
+                          return params.name;
+                      }
+                  }
+              }]
+          };
+
+          scatterChart.setOption(scatterOption, true);
+      }
+
+      // Initialize scatter chart
+      updateScatterChart();
+
+      // Add event listeners for dropdowns
+      document.getElementById('scatterXAxis').addEventListener('change', updateScatterChart);
+      document.getElementById('scatterYAxis').addEventListener('change', updateScatterChart);
+
+      // Responsive resize
+      window.addEventListener('resize', function() {
+          {% if not has_field_metrics or all_field_names|length == 1 %}accuracyChart.resize();{% endif %}
+          speedChart.resize();
+          costChart.resize();
+          scoreHistogramChart.resize();
+          timeHistogramChart.resize();
+          costHistogramChart.resize();
+          scatterChart.resize();
+      });
+
+    </script>
+  </body>
+</html>

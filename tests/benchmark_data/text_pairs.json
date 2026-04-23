@@ -1,0 +1,307 @@
+[
+  {
+    "id": "abbrev-1",
+    "a": "NYC",
+    "b": "New York City",
+    "category": "abbreviation",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "abbrev-2",
+    "a": "Dr.",
+    "b": "Doctor",
+    "category": "abbreviation",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "abbrev-3",
+    "a": "St.",
+    "b": "Street",
+    "category": "abbreviation",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "abbrev-4",
+    "a": "UC Berkeley",
+    "b": "University of California, Berkeley",
+    "category": "abbreviation",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "abbrev-5",
+    "a": "MIT",
+    "b": "Massachusetts Institute of Technology",
+    "category": "abbreviation",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "abbrev-6",
+    "a": "USA",
+    "b": "United States of America",
+    "category": "abbreviation",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "format-1",
+    "a": "john smith",
+    "b": "John Smith",
+    "category": "formatting",
+    "exact_expected": true,
+    "semantic_equivalent": true,
+    "note": "exact_expected is true because default comparison is case-insensitive"
+  },
+  {
+    "id": "format-2",
+    "a": "100 main st",
+    "b": "100 Main Street",
+    "category": "formatting",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "format-3",
+    "a": "  hello world  ",
+    "b": "hello world",
+    "category": "formatting",
+    "exact_expected": true,
+    "semantic_equivalent": true,
+    "note": "exact_expected is true because normalization strips whitespace"
+  },
+  {
+    "id": "format-4",
+    "a": "NEW YORK",
+    "b": "new york",
+    "category": "formatting",
+    "exact_expected": true,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "format-5",
+    "a": "San Francisco, CA",
+    "b": "San Francisco, California",
+    "category": "formatting",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "synonym-1",
+    "a": "purchase",
+    "b": "buy",
+    "category": "synonym",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "synonym-2",
+    "a": "large",
+    "b": "big",
+    "category": "synonym",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "synonym-3",
+    "a": "physician",
+    "b": "doctor",
+    "category": "synonym",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "synonym-4",
+    "a": "automobile",
+    "b": "car",
+    "category": "synonym",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "synonym-5",
+    "a": "begin",
+    "b": "start",
+    "category": "synonym",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "typo-1",
+    "a": "recieve",
+    "b": "receive",
+    "category": "typo",
+    "exact_expected": false,
+    "semantic_equivalent": true,
+    "min_fuzz_ratio": 0.8
+  },
+  {
+    "id": "typo-2",
+    "a": "accomodate",
+    "b": "accommodate",
+    "category": "typo",
+    "exact_expected": false,
+    "semantic_equivalent": true,
+    "min_fuzz_ratio": 0.8
+  },
+  {
+    "id": "typo-3",
+    "a": "occurence",
+    "b": "occurrence",
+    "category": "typo",
+    "exact_expected": false,
+    "semantic_equivalent": true,
+    "min_fuzz_ratio": 0.8
+  },
+  {
+    "id": "typo-4",
+    "a": "definately",
+    "b": "definitely",
+    "category": "typo",
+    "exact_expected": false,
+    "semantic_equivalent": true,
+    "min_fuzz_ratio": 0.7
+  },
+  {
+    "id": "numeric-1",
+    "a": "1st",
+    "b": "first",
+    "category": "numeric",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "numeric-2",
+    "a": "100",
+    "b": "one hundred",
+    "category": "numeric",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "numeric-3",
+    "a": "3rd",
+    "b": "third",
+    "category": "numeric",
+    "exact_expected": false,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "partial-1",
+    "a": "University of California",
+    "b": "University of California, Berkeley",
+    "category": "partial_overlap",
+    "exact_expected": false,
+    "semantic_equivalent": false,
+    "min_fuzz_ratio": 0.6
+  },
+  {
+    "id": "partial-2",
+    "a": "New York",
+    "b": "New York City",
+    "category": "partial_overlap",
+    "exact_expected": false,
+    "semantic_equivalent": true,
+    "min_fuzz_ratio": 0.7
+  },
+  {
+    "id": "partial-3",
+    "a": "Machine Learning",
+    "b": "Machine Learning Engineering",
+    "category": "partial_overlap",
+    "exact_expected": false,
+    "semantic_equivalent": false,
+    "min_fuzz_ratio": 0.6
+  },
+  {
+    "id": "different-1",
+    "a": "apple",
+    "b": "motorcycle",
+    "category": "completely_different",
+    "exact_expected": false,
+    "semantic_equivalent": false,
+    "max_fuzz_ratio": 0.3
+  },
+  {
+    "id": "different-2",
+    "a": "python",
+    "b": "refrigerator",
+    "category": "completely_different",
+    "exact_expected": false,
+    "semantic_equivalent": false,
+    "max_fuzz_ratio": 0.3
+  },
+  {
+    "id": "different-3",
+    "a": "Tokyo",
+    "b": "Buenos Aires",
+    "category": "completely_different",
+    "exact_expected": false,
+    "semantic_equivalent": false,
+    "max_fuzz_ratio": 0.3
+  },
+  {
+    "id": "identical-1",
+    "a": "hello world",
+    "b": "hello world",
+    "category": "identical",
+    "exact_expected": true,
+    "semantic_equivalent": true,
+    "min_fuzz_ratio": 1.0
+  },
+  {
+    "id": "identical-2",
+    "a": "Shandong Academy of Agricultural Sciences",
+    "b": "Shandong Academy of Agricultural Sciences",
+    "category": "identical",
+    "exact_expected": true,
+    "semantic_equivalent": true,
+    "min_fuzz_ratio": 1.0
+  },
+  {
+    "id": "empty-1",
+    "a": "",
+    "b": "something",
+    "category": "empty",
+    "exact_expected": false,
+    "semantic_equivalent": false
+  },
+  {
+    "id": "empty-2",
+    "a": "",
+    "b": "",
+    "category": "empty",
+    "exact_expected": true,
+    "semantic_equivalent": true
+  },
+  {
+    "id": "empty-3",
+    "a": "   ",
+    "b": "",
+    "category": "empty",
+    "exact_expected": true,
+    "semantic_equivalent": true,
+    "note": "whitespace-only normalizes to empty"
+  },
+  {
+    "id": "punctuation-1",
+    "a": "co-operate",
+    "b": "cooperate",
+    "category": "punctuation",
+    "exact_expected": false,
+    "semantic_equivalent": true,
+    "min_fuzz_ratio": 0.8
+  },
+  {
+    "id": "punctuation-2",
+    "a": "e-mail",
+    "b": "email",
+    "category": "punctuation",
+    "exact_expected": false,
+    "semantic_equivalent": true,
+    "min_fuzz_ratio": 0.8
+  }
+]

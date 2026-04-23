@@ -1,0 +1,10 @@
+services:
+  docs:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - ./:/app
+      - /app/node_modules
+    ports:
+      - "3000:3000"
+    command: sh -c "npm install --prefer-offline 2>/dev/null || npm install && npm run start -- --host 0.0.0.0 --no-open"

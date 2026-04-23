@@ -1,0 +1,36 @@
+/* Shared styles for evaltron_core reports - dark terminal theme */
+
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Courier+Prime:wght@400;700&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    font-family: 'JetBrains Mono', 'Courier New', 'Courier Prime', monospace;
+    line-height: 1.6;
+    color: #c9d1d9;
+    margin: 0 auto;
+    background: #0d1117;
+}
+
+h1 {
+    margin: 0;
+    font-weight: 700;
+    color: #58a6ff;
+}
+
+.footer {
+    text-align: center;
+    color: #8b949e;
+    margin-top: 50px;
+    padding-top: 30px;
+    border-top: 1px solid #30363d;
+}
+
+.footer strong {
+    color: #58a6ff;
+    font-weight: 600;
+}

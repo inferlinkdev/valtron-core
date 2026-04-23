@@ -1,0 +1,142 @@
+[
+  {
+    "id": "reorder-1",
+    "description": "Same items in different order",
+    "predicted": ["c", "a", "b"],
+    "expected": ["a", "b", "c"],
+    "ordered_scores": [false, false, false],
+    "unordered_avg": 1.0,
+    "unordered_all": true
+  },
+  {
+    "id": "reorder-2",
+    "description": "Reversed list",
+    "predicted": ["d", "c", "b", "a"],
+    "expected": ["a", "b", "c", "d"],
+    "ordered_scores": [false, false, false, false],
+    "unordered_avg": 1.0,
+    "unordered_all": true
+  },
+  {
+    "id": "identical-1",
+    "description": "Identical lists",
+    "predicted": ["alpha", "beta", "gamma"],
+    "expected": ["alpha", "beta", "gamma"],
+    "ordered_scores": [true, true, true],
+    "unordered_avg": 1.0,
+    "unordered_all": true
+  },
+  {
+    "id": "subset-1",
+    "description": "Predicted is missing one item",
+    "predicted": ["a", "b"],
+    "expected": ["a", "b", "c"],
+    "ordered_scores": null,
+    "ordered_error": "Lists must have same length",
+    "unordered_avg": 0.6667,
+    "unordered_all": false
+  },
+  {
+    "id": "superset-1",
+    "description": "Predicted has one extra item",
+    "predicted": ["a", "b", "c", "d"],
+    "expected": ["a", "b", "c"],
+    "ordered_scores": null,
+    "ordered_error": "Lists must have same length",
+    "unordered_avg": 0.75,
+    "unordered_all": false
+  },
+  {
+    "id": "duplicate-1",
+    "description": "Duplicates in predicted list",
+    "predicted": ["a", "a", "b"],
+    "expected": ["a", "b", "c"],
+    "ordered_scores": [true, false, false],
+    "unordered_avg": 0.6667,
+    "unordered_all": false
+  },
+  {
+    "id": "duplicate-2",
+    "description": "Duplicates in both lists",
+    "predicted": ["a", "a", "b"],
+    "expected": ["a", "a", "c"],
+    "ordered_scores": [true, true, false],
+    "unordered_avg": 0.6667,
+    "unordered_all": false
+  },
+  {
+    "id": "empty-vs-items",
+    "description": "Empty predicted vs non-empty expected",
+    "predicted": [],
+    "expected": ["a", "b"],
+    "ordered_scores": null,
+    "ordered_error": "Lists must have same length",
+    "unordered_avg": 0.0,
+    "unordered_all": false
+  },
+  {
+    "id": "both-empty",
+    "description": "Both lists empty",
+    "predicted": [],
+    "expected": [],
+    "ordered_scores": [],
+    "unordered_avg": 0.0,
+    "unordered_all": true,
+    "note": "Empty avg returns 0.0, empty all returns True (vacuously true)"
+  },
+  {
+    "id": "single-match",
+    "description": "Single item that matches",
+    "predicted": ["x"],
+    "expected": ["x"],
+    "ordered_scores": [true],
+    "unordered_avg": 1.0,
+    "unordered_all": true
+  },
+  {
+    "id": "single-mismatch",
+    "description": "Single item that doesn't match",
+    "predicted": ["x"],
+    "expected": ["y"],
+    "ordered_scores": [false],
+    "unordered_avg": 0.0,
+    "unordered_all": false
+  },
+  {
+    "id": "case-match",
+    "description": "Case differences (exact comparator is case-insensitive by default)",
+    "predicted": ["Alpha", "BETA", "gamma"],
+    "expected": ["alpha", "beta", "GAMMA"],
+    "ordered_scores": [true, true, true],
+    "unordered_avg": 1.0,
+    "unordered_all": true
+  },
+  {
+    "id": "all-different",
+    "description": "No matches at all",
+    "predicted": ["x", "y", "z"],
+    "expected": ["a", "b", "c"],
+    "ordered_scores": [false, false, false],
+    "unordered_avg": 0.0,
+    "unordered_all": false
+  },
+  {
+    "id": "partial-overlap",
+    "description": "Some matching, some not, same length",
+    "predicted": ["a", "x", "c"],
+    "expected": ["a", "b", "c"],
+    "ordered_scores": [true, false, true],
+    "unordered_avg": 0.6667,
+    "unordered_all": false
+  },
+  {
+    "id": "whitespace-items",
+    "description": "Items with leading/trailing whitespace",
+    "predicted": ["  a  ", " b", "c "],
+    "expected": ["a", "b", "c"],
+    "ordered_scores": [true, true, true],
+    "unordered_avg": 1.0,
+    "unordered_all": true,
+    "note": "Exact comparator strips whitespace during normalization"
+  }
+]

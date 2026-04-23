@@ -1,0 +1,374 @@
+"""Edge case tests for comparison functions and field comparison modules."""
+
+import json
+
+import pytest
+
+from valtron_core.evaluation.comparison_functions import Comparator, Grader
+from valtron_core.evaluation.comparison_functions import (
+    compare_json_lists_with_field_metrics,
+    compute_item_match_score,
+    match_items_greedy,
+)
+
+
+# ===========================================================================
+# Comparator Edge Cases
+# ===========================================================================
+
+
+class TestComparatorEdgeCases:
+    """Edge cases for the Comparator class."""
+
+    def test_normalize_unicode_accents(self) -> None:
+        """Accented characters preserved (normalization only affects case/spaces)."""
+        comparator = Comparator(element_compare="exact")
+        # cafe vs café should not match even case-insensitive
+        assert comparator.compare("cafe", "café") is False
+
+    def test_normalize_unicode_same_accents(self) -> None:
+        """Identical accented strings match."""
+        comparator = Comparator(element_compare="exact")
+        assert comparator.compare("café", "Café") is True
+
+    def test_case_sensitive_with_text_similarity(self) -> None:
+        """case_sensitive affects text_similarity normalization."""
+        comparator_insensitive = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="fuzz_ratio",
+            case_sensitive=False,
+        )
+        comparator_sensitive = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="fuzz_ratio",
+            case_sensitive=True,
+        )
+
+        score_insensitive = comparator_insensitive.compare("Hello World", "hello world")
+        score_sensitive = comparator_sensitive.compare("Hello World", "hello world")
+
+        assert score_insensitive == pytest.approx(1.0)
+        assert score_sensitive < 1.0
+
+    def test_ignore_spaces_with_text_similarity(self) -> None:
+        """ignore_spaces removes spaces before comparison."""
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="fuzz_ratio",
+            ignore_spaces=True,
+        )
+        score = comparator.compare("hello world", "helloworld")
+        assert score == pytest.approx(1.0)
+
+    def test_case_sensitive_and_ignore_spaces_combined(self) -> None:
+        """Combined case_sensitive + ignore_spaces on text_similarity."""
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="fuzz_ratio",
+            case_sensitive=True,
+            ignore_spaces=True,
+        )
+        # Spaces removed but case preserved: "HelloWorld" vs "helloworld"
+        score = comparator.compare("Hello World", "hello world")
+        assert score < 1.0
+
+    def test_fuzz_ratio_single_char_strings(self) -> None:
+        """Single character strings should work with fuzz_ratio."""
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="fuzz_ratio",
+        )
+        assert comparator.compare("a", "a") == pytest.approx(1.0)
+        assert comparator.compare("a", "b") == pytest.approx(0.0)
+
+    def test_bleu_single_word(self) -> None:
+        """BLEU with single-word inputs scores low due to n-gram brevity penalty."""
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="bleu",
+        )
+        score = comparator.compare("python", "python")
+        # BLEU penalizes short sentences heavily even when identical
+        assert 0.0 < score < 1.0
+
+    def test_gleu_single_word(self) -> None:
+        """GLEU with single-word inputs."""
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="gleu",
+        )
+        score = comparator.compare("python", "python")
+        assert score == pytest.approx(1.0)
+
+    def test_comparison_count_tracks_across_strategies(self) -> None:
+        """comparison_count increments regardless of strategy."""
+        comparator = Comparator(element_compare="exact")
+        comparator.compare("a", "a")
+        comparator.compare("b", "c")
+        comparator.compare("d", "d")
+        assert comparator.comparison_count == 3
+
+    def test_text_similarity_threshold_boundary(self) -> None:
+        """Threshold at exact score boundary."""
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="fuzz_ratio",
+            text_similarity_threshold=1.0,
+        )
+        assert comparator.compare("hello", "hello") is True
+        assert comparator.compare("hello", "hallo") is False
+
+
+# ===========================================================================
+# Grader Edge Cases
+# ===========================================================================
+
+
+class TestGraderEdgeCases:
+    """Edge cases for the Grader class."""
+
+    def test_grade_list_all_identical_items(self) -> None:
+        """Greedy matching with all identical items in both lists."""
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        # All items same — greedy matching should still pair them 1:1
+        result = grader.grade_list(
+            ["a", "a", "a"], ["a", "a", "a"],
+            order_matters=False, aggregation="avg",
+        )
+        assert result == 1.0
+
+    def test_grade_list_empty_string_elements(self) -> None:
+        """Lists containing empty strings."""
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_list(["", "b"], ["", "b"], order_matters=True)
+        assert result == [True, True]
+
+    def test_grade_list_mixed_empty_and_content(self) -> None:
+        """One empty, one with content."""
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_list(["", "b"], ["a", ""], order_matters=True)
+        assert result == [False, False]
+
+    def test_grade_list_unordered_single_mismatch_with_any(self) -> None:
+        """Unordered list with 'any' aggregation — at least one match."""
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_list(
+            ["x", "b"], ["a", "b"],
+            order_matters=False, aggregation="any",
+        )
+        assert result is True
+
+    def test_grade_json_different_type_predicted_list_expected_str(self) -> None:
+        """When predicted has a list but expected has a string for same key."""
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        # Expected has a string "tags", predicted has a dict (non-list)
+        # grade_json uses expected type to drive comparison
+        result = grader.grade_json(
+            {"name": ["John"]},
+            {"name": "John"},
+        )
+        # Expected is string, so grade_str("['John']", "John") — won't match
+        assert result["name"] is False
+
+    def test_grade_json_empty_both(self) -> None:
+        """Empty dicts produce empty result."""
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_json({}, {})
+        assert result == {}
+
+    def test_grade_json_deeply_nested_4_levels(self) -> None:
+        """Four levels of nesting."""
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+
+        predicted = {
+            "l1": {
+                "l2": {
+                    "l3": {
+                        "l4": "deep_value"
+                    }
+                }
+            }
+        }
+        expected = {
+            "l1": {
+                "l2": {
+                    "l3": {
+                        "l4": "deep_value"
+                    }
+                }
+            }
+        }
+        result = grader.grade_json(predicted, expected)
+        assert result == {"l1": {"l2": {"l3": {"l4": True}}}}
+
+    def test_grade_json_deeply_nested_mismatch_at_leaf(self) -> None:
+        """Mismatch only at the deepest nesting level."""
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+
+        predicted = {"a": {"b": {"c": "wrong"}}}
+        expected = {"a": {"b": {"c": "correct"}}}
+        result = grader.grade_json(predicted, expected)
+        assert result == {"a": {"b": {"c": False}}}
+
+    def test_grade_json_predicted_dict_expected_str(self) -> None:
+        """When predicted has a dict but expected has a string."""
+        comparator = Comparator(element_compare="exact")
+        grader = Grader(comparator=comparator)
+        result = grader.grade_json(
+            {"field": {"nested": "val"}},
+            {"field": "flat_value"},
+        )
+        # Expected is str, predicted is dict -> str(dict) vs "flat_value"
+        assert result["field"] is False
+
+    def test_grade_list_with_text_similarity_scores(self) -> None:
+        """grade_list returns float scores when using text_similarity in score mode."""
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="fuzz_ratio",
+        )
+        grader = Grader(comparator=comparator)
+        result = grader.grade_list(
+            ["hello", "world"], ["hello", "world"], order_matters=True
+        )
+        assert all(isinstance(s, float) for s in result)
+        assert all(s == pytest.approx(1.0) for s in result)
+
+    def test_grade_list_score_mode_avg_aggregation(self) -> None:
+        """Aggregation with float scores."""
+        comparator = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="fuzz_ratio",
+        )
+        grader = Grader(comparator=comparator)
+        result = grader.grade_list(
+            ["hello", "wrld"], ["hello", "world"],
+            order_matters=True, aggregation="avg",
+        )
+        assert isinstance(result, float)
+        assert 0.5 < result < 1.0
+
+
+# ===========================================================================
+# Field Comparison Edge Cases
+# ===========================================================================
+
+
+class TestFieldComparisonEdgeCases:
+    """Edge cases for field_comparison module."""
+
+    def test_compute_item_match_score_no_fields(self) -> None:
+        """Empty fields list returns 0.0 score."""
+        score, matches = compute_item_match_score(
+            {"a": "1"}, {"a": "1"}, fields=[]
+        )
+        assert score == 0.0
+        assert matches == {}
+
+    def test_compute_item_match_score_infers_fields(self) -> None:
+        """When fields=None, uses all fields from expected item."""
+        score, matches = compute_item_match_score(
+            {"name": "MIT", "city": "Cambridge"},
+            {"name": "MIT", "city": "Cambridge"},
+        )
+        assert score == 1.0
+        assert matches == {"name": True, "city": True}
+
+    def test_match_items_greedy_empty_lists(self) -> None:
+        """Both lists empty."""
+        results = match_items_greedy([], [], fields=["name"])
+        assert results == []
+
+    def test_match_items_greedy_empty_predicted(self) -> None:
+        """Empty predicted list, non-empty expected."""
+        results = match_items_greedy(
+            [],
+            [{"name": "MIT"}],
+            fields=["name"],
+        )
+        assert len(results) == 1
+        assert results[0].matched is False
+
+    def test_malformed_json_returns_empty(self) -> None:
+        """Malformed JSON strings return empty results."""
+        overall, field_metrics, item_matches = compare_json_lists_with_field_metrics(
+            predicted_json="not valid json",
+            expected_json='{"items": []}',
+            list_key="items",
+        )
+        assert overall is False
+        assert field_metrics == []
+        assert item_matches == []
+
+    def test_malformed_json_expected_returns_empty(self) -> None:
+        """Malformed expected JSON returns empty results."""
+        overall, field_metrics, item_matches = compare_json_lists_with_field_metrics(
+            predicted_json='{"items": []}',
+            expected_json="not valid json {{",
+            list_key="items",
+        )
+        assert overall is False
+        assert field_metrics == []
+        assert item_matches == []
+
+    def test_root_level_list_no_list_key(self) -> None:
+        """list_key=None assumes root is a list."""
+        predicted = json.dumps([
+            {"name": "MIT", "city": "Cambridge"}
+        ])
+        expected = json.dumps([
+            {"name": "MIT", "city": "Cambridge"}
+        ])
+        overall, field_metrics, item_matches = compare_json_lists_with_field_metrics(
+            predicted_json=predicted,
+            expected_json=expected,
+            list_key=None,
+            fields=["name", "city"],
+        )
+        assert overall is True
+        assert len(item_matches) == 1
+        assert item_matches[0].matched is True
+
+    def test_missing_list_key_returns_empty(self) -> None:
+        """When list_key doesn't exist in JSON, empty list extracted."""
+        predicted = json.dumps({"other_key": []})
+        expected = json.dumps({"items": [{"name": "MIT"}]})
+        overall, field_metrics, item_matches = compare_json_lists_with_field_metrics(
+            predicted_json=predicted,
+            expected_json=expected,
+            list_key="items",
+            fields=["name"],
+        )
+        assert overall is False
+        assert len(item_matches) == 1
+        assert item_matches[0].matched is False
+
+    def test_high_threshold_rejects_partial_matches(self) -> None:
+        """High match_threshold rejects items that only partially match."""
+        results = match_items_greedy(
+            predicted_list=[{"name": "MIT", "city": "Boston", "state": "XX", "country": "YY"}],
+            expected_list=[{"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"}],
+            fields=["name", "city", "state", "country"],
+            match_threshold=0.9,
+        )
+        # Only 1 of 4 fields match = 0.25, well below 0.9
+        assert results[0].matched is False
+
+    def test_zero_threshold_accepts_all(self) -> None:
+        """match_threshold=0.0 accepts even zero-match items."""
+        results = match_items_greedy(
+            predicted_list=[{"name": "X", "city": "Y"}],
+            expected_list=[{"name": "A", "city": "B"}],
+            fields=["name", "city"],
+            match_threshold=0.0,
+        )
+        assert results[0].matched is True
+        assert results[0].match_score == 0.0

@@ -1,0 +1,235 @@
+[
+  {
+    "id": "perfect-match",
+    "description": "All expected items found with all fields correct",
+    "predicted_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"},
+      {"name": "Stanford", "city": "Stanford", "state": "CA", "country": "USA"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"},
+      {"name": "Stanford", "city": "Stanford", "state": "CA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": true,
+    "expected_item_results": [
+      {"matched": true, "match_score": 1.0},
+      {"matched": true, "match_score": 1.0}
+    ]
+  },
+  {
+    "id": "partial-fields",
+    "description": "Items match on some fields but not all",
+    "predicted_list": [
+      {"name": "MIT", "city": "Boston", "state": "MA", "country": "USA"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": false,
+    "expected_item_results": [
+      {"matched": true, "match_score": 0.75}
+    ],
+    "expected_field_metrics": {
+      "name": {"precision": 1.0, "recall": 1.0, "f1_score": 1.0},
+      "city": {"precision": 0.0, "recall": 0.0, "f1_score": 0.0},
+      "state": {"precision": 1.0, "recall": 1.0, "f1_score": 1.0},
+      "country": {"precision": 1.0, "recall": 1.0, "f1_score": 1.0}
+    }
+  },
+  {
+    "id": "reordered-items",
+    "description": "Predicted items in different order than expected",
+    "predicted_list": [
+      {"name": "Stanford", "city": "Stanford", "state": "CA", "country": "USA"},
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"},
+      {"name": "Stanford", "city": "Stanford", "state": "CA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": true,
+    "expected_item_results": [
+      {"matched": true, "match_score": 1.0},
+      {"matched": true, "match_score": 1.0}
+    ]
+  },
+  {
+    "id": "missing-predicted",
+    "description": "Fewer predicted items than expected",
+    "predicted_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"},
+      {"name": "Stanford", "city": "Stanford", "state": "CA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": false,
+    "expected_item_results": [
+      {"matched": true, "match_score": 1.0},
+      {"matched": false, "match_score": 0.0}
+    ]
+  },
+  {
+    "id": "extra-predicted",
+    "description": "More predicted items than expected",
+    "predicted_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"},
+      {"name": "Stanford", "city": "Stanford", "state": "CA", "country": "USA"},
+      {"name": "Harvard", "city": "Cambridge", "state": "MA", "country": "USA"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"},
+      {"name": "Stanford", "city": "Stanford", "state": "CA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": false,
+    "expected_item_results": [
+      {"matched": true, "match_score": 1.0},
+      {"matched": true, "match_score": 1.0}
+    ]
+  },
+  {
+    "id": "no-matches",
+    "description": "Completely different predicted and expected items",
+    "predicted_list": [
+      {"name": "Harvard", "city": "Cambridge", "state": "MA", "country": "USA"}
+    ],
+    "expected_list": [
+      {"name": "Stanford", "city": "Stanford", "state": "CA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": false,
+    "expected_item_results": [
+      {"matched": false, "match_score": 0.0}
+    ],
+    "note": "Only country matches (1/4=0.25), below 0.5 threshold"
+  },
+  {
+    "id": "threshold-boundary-above",
+    "description": "Match score exactly at threshold boundary",
+    "predicted_list": [
+      {"name": "MIT", "city": "Boston", "state": "XX", "country": "USA"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": false,
+    "expected_item_results": [
+      {"matched": true, "match_score": 0.5}
+    ],
+    "note": "2 of 4 fields match = 0.5, which equals threshold"
+  },
+  {
+    "id": "threshold-boundary-below",
+    "description": "Match score just below threshold",
+    "predicted_list": [
+      {"name": "MIT", "city": "Boston", "state": "XX", "country": "UK"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": false,
+    "expected_item_results": [
+      {"matched": false, "match_score": 0.0}
+    ],
+    "note": "1 of 4 fields match = 0.25, below 0.5 threshold so not matched"
+  },
+  {
+    "id": "ambiguous-matching",
+    "description": "Predicted item partially matches multiple expected items (tests greedy behavior)",
+    "predicted_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"},
+      {"name": "MIT", "city": "Boston", "state": "MA", "country": "USA"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"},
+      {"name": "Harvard", "city": "Cambridge", "state": "MA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": false,
+    "expected_item_results": [
+      {"matched": true, "match_score": 1.0},
+      {"matched": true, "match_score": 0.5}
+    ],
+    "note": "First expected (MIT/Cambridge) matches perfectly, removing MIT/Cambridge from pool. Second expected (Harvard/Cambridge) vs remaining MIT/Boston: only state+country match = 2/4 = 0.5"
+  },
+  {
+    "id": "field-subset",
+    "description": "Only compare a subset of available fields",
+    "predicted_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA", "zip": "02139"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA", "zip": "00000"}
+    ],
+    "fields": ["name", "city"],
+    "match_threshold": 0.5,
+    "overall_match": true,
+    "expected_item_results": [
+      {"matched": true, "match_score": 1.0}
+    ],
+    "note": "Only name and city compared; zip mismatch is ignored"
+  },
+  {
+    "id": "empty-predicted-list",
+    "description": "Empty predicted list",
+    "predicted_list": [],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge"}
+    ],
+    "fields": ["name", "city"],
+    "match_threshold": 0.5,
+    "overall_match": false,
+    "expected_item_results": [
+      {"matched": false, "match_score": 0.0}
+    ]
+  },
+  {
+    "id": "empty-field-values",
+    "description": "Items with empty string field values",
+    "predicted_list": [
+      {"name": "MIT", "city": "", "state": "MA", "country": "USA"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "", "state": "MA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": true,
+    "expected_item_results": [
+      {"matched": true, "match_score": 1.0}
+    ]
+  },
+  {
+    "id": "missing-field-in-predicted",
+    "description": "Predicted item missing a field entirely",
+    "predicted_list": [
+      {"name": "MIT", "city": "Cambridge", "country": "USA"}
+    ],
+    "expected_list": [
+      {"name": "MIT", "city": "Cambridge", "state": "MA", "country": "USA"}
+    ],
+    "fields": ["name", "city", "state", "country"],
+    "match_threshold": 0.5,
+    "overall_match": false,
+    "expected_item_results": [
+      {"matched": true, "match_score": 0.75}
+    ],
+    "note": "state field missing from predicted -> None vs 'MA' = no match"
+  }
+]

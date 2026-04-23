@@ -1,0 +1,1189 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Detailed Analysis - evaltron_core</title>
+    <style>
+        {% include 'common.css' %}
+
+      body {
+          max-width: 1800px;
+          padding: 20px;
+      }
+
+      .header {
+          background: #161b22;
+          color: #c9d1d9;
+          padding: 30px 40px;
+          border-radius: 6px;
+          margin-bottom: 20px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+          border: 1px solid #30363d;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          position: sticky;
+          top: 0;
+          z-index: 100;
+      }
+
+      h1 {
+          font-size: 2.2em;
+      }
+
+      .navigation-controls {
+          display: flex;
+          gap: 10px;
+          align-items: center;
+      }
+
+      .back-link {
+          display: inline-block;
+          padding: 10px 20px;
+          background: #21262d;
+          color: #8b949e;
+          text-decoration: none;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          transition: all 0.2s;
+          font-size: 0.9em;
+          font-weight: 500;
+      }
+
+      .back-link:hover {
+          background: #30363d;
+          color: #c9d1d9;
+      }
+
+      .next-btn {
+          padding: 10px 24px;
+          background: #238636;
+          color: #ffffff;
+          border: 1px solid #238636;
+          border-radius: 6px;
+          cursor: pointer;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.95em;
+          font-weight: 600;
+          transition: all 0.2s;
+      }
+
+      .next-btn:hover {
+          background: #2ea043;
+          border-color: #2ea043;
+      }
+
+      .next-btn:disabled {
+          opacity: 0.4;
+          cursor: not-allowed;
+          background: #21262d;
+          border-color: #30363d;
+          color: #8b949e;
+      }
+
+      .next-btn:disabled:hover {
+          background: #21262d;
+          color: #8b949e;
+      }
+
+      .document-section {
+          background: #161b22;
+          padding: 30px;
+          margin-bottom: 20px;
+          border-radius: 6px;
+          border: 1px solid #30363d;
+          scroll-margin-top: 20px;
+      }
+
+      .document-header {
+          color: #58a6ff;
+          font-size: 1.4em;
+          margin-bottom: 20px;
+          padding-bottom: 10px;
+          border-bottom: 1px solid #30363d;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+      }
+
+      .example-counter {
+          font-size: 0.7em;
+          color: #8b949e;
+      }
+
+      .content-layout {
+          display: grid;
+          grid-template-columns: 1fr 2fr;
+          gap: 20px;
+          margin-bottom: 20px;
+          align-items: start;
+      }
+
+      .left-panel {
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+          position: sticky;
+          top: 100px;
+          max-height: calc(100vh - 120px);
+          overflow-y: auto;
+      }
+
+      .right-panel {
+          display: flex;
+          flex-direction: column;
+          gap: 15px;
+      }
+
+      .input-box, .expected-box {
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 20px;
+      }
+
+      .input-label, .expected-label {
+          color: #8b949e;
+          font-weight: 600;
+          font-size: 1.1em;
+          margin-bottom: 10px;
+      }
+
+      .expected-label {
+          color: #7ee787;
+      }
+
+      .input-content {
+          color: #c9d1d9;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+          font-size: 0.9em;
+          font-family: 'JetBrains Mono', monospace;
+          line-height: 1.5;
+      }
+
+      .metadata-link {
+          display: inline-block;
+          padding: 6px 12px;
+          background: #21262d;
+          color: #a371f7;
+          text-decoration: none;
+          border: 1px solid #a371f7;
+          border-radius: 6px;
+          font-size: 0.85em;
+          margin-top: 10px;
+          cursor: pointer;
+          transition: all 0.2s;
+          font-weight: 500;
+      }
+
+      .metadata-link:hover {
+          background: rgba(163, 113, 247, 0.15);
+      }
+
+      .model-card {
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 18px;
+      }
+
+      .model-card.correct {
+          border-left: 3px solid #3fb950;
+      }
+
+      .model-card.incorrect {
+          border-left: 3px solid #f85149;
+      }
+
+      .model-header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          margin-bottom: 12px;
+          cursor: pointer;
+          user-select: none;
+      }
+
+      .model-header:hover .model-collapse-icon {
+          color: #c9d1d9;
+      }
+
+      .model-collapse-icon {
+          color: #8b949e;
+          font-size: 0.85em;
+          margin-left: 8px;
+          transition: transform 0.2s;
+          flex-shrink: 0;
+      }
+
+      .model-card.collapsed .model-header {
+          margin-bottom: 0;
+      }
+
+      .model-card.collapsed .model-collapse-icon {
+          transform: rotate(-90deg);
+      }
+
+      .model-card-body {
+          /* no special default styles needed */
+      }
+
+      .model-card.collapsed .model-card-body {
+          display: none;
+      }
+
+      .model-name {
+          color: #c9d1d9;
+          font-weight: 600;
+          font-size: 1.1em;
+      }
+
+      .model-card.correct .model-name {
+          color: #3fb950;
+      }
+
+      .model-card.incorrect .model-name {
+          color: #f85149;
+      }
+
+      .status-badge {
+          display: inline-block;
+          padding: 4px 10px;
+          border-radius: 6px;
+          font-size: 0.8em;
+          font-weight: 600;
+      }
+
+      .status-correct {
+          background: rgba(63, 185, 80, 0.15);
+          color: #3fb950;
+          border: 1px solid #238636;
+      }
+
+      .status-incorrect {
+          background: rgba(248, 81, 73, 0.15);
+          color: #f85149;
+          border: 1px solid #da3633;
+      }
+
+      .prediction-output {
+          background: #161b22;
+          border-left: 3px solid #30363d;
+          padding: 12px;
+          margin: 10px 0;
+          color: #c9d1d9;
+          white-space: pre-wrap;
+          word-wrap: break-word;
+          font-size: 0.85em;
+          line-height: 1.8;
+          font-family: 'JetBrains Mono', monospace;
+          position: relative;
+      }
+
+      .model-card.correct .prediction-output {
+          border-left-color: #238636;
+      }
+
+      .model-card.incorrect .prediction-output {
+          border-left-color: #da3633;
+      }
+
+      /* Hide overall border when we have field-level indicators */
+      .prediction-output.has-field-metrics {
+          border-left: none;
+          padding-left: 12px;
+      }
+
+      /* Field line status indicators */
+      .json-line {
+          display: block;
+          position: relative;
+          padding-left: 8px;
+          border-left: 3px solid transparent;
+          margin-left: -12px;
+          padding-right: 12px;
+      }
+
+      .json-line.field-correct {
+          border-left-color: #238636;
+          background: rgba(63, 185, 80, 0.05);
+      }
+
+      .json-line.field-incorrect {
+          border-left-color: #da3633;
+          background: rgba(248, 81, 73, 0.05);
+      }
+
+      .json-line.field-neutral {
+          border-left-color: transparent;
+      }
+
+      .metrics-row {
+          display: flex;
+          justify-content: space-between;
+          margin-top: 10px;
+          padding-top: 10px;
+          border-top: 1px solid #30363d;
+          font-size: 0.85em;
+      }
+
+      .metric {
+          color: #8b949e;
+      }
+
+      .metric-value {
+          color: #58a6ff;
+          font-weight: 600;
+      }
+
+      /* Footer styles inherited from common.css */
+
+      /* Metadata Modal */
+      .metadata-modal {
+          display: none;
+          position: fixed;
+          z-index: 1000;
+          left: 0;
+          top: 0;
+          width: 100%;
+          height: 100%;
+          background-color: rgba(0, 0, 0, 0.8);
+          backdrop-filter: blur(4px);
+      }
+
+      .metadata-modal-content {
+          background: #161b22;
+          margin: 10% auto;
+          padding: 0;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          width: 80%;
+          max-width: 700px;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      }
+
+      .metadata-modal-header {
+          padding: 20px;
+          border-bottom: 1px solid #30363d;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          background: #21262d;
+      }
+
+      .metadata-modal-header h3 {
+          margin: 0;
+          color: #58a6ff;
+          font-size: 1.2em;
+      }
+
+      .metadata-modal-close {
+          color: #8b949e;
+          font-size: 28px;
+          font-weight: 300;
+          cursor: pointer;
+          line-height: 1;
+          transition: all 0.2s;
+      }
+
+      .metadata-modal-close:hover {
+          color: #c9d1d9;
+      }
+
+      .metadata-modal-body {
+          padding: 20px;
+          max-height: 400px;
+          overflow-y: auto;
+          background: #161b22;
+      }
+
+      .metadata-content {
+          background: #0d1117;
+          padding: 15px;
+          border-radius: 6px;
+          border: 1px solid #30363d;
+          color: #c9d1d9;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 0.9em;
+          white-space: pre;
+          overflow-x: auto;
+      }
+
+      /* Full Document Button */
+      .show-full-btn {
+          display: inline-block;
+          padding: 6px 12px;
+          background: #21262d;
+          color: #58a6ff;
+          text-decoration: none;
+          border: 1px solid #58a6ff;
+          border-radius: 6px;
+          font-size: 0.85em;
+          margin-top: 10px;
+          cursor: pointer;
+          transition: all 0.2s;
+          font-weight: 500;
+      }
+
+      .show-full-btn:hover {
+          background: rgba(88, 166, 255, 0.15);
+      }
+
+      /* Character limit badge */
+      .char-limit-info {
+          color: #8b949e;
+          font-size: 0.8em;
+          margin-top: 8px;
+          font-style: italic;
+      }
+
+      /* Full Document Modal - Larger size */
+      .full-document-modal-content {
+          background: #161b22;
+          margin: 3% auto;
+          padding: 0;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          width: 90%;
+          max-width: 1400px;
+          box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+      }
+
+      .full-document-modal-body {
+          padding: 20px;
+          max-height: 70vh;
+          overflow-y: auto;
+          background: #161b22;
+      }
+
+      /* Attachments */
+      .attachments-link {
+          display: inline-block;
+          padding: 6px 12px;
+          background: #21262d;
+          color: #d2a8ff;
+          text-decoration: none;
+          border: 1px solid #d2a8ff;
+          border-radius: 6px;
+          font-size: 0.85em;
+          margin-top: 8px;
+          cursor: pointer;
+          transition: all 0.2s;
+          font-weight: 500;
+      }
+      .attachments-link:hover { background: rgba(210, 168, 255, 0.15); }
+
+      .inline-attachment-img {
+          display: block;
+          max-width: 100%;
+          max-height: 400px;
+          object-fit: contain;
+          margin: 14px auto 0;
+          border-radius: 4px;
+          border: 1px solid #30363d;
+          background: #010409;
+      }
+
+      .attachments-modal-content {
+          background: #161b22;
+          margin: 3% auto;
+          padding: 0;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          width: 85%;
+          max-width: 900px;
+          max-height: 90vh;
+          display: flex;
+          flex-direction: column;
+      }
+      .attachments-modal-body {
+          padding: 20px;
+          overflow-y: auto;
+          display: flex;
+          flex-direction: column;
+          gap: 20px;
+      }
+      .attachment-item { border: 1px solid #30363d; border-radius: 6px; overflow: hidden; }
+      .attachment-label {
+          background: #21262d;
+          color: #8b949e;
+          font-size: 0.8em;
+          padding: 4px 10px;
+          border-bottom: 1px solid #30363d;
+      }
+      .attachment-img { display: block; max-width: 100%; max-height: 600px; object-fit: contain; margin: 0 auto; padding: 10px; }
+      .attachment-pdf { width: 100%; height: 500px; border: none; display: block; }
+
+      @media (max-width: 1200px) {
+          .content-layout {
+              grid-template-columns: 1fr;
+          }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>Detailed Input/Output Analysis</h1>
+      <div class="navigation-controls">
+        <a href="evaluation_report.html" class="back-link">← Back to Report</a>
+        <button class="next-btn" onclick="goToNextExample()">
+          Next Example →
+        </button>
+      </div>
+    </div>
+
+    {% for doc_data in documents_data %}
+    <div
+      class="document-section"
+      id="doc-{{ loop.index }}"
+      data-doc-index="{{ loop.index }}"
+    >
+      <div class="document-header">
+        <span>Document {{ loop.index }} - {{ doc_data.document_id }}</span>
+        <span class="example-counter"
+          >Example {{ loop.index }} of {{ documents_data|length }}</span
+        >
+      </div>
+
+      {% set outer_loop_index = loop.index %} {% set input_char_limit = 1000 %}
+      <div class="content-layout">
+        <div class="left-panel">
+          <div class="input-box">
+            <div class="input-label">Input Document</div>
+            <div class="input-content">{% if doc_data.content|length > input_char_limit %}{{ doc_data.content[:input_char_limit]|e }}...{% else %}{{ doc_data.content|e }}{% endif %}</div>
+            {% if doc_data.content|length > input_char_limit %}
+            <div class="char-limit-info">
+              Showing first {{ input_char_limit }} characters of {{
+              doc_data.content|length }}
+            </div>
+            <a
+              href="javascript:void(0)"
+              class="show-full-btn"
+              onclick="showFullDocument('doc{{ loop.index }}', {{ loop.index }})"
+            >
+              Show Full Document
+            </a>
+            {% endif %} {% if doc_data.metadata %}
+            <a
+              href="javascript:void(0)"
+              class="metadata-link"
+              onclick="showMetadata('doc{{ loop.index }}')"
+            >
+              View Metadata
+            </a>
+            {% endif %} {% if doc_data.attachments %}
+              {% if doc_data.attachments|length == 1 %}
+                {% set att = doc_data.attachments[0] %}
+                {% set att_url = att.url if att.url else ('data:' ~ (att.mime_type or 'image/jpeg') ~ ';base64,' ~ att.data if att.data else '') %}
+                {% if att_url and 'application/pdf' not in att_url[:30] %}
+                  <img src="{{ att_url }}" class="inline-attachment-img" alt="Attachment">
+                {% else %}
+                  <a href="javascript:void(0)" class="attachments-link" onclick="showAttachments('doc{{ loop.index }}')">📎 View Attachment</a>
+                {% endif %}
+              {% else %}
+                <a href="javascript:void(0)" class="attachments-link" onclick="showAttachments('doc{{ loop.index }}')">📎 View Attachments ({{ doc_data.attachments|length }})</a>
+              {% endif %}
+            {% endif %}
+          </div>
+
+          <div class="expected-box">
+            <div class="expected-label">✓ Expected Output</div>
+            <div class="input-content" id="expected-{{ loop.index }}">{{ doc_data.expected_value }}</div>
+          </div>
+        </div>
+
+        <div class="right-panel">
+          {% for model_result in doc_data.model_results %}
+          <div
+            class="model-card {{ 'correct' if model_result.is_correct else 'incorrect' }}"
+          >
+            <div class="model-header" onclick="toggleModelCard(this.closest('.model-card'))">
+              <div style="display:flex;align-items:center;gap:6px;">
+                <span class="model-collapse-icon">&#9660;</span>
+                <div class="model-name">{{ model_result.model }}</div>
+              </div>
+              <span
+                class="status-badge {{ 'status-correct' if model_result.is_correct else 'status-incorrect' }}"
+              >
+                {{ '✓ CORRECT' if model_result.is_correct else '✗ INCORRECT' }}
+                (Score: {{ "%.2f"|format(model_result.example_score) }})
+              </span>
+            </div>
+
+            <div class="model-card-body">
+              <div
+                class="prediction-output"
+                id="prediction-{{ outer_loop_index }}-{{ loop.index }}"
+              >
+                {{ model_result.predicted_value }}
+              </div>
+
+              <script
+                type="application/json"
+                class="prediction-data"
+                data-target="prediction-{{ outer_loop_index }}-{{ loop.index }}"
+              >
+                {
+                    "predicted": {{ model_result.predicted_value }},
+                    "expected": {{ doc_data.expected_value }},
+                    "field_metrics": {{ model_result.field_metrics | tojson }}
+                }
+              </script>
+
+              <div class="metrics-row">
+                <span class="metric"
+                  >Time:
+                  <span class="metric-value"
+                    >{{ "%.3f"|format(model_result.response_time) }}s</span
+                  ></span
+                >
+                <span class="metric"
+                  >Cost:
+                  <span class="metric-value"
+                    >${{ "%.6f"|format(model_result.cost) }}</span
+                  ></span
+                >
+              </div>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+
+    <!-- Metadata Modal -->
+    <div id="metadataModal" class="metadata-modal">
+      <div class="metadata-modal-content">
+        <div class="metadata-modal-header">
+          <h3 id="metadataTitle">Document Metadata</h3>
+          <span class="metadata-modal-close" onclick="closeMetadataModal()"
+            >&times;</span
+          >
+        </div>
+        <div class="metadata-modal-body">
+          <pre id="metadataContent" class="metadata-content"></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Full Document Modal -->
+    <div id="fullDocumentModal" class="metadata-modal">
+      <div class="full-document-modal-content">
+        <div class="metadata-modal-header">
+          <h3 id="fullDocumentTitle">Full Input Document</h3>
+          <span class="metadata-modal-close" onclick="closeFullDocumentModal()"
+            >&times;</span
+          >
+        </div>
+        <div class="full-document-modal-body">
+          <pre id="fullDocumentContent" class="metadata-content"></pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- Attachments Modal -->
+    <div id="attachmentsModal" class="metadata-modal">
+      <div class="attachments-modal-content">
+        <div class="metadata-modal-header">
+          <h3 id="attachmentsTitle">Attachments</h3>
+          <span class="metadata-modal-close" onclick="closeAttachmentsModal()">&times;</span>
+        </div>
+        <div class="attachments-modal-body" id="attachmentsBody"></div>
+      </div>
+    </div>
+
+    <div class="footer">
+      <p>Generated by <strong>evaltron_core</strong> - LLM Optimization Framework</p>
+    </div>
+
+    <script>
+      // Store metadata for each document
+      const documentMetadata = {{ document_metadata | tojson }};
+
+      // Store full documents for each document
+      const fullDocuments = {
+          {% for doc_data in documents_data %}
+          'doc{{ loop.index }}': {{ doc_data.content | tojson }}{% if not loop.last %},{% endif %}
+          {% endfor %}
+      };
+
+      // Store attachments per document
+      const documentAttachments = {
+          {% for doc_data in documents_data %}
+          {% if doc_data.attachments %}
+          'doc{{ loop.index }}': {{ doc_data.attachments | tojson }}{% if not loop.last %},{% endif %}
+          {% endif %}
+          {% endfor %}
+      };
+
+      // Format JSON strings for better readability
+      function formatJSON(str) {
+          try {
+              const parsed = JSON.parse(str);
+              return JSON.stringify(parsed, null, 2);
+          } catch (e) {
+              return str;
+          }
+      }
+
+      // Apply JSON formatting with field-level status indicators
+      document.addEventListener('DOMContentLoaded', function() {
+          // Format expected outputs
+          document.querySelectorAll('[id^="expected-"]').forEach(function(el) {
+              const formatted = formatJSON(el.textContent);
+              if (formatted !== el.textContent) {
+                  el.textContent = formatted;
+                  el.style.fontFamily = "'JetBrains Mono', monospace";
+              }
+          });
+
+
+          // Format prediction outputs with field status indicators
+          const scriptElements = document.querySelectorAll('.prediction-data');
+
+
+          scriptElements.forEach(function(scriptEl) {
+              const targetId = scriptEl.dataset.target;
+
+              const outputEl = document.getElementById(targetId);
+              if (outputEl) {
+
+                  try {
+                      formatPredictionWithFieldStatus(outputEl, scriptEl);
+
+                  } catch (e) {
+                      console.error('Error formatting', targetId, ':', e);
+                  }
+              } else {
+                  console.error('Could not find output element with id:', targetId);
+              }
+          });
+
+          // Initialize button state
+          updateButtonState();
+      });
+
+      // Format prediction output with per-field status indicators
+      function formatPredictionWithFieldStatus(element, dataScript) {
+          try {
+              // Parse the JSON data from the script tag
+              const data = JSON.parse(dataScript.textContent);
+              const predicted = data.predicted;
+              const expected = data.expected;
+              const fieldMetrics = data.field_metrics || null;
+
+              // Check if predicted is a JSON object/array that we can annotate
+              if (typeof predicted !== 'object' || predicted === null) {
+                  element.textContent = formatJSON(JSON.stringify(predicted));
+                  return;
+              }
+
+              // Build field match map from fieldMetrics
+              const fieldMatchMap = buildFieldMatchMap(fieldMetrics, predicted);
+
+              // Format JSON with line-by-line field status
+              const formattedHTML = formatJSONWithFieldStatus(predicted, fieldMatchMap, 0, false, '');
+              element.innerHTML = formattedHTML;
+              element.style.fontFamily = "'JetBrains Mono', monospace";
+
+              // Add class to indicate we have field-level metrics
+              if (Object.keys(fieldMatchMap).length > 0) {
+                  element.classList.add('has-field-metrics');
+              }
+
+          } catch (e) {
+              console.error('Error formatting prediction with field status:', e, e.stack);
+              // Fallback to regular formatting
+              element.textContent = formatJSON(element.textContent);
+          }
+      }
+
+      // Build a map of field paths to their match status
+      // Traverses the recursive field_metrics structure
+      function buildFieldMatchMap(fieldMetrics, predictedData) {
+          const fieldMap = {};
+
+          if (!fieldMetrics) {
+              return fieldMap;
+          }
+
+          // Recursively traverse the field metrics tree
+          function processNode(node, currentPath) {
+              // If this node has an alignment, it's a list - process aligned items
+              if (node.alignment && Array.isArray(node.alignment)) {
+                  node.alignment.forEach(alignItem => {
+                      const aIdx = alignItem.a_idx; // predicted/actual index
+                      const eIdx = alignItem.e_idx;
+                      const result = alignItem.result;
+
+                      // Unmatched expected items (FN) don't appear in the actual output — skip
+                      if (aIdx === -1) return;
+
+                      // Unmatched predicted items (FP) have no expected counterpart — mark incorrect
+                      if (eIdx === -1) {
+                          fieldMap[`${currentPath}[${aIdx}]`] = false;
+                          return;
+                      }
+
+                      if (result && result.children && Object.keys(result.children).length > 0) {
+                          // List of objects — map each sub-field
+                          Object.keys(result.children).forEach(fieldName => {
+                              const fieldNode = result.children[fieldName];
+                              const fieldPath = `${currentPath}[${aIdx}].${fieldName}`;
+
+                              fieldMap[fieldPath] = fieldNode.is_correct;
+
+                              // Recursively process nested children if any
+                              if (fieldNode.children && Object.keys(fieldNode.children).length > 0) {
+                                  processNestedChildren(fieldNode, fieldPath);
+                              }
+                          });
+                      } else if (result) {
+                          // List of simple values — store correctness at the item index
+                          fieldMap[`${currentPath}[${aIdx}]`] = result.is_correct;
+                      }
+                  });
+              }
+
+              // Process children for non-list nodes
+              if (node.children && !node.alignment) {
+                  Object.keys(node.children).forEach(childKey => {
+                      const childNode = node.children[childKey];
+                      const childPath = currentPath ? `${currentPath}.${childKey}` : childKey;
+                      fieldMap[childPath] = childNode.is_correct;
+                      processNode(childNode, childPath);
+                  });
+              }
+          }
+
+          // Process nested children within a list item (e.g., people[0].address.city)
+          function processNestedChildren(node, parentPath) {
+              if (node.children) {
+                  Object.keys(node.children).forEach(childKey => {
+                      const childNode = node.children[childKey];
+                      const childPath = `${parentPath}.${childKey}`;
+
+                      fieldMap[childPath] = childNode.is_correct;
+
+                      // Recursively process if there are more nested children
+                      if (childNode.children && Object.keys(childNode.children).length > 0) {
+                          processNestedChildren(childNode, childPath);
+                      }
+                  });
+              }
+          }
+
+          processNode(fieldMetrics, '');
+          return fieldMap;
+      }
+
+      // Escape HTML special characters
+      function escapeHtml(text) {
+          const div = document.createElement('div');
+          div.textContent = text;
+          return div.innerHTML;
+      }
+
+      // Format JSON with field-level status indicators
+      function formatJSONWithFieldStatus(obj, fieldMatchMap, indent, skipOpenBracket = false, currentPath = '') {
+          const indentStr = '  '.repeat(indent);
+          let html = '';
+
+          if (Array.isArray(obj)) {
+              // Opening bracket (unless it's inline with parent key)
+              if (!skipOpenBracket) {
+                  html += '<span class="json-line field-neutral">' + escapeHtml(indentStr + '[') + '</span>';
+              }
+
+              obj.forEach((item, index) => {
+                  const comma = (index < obj.length - 1) ? ',' : '';
+                  if (typeof item === 'object' && item !== null) {
+                      const itemFormatted = formatObjectWithFieldStatus(item, fieldMatchMap, index, indent + 1, comma, currentPath);
+                      html += itemFormatted;
+                  } else {
+                      const itemPath = currentPath ? `${currentPath}[${index}]` : `[${index}]`;
+                      const status = itemPath in fieldMatchMap
+                          ? (fieldMatchMap[itemPath] ? 'field-correct' : 'field-incorrect')
+                          : 'field-neutral';
+                      const line = indentStr + '  ' + JSON.stringify(item) + comma;
+                      html += '<span class="json-line ' + status + '">' + escapeHtml(line) + '</span>';
+                  }
+              });
+              html += '<span class="json-line field-neutral">' + escapeHtml(indentStr + ']') + '</span>';
+          } else if (typeof obj === 'object' && obj !== null) {
+              html += formatObjectWithFieldStatus(obj, fieldMatchMap, null, indent, '', currentPath);
+          } else {
+              html += '<span class="json-line field-neutral">' + escapeHtml(JSON.stringify(obj)) + '</span>';
+          }
+
+          return html;
+      }
+
+      // Format a JSON object with field status
+      function formatObjectWithFieldStatus(obj, fieldMatchMap, itemIndex, indent, trailingComma = '', currentPath = '') {
+          const indentStr = '  '.repeat(indent);
+          let html = '';
+
+          // Opening brace on its own line
+          html += '<span class="json-line field-neutral">' + escapeHtml(indentStr + '{') + '</span>';
+
+          const keys = Object.keys(obj);
+          keys.forEach((key, keyIndex) => {
+              const value = obj[key];
+              // Build the full path for this field
+              let fieldPath;
+              if (itemIndex !== null) {
+                  fieldPath = `${currentPath}[${itemIndex}].${key}`;
+              } else {
+                  fieldPath = currentPath ? `${currentPath}.${key}` : key;
+              }
+              const fieldStatus = fieldMatchMap[fieldPath];
+
+              // Determine status class
+              let statusClass = 'field-neutral';
+              if (fieldStatus === true) {
+                  statusClass = 'field-correct';
+              } else if (fieldStatus === false) {
+                  statusClass = 'field-incorrect';
+              }
+
+              // Format the key-value pair
+              const keyStr = JSON.stringify(key);
+              let valueStr;
+              let line;
+
+              const comma = (keyIndex < keys.length - 1) ? ',' : '';
+
+              // Build the path context for children of this key
+              let childPath;
+              if (itemIndex !== null) {
+                  childPath = `${currentPath}[${itemIndex}].${key}`;
+              } else {
+                  childPath = currentPath ? `${currentPath}.${key}` : key;
+              }
+
+              if (Array.isArray(value)) {
+                  // Array value - include opening bracket on same line as key
+                  html += '<span class="json-line ' + statusClass + '">' + escapeHtml(indentStr + '  ' + keyStr + ': [') + '</span>';
+                  // Format array contents (skip the opening bracket since we already added it)
+                  const arrayFormatted = formatJSONWithFieldStatus(value, fieldMatchMap, indent + 1, true, childPath);
+                  html += arrayFormatted;
+                  // Add comma after closing bracket if needed
+                  if (comma) {
+                      // Remove the last span (closing bracket) and re-add with comma
+                      const closingBracket = '<span class="json-line field-neutral">' + escapeHtml(indentStr + '  ' + ']' + comma) + '</span>';
+                      html = html.replace(/<span class="json-line field-neutral">[^<]*\]<\/span>$/, closingBracket);
+                  }
+              } else if (typeof value === 'object' && value !== null) {
+                  // Nested object - include opening brace on same line as key
+                  html += '<span class="json-line ' + statusClass + '">' + escapeHtml(indentStr + '  ' + keyStr + ': {') + '</span>';
+                  // Format nested object contents
+                  const nestedObj = formatObjectWithFieldStatus(value, fieldMatchMap, null, indent + 1, '', childPath);
+                  // Remove the opening brace line from nested object since we already added it inline
+                  const nestedWithoutOpen = nestedObj.replace(/^<span class="json-line[^"]*">[^<]*\{<\/span>/, '');
+                  html += nestedWithoutOpen;
+                  // Add comma after closing brace if needed
+                  if (comma) {
+                      html = html.replace(/(<span class="json-line[^"]*">.*)\}<\/span>$/, '$1}' + comma + '</span>');
+                  }
+              } else {
+                  // Simple value
+                  valueStr = JSON.stringify(value);
+                  line = indentStr + '  ' + keyStr + ': ' + valueStr + comma;
+                  html += '<span class="json-line ' + statusClass + '">' + escapeHtml(line) + '</span>';
+              }
+          });
+
+          // Closing brace on its own line with trailing comma if needed
+          html += '<span class="json-line field-neutral">' + escapeHtml(indentStr + '}' + trailingComma) + '</span>';
+          return html;
+      }
+
+      // Show metadata modal
+      function showMetadata(docId) {
+          const modal = document.getElementById('metadataModal');
+          const title = document.getElementById('metadataTitle');
+          const content = document.getElementById('metadataContent');
+
+          title.textContent = 'Metadata for ' + docId;
+
+          const metadata = documentMetadata[docId];
+          if (metadata) {
+              content.textContent = JSON.stringify(metadata, null, 2);
+          } else {
+              content.textContent = 'No metadata available';
+          }
+
+          modal.style.display = 'block';
+      }
+
+      // Close metadata modal
+      function closeMetadataModal() {
+          document.getElementById('metadataModal').style.display = 'none';
+      }
+
+      // Show full document modal
+      function showFullDocument(docId, docIndex) {
+          const modal = document.getElementById('fullDocumentModal');
+          const title = document.getElementById('fullDocumentTitle');
+          const content = document.getElementById('fullDocumentContent');
+
+          title.textContent = 'Full Input Document - Document ' + docIndex;
+
+          const fullDoc = fullDocuments[docId];
+          if (fullDoc) {
+              content.textContent = fullDoc;
+          } else {
+              content.textContent = 'Document not available';
+          }
+
+          modal.style.display = 'block';
+      }
+
+      // Close full document modal
+      function closeFullDocumentModal() {
+          document.getElementById('fullDocumentModal').style.display = 'none';
+      }
+
+      // Show attachments modal
+      function showAttachments(docId) {
+          const modal = document.getElementById('attachmentsModal');
+          const title = document.getElementById('attachmentsTitle');
+          const body = document.getElementById('attachmentsBody');
+          const attachments = documentAttachments[docId] || [];
+
+          title.textContent = attachments.length === 1 ? 'Attachment' : `Attachments (${attachments.length})`;
+          body.innerHTML = '';
+
+          attachments.forEach((att, idx) => {
+              const item = document.createElement('div');
+              item.className = 'attachment-item';
+
+              const label = document.createElement('div');
+              label.className = 'attachment-label';
+              label.textContent = `#${idx + 1} · ${att.type}`;
+              item.appendChild(label);
+
+              const type = att.type || '';
+              const url = att.url || (att.data ? `data:${att.mime_type || 'application/octet-stream'};base64,${att.data}` : '');
+
+              if (type.startsWith('image') || (url && url.match(/^data:image/))) {
+                  const img = document.createElement('img');
+                  img.src = url;
+                  img.className = 'attachment-img';
+                  img.alt = `Attachment ${idx + 1}`;
+                  item.appendChild(img);
+              } else if (type.startsWith('pdf') || (url && url.match(/^data:application\/pdf/))) {
+                  const embed = document.createElement('embed');
+                  embed.src = url;
+                  embed.type = 'application/pdf';
+                  embed.className = 'attachment-pdf';
+                  item.appendChild(embed);
+              } else {
+                  const p = document.createElement('p');
+                  p.style.padding = '10px';
+                  p.style.color = '#8b949e';
+                  p.textContent = url ? `Unsupported type "${type}". URL: ${url.substring(0, 80)}...` : `Unsupported attachment type: ${type}`;
+                  item.appendChild(p);
+              }
+
+              body.appendChild(item);
+          });
+
+          modal.style.display = 'block';
+      }
+
+      function closeAttachmentsModal() {
+          document.getElementById('attachmentsModal').style.display = 'none';
+      }
+
+      // Close modal when clicking outside
+      window.onclick = function(event) {
+          const metadataModal = document.getElementById('metadataModal');
+          const fullDocModal = document.getElementById('fullDocumentModal');
+          const attachmentsModal = document.getElementById('attachmentsModal');
+          if (event.target === metadataModal) {
+              closeMetadataModal();
+          } else if (event.target === fullDocModal) {
+              closeFullDocumentModal();
+          } else if (event.target === attachmentsModal) {
+              closeAttachmentsModal();
+          }
+      }
+
+      // Close modal with Escape key
+      document.addEventListener('keydown', function(event) {
+          if (event.key === 'Escape') {
+              closeMetadataModal();
+              closeFullDocumentModal();
+              closeAttachmentsModal();
+          }
+      });
+
+      // Toggle model card collapse
+      function toggleModelCard(card) {
+          card.classList.toggle('collapsed');
+      }
+
+      // Navigation functionality
+      let currentDocIndex = 1;
+      const totalDocs = document.querySelectorAll('.document-section').length;
+
+      // Update button state based on current position
+      function updateButtonState() {
+          const nextBtn = document.querySelector('.next-btn');
+          if (currentDocIndex >= totalDocs) {
+              nextBtn.disabled = true;
+              nextBtn.textContent = 'End of Examples';
+          } else {
+              nextBtn.disabled = false;
+              nextBtn.textContent = 'Next Example →';
+          }
+      }
+
+      // Navigate to next example
+      function goToNextExample() {
+          if (currentDocIndex < totalDocs) {
+              currentDocIndex++;
+              const nextDoc = document.getElementById('doc-' + currentDocIndex);
+              if (nextDoc) {
+                  nextDoc.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  updateButtonState();
+              }
+          }
+      }
+
+      // Track which document is currently in view
+      function updateCurrentDocOnScroll() {
+          const sections = document.querySelectorAll('.document-section');
+          const scrollPosition = window.scrollY + 100; // Offset for header
+
+          sections.forEach((section) => {
+              const sectionTop = section.offsetTop;
+              const sectionHeight = section.offsetHeight;
+
+              if (scrollPosition >= sectionTop && scrollPosition < sectionTop + sectionHeight) {
+                  currentDocIndex = parseInt(section.dataset.docIndex);
+                  updateButtonState();
+              }
+          });
+      }
+
+      // Listen for scroll events to update current position
+      window.addEventListener('scroll', updateCurrentDocOnScroll);
+
+      // Keyboard shortcut: Press 'n' for next example
+      document.addEventListener('keydown', function(event) {
+          if (event.key === 'n' && !event.ctrlKey && !event.metaKey && !event.altKey) {
+              // Only if not typing in an input/textarea
+              if (!['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName)) {
+                  goToNextExample();
+              }
+          }
+      });
+    </script>
+  </body>
+</html>
