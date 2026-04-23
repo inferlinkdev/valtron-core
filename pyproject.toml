@@ -2,9 +2,20 @@
 name = "valtron-core"
 version = "0.1.0"
 description = "LLM call optimization across various providers (online and local models)"
-authors = ["InferLink valtron@inferlink.com"]
+authors = ["InferLink <valtron@inferlink.com>"]
+license = "Apache-2.0"
 readme = "README.md"
 packages = [{include = "valtron_core", from = "src"}]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+]
+
+[tool.poetry.urls]
+Homepage = "https://github.com/inferlinkdev/valtron-core/"
+Documentation = "https://valtron.ai/docs/"
 
 [tool.poetry.dependencies]
 python = "^3.12"
