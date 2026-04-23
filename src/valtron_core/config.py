@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from dotenv import find_dotenv, load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -106,4 +107,5 @@ class ValtronCoreConfig(BaseSettings):
 
 
 # Global config instance
+load_dotenv(find_dotenv(usecwd=True))
 config = ValtronCoreConfig()
