@@ -6,7 +6,7 @@ sidebar_position: 1
 
 ## Requirements
 
-- Python 3.10+
+- Python 3.12+
 - An API key for at least one LLM provider (or [Ollama](../self-hosted-models) for local models)
 
 ## Install
