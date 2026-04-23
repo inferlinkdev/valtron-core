@@ -199,4 +199,4 @@ Then open `http://localhost:3000`.
 
 ## License
 
-TBD
+Apache 2.0
