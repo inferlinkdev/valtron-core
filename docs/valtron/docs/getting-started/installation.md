@@ -15,10 +15,6 @@ sidebar_position: 1
 pip install valtron-core
 ```
 
-:::note
-Package name and availability to be confirmed. Stub for now.
-:::
-
 ## Configure API keys
 
 Valtron reads credentials from environment variables or a `.env` file in your working directory.
