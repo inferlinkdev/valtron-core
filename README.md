@@ -2,7 +2,7 @@
 
 # Valtron Core
 
-[Documentation](docs/valtron/) · [Quick Start](#quick-start) · [Examples](#examples) · [Contributing](#contributing)
+[Documentation](https://valtron.ai/docs) · [Quick Start](#quick-start) · [Examples](#examples) · [Contributing](#contributing)
 
 A Python framework for evaluating and optimizing LLM calls across any provider.
 
@@ -93,7 +93,7 @@ The config accepts a dict, a JSON file path, or a typed `ModelEvalConfig` object
 - `"hallucination_filter"` — drop extracted values not grounded in the source text *(structured extraction only)*
 - `"multi_pass"` — call the model twice and merge results *(structured extraction only)*
 
-See [Config Format](docs/valtron/docs/config-format.md) for the full reference, including field-level metrics, structured extraction, and few-shot settings.
+See [Config Format](https://valtron.ai/docs/config-format) for the full reference, including field-level metrics, structured extraction, and few-shot settings.
 
 **Prefer a guided setup?** The Configuration Wizard is a browser-based UI that builds your config file step by step:
 
@@ -123,7 +123,7 @@ poetry run python examples/sentiment_classification.py
 docker compose run --rm server poetry run python examples/sentiment_classification.py
 ```
 
-See [Examples](docs/valtron/docs/examples/) for detailed walkthroughs.
+See [Examples](https://valtron.ai/docs/examples/) for detailed walkthroughs.
 
 ## Docker
 
@@ -182,7 +182,7 @@ ModelEval.run()
 evaluation_report.html  ·  models/*.json  ·  metadata.json
 ```
 
-Full documentation lives in [docs/valtron/](docs/valtron/). To run the docs site locally:
+Full documentation lives in [docs/valtron/](https://valtron.ai/docs/intro). To run the docs site locally:
 
 ```bash
 cd docs/valtron && docker compose up
