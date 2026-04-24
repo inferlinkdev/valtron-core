@@ -15,7 +15,7 @@ from valtron_core.recipes import ModelEval
 DATA = [
     {"id": "1", "content": "An absolute masterpiece. I was on the edge of my seat the whole time.", "label": "positive"},
     {"id": "2", "content": "Painfully boring. I walked out after thirty minutes.", "label": "negative"},
-    {"id": "3", "content": "Decent enough — a few good scenes but nothing memorable.", "label": "neutral"},
+    {"id": "3", "content": "Decent enough, a few good scenes but nothing memorable.", "label": "neutral"},
     {"id": "4", "content": "The performances were outstanding and the writing was sharp.", "label": "positive"},
     {"id": "5", "content": "Disappointing sequel that fails to live up to the original.", "label": "negative"},
     {"id": "6", "content": "Not great, not terrible. Passes the time.", "label": "neutral"},

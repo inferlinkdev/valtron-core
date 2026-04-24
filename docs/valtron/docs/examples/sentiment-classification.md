@@ -4,7 +4,7 @@ sidebar_position: 2
 
 # Sentiment Classification
 
-**File:** [`examples/sentiment_classification.py`](https://github.com/your-org/valtron-core/blob/main/examples/sentiment_classification.py)
+**File:** [`examples/sentiment_classification.py`](https://github.com/inferlinkdev/valtron-core/blob/main/examples/sentiment_classification.py)
 
 The simplest possible evaluation: two LLMs classifying movie reviews as `positive`, `negative`, or `neutral`.
 
@@ -20,18 +20,28 @@ The simplest possible evaluation: two LLMs classifying movie reviews as `positiv
 python examples/sentiment_classification.py
 ```
 
+## Data file
+
+Data is loaded from [`examples/sentiment_data.json`](https://github.com/inferlinkdev/valtron-core/blob/main/examples/sentiment_data.json). Each record has an `id`, `content`, and `label`:
+
+```json
+[
+    {"id": "1", "content": "An absolute masterpiece. I was on the edge of my seat the whole time.", "label": "positive"},
+    {"id": "2", "content": "Painfully boring. I walked out after thirty minutes.", "label": "negative"},
+    {"id": "3", "content": "Decent enough, a few good scenes but nothing memorable.", "label": "neutral"}
+]
+```
+
+See [Data Format](../data-format) for more details.
+
 ## Full code
 
 ```python
+import json
 from pathlib import Path
 from valtron_core.recipes import ModelEval
 
-DATA = [
-    {"id": "1", "content": "An absolute masterpiece. I was on the edge of my seat the whole time.", "label": "positive"},
-    {"id": "2", "content": "Painfully boring. I walked out after thirty minutes.", "label": "negative"},
-    {"id": "3", "content": "Decent enough — a few good scenes but nothing memorable.", "label": "neutral"},
-    # ... 5 more items
-]
+DATA = json.loads((Path(__file__).resolve().parent / "sentiment_data.json").read_text())
 
 CONFIG = {
     "use_case": "movie review sentiment classification",

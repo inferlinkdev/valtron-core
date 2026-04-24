@@ -6,9 +6,15 @@ sidebar_position: 2
 
 This walks through a minimal end-to-end evaluation: two models, five documents, one report.
 
+## Install
+
+```bash
+pip install valtron-core
+```
+
 ## 1. Prepare your data
 
-Data is a list of dicts, each with an `id`, `content`, and `label`.
+Each record needs an `id`, `content`, and `label`. See [Data Format](../data-format) for more details.
 
 ```python
 data = [
@@ -19,8 +25,6 @@ data = [
     {"id": "5", "content": "Wrong item sent. Refund process was painful.", "label": "negative"},
 ]
 ```
-
-To load from a JSON file, see [Data Format](../data-format) for the full schema.
 
 ## 2. Write a config
 
