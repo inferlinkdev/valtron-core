@@ -1,14 +1,20 @@
-<div align="center">
+<h1 align="center">
+    Valtron Core
+</h1>
+<p align="center">
+    <p align="center">A Python framework for evaluating and optimizing LLM calls across any provider.</p>
+    <p align="center">Proudly built and backed by <a href="https://inferlink.com" target="_blank">InferLink</a>.</p>
+</p>
 
-# Valtron Core
-
-[Documentation](https://valtron.ai/docs) · [Quick Start](#quick-start) · [Examples](#examples) · [Contributing](#contributing)
-
-A Python framework for evaluating and optimizing LLM calls across any provider.
-
-Proudly built and backed by [InferLink](https://inferlink.com).
-
-</div>
+<h4 align="center"><a href="https://valtron.ai" target="_blank">Website</a> | <a href="https://valtron.ai/docs/intro" target="_blank">Documentation</a> | <a href="https://valtron.ai/docs/getting-started/quick-start" target="_blank">Quick Start</a> | <a href="https://valtron.ai/docs/examples/" target="_blank">Examples</a> | <a href="#contributing">Contributing</a></h4>
+<h4 align="center">
+    <a href="https://pypi.org/project/valtron-core/" target="_blank">
+        <img src="https://img.shields.io/pypi/v/valtron-core.svg" alt="PyPI Version">
+    </a>
+    <a href="https://inferlink.com" target="_blank">
+        <img src="https://img.shields.io/badge/built%20by-InferLink-blue?style=flat-square" alt="Built by InferLink">
+    </a>
+</h4>
 
 ---
 
@@ -33,6 +39,12 @@ Valtron lets you run the same task across multiple LLMs simultaneously, then com
 - Docker (optional)
 
 ### Install
+
+```bash
+pip install valtron-core
+```
+
+Or with Poetry:
 
 ```bash
 poetry install
