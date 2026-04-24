@@ -279,7 +279,7 @@ async def main(
 
     report_field_config = field_metrics_config.config if field_metrics_config else meta.get("field_config")
 
-    report_path = await runner.generate_report(
+    report_path = runner.generate_report(
         results=results,
         output_dir=output_dir,
         use_case=use_case,
