@@ -10,14 +10,22 @@ from jinja2 import Environment, FileSystemLoader
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend - must be before pyplot import
 import matplotlib.pyplot as plt
-from weasyprint import HTML
-
 from valtron_core.attachments import _EXT_MIME, _MAGIC, detect_mime_hint
 from valtron_core.client import LLMClient
 from valtron_core.models import EvaluationResult
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
 _jinja_env = Environment(loader=FileSystemLoader(TEMPLATES_DIR))
+
+
+def _check_weasyprint_available() -> None:
+    try:
+        from weasyprint import HTML as _HTML  # noqa: F401
+    except (ImportError, OSError) as e:
+        raise ImportError(
+            "PDF generation requires WeasyPrint system dependencies. "
+            "See the installation guide: https://doc.courtbouillon.org/weasyprint/stable/first_steps.html"
+        ) from e
 
 
 class ReportGenerator:
@@ -974,6 +982,9 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
         Returns:
             Path to the generated PDF
         """
+        _check_weasyprint_available()
+        from weasyprint import HTML
+
         output_path = Path(output_path)
         output_dir = output_path.parent
         output_dir.mkdir(parents=True, exist_ok=True)

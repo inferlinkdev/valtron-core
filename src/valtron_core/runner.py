@@ -216,6 +216,11 @@ class EvaluationRunner:
             f"Affected fields: {', '.join(issue['list_path'] for issue in issues)}"
         )
 
+    def _preflight_report_check(self, generate_pdf: bool) -> None:
+        if generate_pdf:
+            from valtron_core.report import _check_weasyprint_available
+            _check_weasyprint_available()
+
     def _save_result_to_run_dir(
         self,
         result: EvaluationResult,
@@ -645,6 +650,8 @@ class EvaluationRunner:
         Returns:
             Path to generated HTML report
         """
+        self._preflight_report_check(generate_pdf=generate_pdf)
+
         from valtron_core.report import ReportGenerator
 
         # Initialize metadata dict
@@ -715,22 +722,17 @@ class EvaluationRunner:
 
         console.print(f"[bold green]HTML report generated: {report_path}[/bold green]")
 
-        # Generate PDF report (optional - requires WeasyPrint installation)
         if generate_pdf:
-            try:
-                console.print("[cyan]Generating PDF report...[/cyan]")
-                pdf_path = report_generator.generate_pdf_report(
-                    results=results,
-                    output_path=output_dir / "evaluation_report",
-                    recommendation=recommendation,
-                    original_prompt=original_prompt,
-                    prompt_optimizations=prompt_optimizations,
-                    model_override_prompts=model_override_prompts,
-                )
-                console.print(f"[bold green]PDF report generated: {pdf_path}[/bold green]")
-            except Exception as e:
-                console.print(f"[yellow]PDF generation skipped: {e}[/yellow]")
-                console.print("[yellow]HTML report is still available.[/yellow]")
+            console.print("[cyan]Generating PDF report...[/cyan]")
+            pdf_path = report_generator.generate_pdf_report(
+                results=results,
+                output_path=output_dir / "evaluation_report",
+                recommendation=recommendation,
+                original_prompt=original_prompt,
+                prompt_optimizations=prompt_optimizations,
+                model_override_prompts=model_override_prompts,
+            )
+            console.print(f"[bold green]PDF report generated: {pdf_path}[/bold green]")
 
         return report_path
 

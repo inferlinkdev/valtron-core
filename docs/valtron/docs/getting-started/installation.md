@@ -17,6 +17,10 @@ pip install valtron-core
 
 This installs the core package including reporting, the configuration wizard, and evaluation utilities.
 
+## PDF system dependencies
+
+PDF report generation uses WeasyPrint, which requires OS-level libraries that pip cannot install. If you plan to generate PDF reports and are not using Docker, follow the [WeasyPrint installation guide](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html) to install the required dependencies for your platform. These dependencies are pre-installed in the Docker image.
+
 ## Optional extras
 
 To train or run inference on local transformer models (DistilBERT, etc.), install the `transformers` extra:

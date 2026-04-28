@@ -22,7 +22,7 @@ Set `output_formats` in your config:
 }
 ```
 
-Default is `["html"]`. PDF generation requires WeasyPrint to be installed.
+Default is `["html"]`. PDF generation requires WeasyPrint and its system-level dependencies. See [PDF system dependencies](#pdf-system-dependencies) below.
 
 ---
 
@@ -69,6 +69,12 @@ The HTML report consists of two files:
 - Expected label
 - Each model's predicted value, score, cost, and response time
 - Field-level results per document (structured mode)
+
+---
+
+## PDF system dependencies
+
+WeasyPrint requires OS-level libraries that pip cannot install automatically. If these are missing, Valtron will raise a clear error when PDF generation is requested. Follow the [WeasyPrint installation guide](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html) to install the required dependencies for your platform.
 
 ---
 
