@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "valtron-core"
-version = "0.1.4"
+version = "0.1.5"
 description = "LLM call optimization across various providers (online and local models)"
 authors = ["InferLink <valtron@inferlink.com>"]
 license = "Apache-2.0"
