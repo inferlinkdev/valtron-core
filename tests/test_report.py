@@ -12,7 +12,7 @@ from valtron_core.models import (
     EvaluationMetrics,
     PredictionResult,
 )
-from valtron_core.report import ReportGenerator
+from valtron_core.report import ReportGenerator, _check_weasyprint_available
 
 
 class TestReportGeneratorInit:
@@ -409,7 +409,8 @@ class TestGeneratePdfReport:
         """Test basic PDF report generation."""
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report.HTML") as mock_html_class:
+        with patch("valtron_core.report._check_weasyprint_available"), \
+             patch("weasyprint.HTML") as mock_html_class:
             mock_html = MagicMock()
             mock_html_class.return_value = mock_html
             mock_html.write_pdf = Mock()
@@ -427,7 +428,8 @@ class TestGeneratePdfReport:
         """Test PDF report with recommendation."""
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report.HTML") as mock_html_class:
+        with patch("valtron_core.report._check_weasyprint_available"), \
+             patch("weasyprint.HTML") as mock_html_class:
             mock_html = MagicMock()
             mock_html_class.return_value = mock_html
             mock_html.write_pdf = Mock()
@@ -465,7 +467,8 @@ class TestGeneratePdfReport:
         )
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report.HTML") as mock_html_class:
+        with patch("valtron_core.report._check_weasyprint_available"), \
+             patch("weasyprint.HTML") as mock_html_class:
             mock_html = MagicMock()
             mock_html_class.return_value = mock_html
             mock_html.write_pdf = Mock()
@@ -503,7 +506,8 @@ class TestGeneratePdfReport:
         )
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report.HTML") as mock_html_class:
+        with patch("valtron_core.report._check_weasyprint_available"), \
+             patch("weasyprint.HTML") as mock_html_class:
             mock_html = MagicMock()
             mock_html_class.return_value = mock_html
             mock_html.write_pdf = Mock()
@@ -519,7 +523,8 @@ class TestGeneratePdfReport:
         """Test PDF report with empty results."""
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report.HTML") as mock_html_class:
+        with patch("valtron_core.report._check_weasyprint_available"), \
+             patch("weasyprint.HTML") as mock_html_class:
             mock_html = MagicMock()
             mock_html_class.return_value = mock_html
             mock_html.write_pdf = Mock()
@@ -530,3 +535,21 @@ class TestGeneratePdfReport:
             )
 
             mock_html.write_pdf.assert_called_once()
+
+    def test_check_weasyprint_available_raises_on_missing_python_package(self):
+        import sys
+        with patch.dict(sys.modules, {"weasyprint": None}):
+            with pytest.raises(ImportError, match="doc.courtbouillon.org/weasyprint"):
+                _check_weasyprint_available()
+
+    def test_check_weasyprint_available_raises_on_missing_system_deps(self):
+        original_import = __import__
+
+        def mock_import(name, *args, **kwargs):
+            if name == "weasyprint":
+                raise OSError("cannot load library 'gobject-2.0-0'")
+            return original_import(name, *args, **kwargs)
+
+        with patch("builtins.__import__", side_effect=mock_import):
+            with pytest.raises(ImportError, match="doc.courtbouillon.org/weasyprint"):
+                _check_weasyprint_available()
