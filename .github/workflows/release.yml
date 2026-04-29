@@ -10,7 +10,6 @@ on:
       - "pyproject.toml"
       - "poetry.lock"
       - "pytest.ini"
-      - ".github/workflows/release.yml"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -57,6 +56,8 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -76,7 +77,10 @@ jobs:
         run: pip install poetry
 
       - name: Bump patch version
-        run: poetry version patch
+        id: bump
+        run: |
+          poetry version patch
+          echo "version=$(poetry version -s)" >> $GITHUB_OUTPUT
 
       - name: Commit version bump
         run: |
@@ -93,3 +97,63 @@ jobs:
         env:
           POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_TOKEN }}
         run: poetry publish
+
+  github-release:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('poetry.lock') }}
+          restore-keys: ${{ runner.os }}-pip-
+
+      - name: Install poetry
+        run: pip install poetry
+
+      - name: Build package
+        run: poetry build
+
+      - name: Generate changelog
+        env:
+          RELEASE_VERSION: v${{ needs.release.outputs.version }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | grep '^v' | head -n 1)
+          if [ -z "$PREV_TAG" ]; then
+            COMMITS=$(git log --pretty=format:"- %s" --no-merges | grep -v "chore: bump version")
+            DIFF_LINE="**Full history:** https://github.com/${GH_REPO}/commits/main"
+          else
+            COMMITS=$(git log "${PREV_TAG}..HEAD" --pretty=format:"- %s" --no-merges | grep -v "chore: bump version")
+            DIFF_LINE="**Full diff:** https://github.com/${GH_REPO}/compare/${PREV_TAG}...${RELEASE_VERSION}"
+          fi
+          {
+            echo "## What's Changed"
+            echo ""
+            echo "$COMMITS"
+            echo ""
+            echo "$DIFF_LINE"
+          } > changelog.md
+
+      - name: Create tag and GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: v${{ needs.release.outputs.version }}
+        run: |
+          git tag "$RELEASE_VERSION"
+          git push origin "$RELEASE_VERSION"
+          gh release create "$RELEASE_VERSION" \
+            --title "Release $RELEASE_VERSION" \
+            --notes-file changelog.md \
+            dist/*
