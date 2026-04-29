@@ -28,16 +28,16 @@ class SampleSchema(BaseModel):
 
 EXTRACT_CONFIG = {
     "models": [{"name": "gpt-4o-mini"}],
-    "prompt": "Extract: {document}",
+    "prompt": "Extract: {content}",
 }
 
 CLASSIFY_CONFIG = {
     "models": [{"name": "gpt-4o-mini"}],
-    "prompt": "Classify: {document}",
+    "prompt": "Classify: {content}",
 }
 
 
-def _mock_result(model="gpt-4o-mini", prompt="Classify: {document}") -> EvaluationResult:
+def _mock_result(model="gpt-4o-mini", prompt="Classify: {content}") -> EvaluationResult:
     result = EvaluationResult(
         run_id="test-run",
         model=model,
@@ -69,7 +69,7 @@ class TestModelEvalInit:
     def test_init_basic(self):
         config = {
             "models": [{"name": "gpt-4o-mini", "type": "llm"}],
-            "prompt": "Classify: {document}",
+            "prompt": "Classify: {content}",
             "output_dir": "./test_output",
             "use_case": "test classification",
         }
@@ -101,7 +101,7 @@ class TestModelEvalInit:
     def test_typed_config_accepted_directly(self):
         config = ModelEvalConfig(
             models=[LLMModelConfig(name="gpt-4o-mini")],
-            prompt="Extract: {document}",
+            prompt="Extract: {content}",
         )
         eval_ = ModelEval(config=config, data=[])
         assert eval_.config is config
@@ -129,7 +129,7 @@ class TestModelEvalInit:
         for manip in STRUCTURED_MANIPULATIONS:
             config = {
                 "models": [{"name": "gpt-4o-mini", "prompt_manipulation": [manip.value]}],
-                "prompt": "Extract: {document}",
+                "prompt": "Extract: {content}",
             }
             with pytest.raises(ValueError, match=manip.value):
                 ModelEval(config=config, data=[])
@@ -137,7 +137,7 @@ class TestModelEvalInit:
     def test_decompose_with_response_format_ok(self):
         config = {
             "models": [{"name": "gpt-4o-mini", "prompt_manipulation": ["decompose"]}],
-            "prompt": "Extract: {document}",
+            "prompt": "Extract: {content}",
         }
         eval_ = ModelEval(config=config, data=[], response_format=SampleSchema)
         assert eval_.response_format is SampleSchema
@@ -145,13 +145,13 @@ class TestModelEvalInit:
     def test_transformer_with_response_format_raises(self):
         config = {
             "models": [{"label": "my-transformer", "type": "transformer", "model_path": "./dummy"}],
-            "prompt": "Extract: {document}",
+            "prompt": "Extract: {content}",
         }
         with pytest.raises(ValueError, match="Transformer"):
             ModelEval(config=config, data=[], response_format=SampleSchema)
 
     def test_prompt_missing_placeholder_raises(self):
-        with pytest.raises(ValidationError, match="document"):
+        with pytest.raises(ValidationError, match="placeholder"):
             ModelEval(
                 config={"models": [{"name": "gpt-4o-mini"}], "prompt": "No placeholder."},
                 data=[],
@@ -171,21 +171,21 @@ class TestModelEvalConfig:
     def test_direct_construction(self):
         config = ModelEvalConfig(
             models=[LLMModelConfig(name="gpt-4o-mini")],
-            prompt="Classify: {document}",
+            prompt="Classify: {content}",
         )
         assert config.models[0].name == "gpt-4o-mini"
         assert config.output_dir is None
 
     def test_missing_models_raises(self):
         with pytest.raises(ValidationError):
-            ModelEvalConfig.model_validate({"prompt": "Classify: {document}"})
+            ModelEvalConfig.model_validate({"prompt": "Classify: {content}"})
 
     def test_missing_prompt_raises(self):
         with pytest.raises(ValidationError):
             ModelEvalConfig.model_validate({"models": [{"name": "gpt-4o-mini"}]})
 
     def test_prompt_without_placeholder_raises(self):
-        with pytest.raises(ValidationError, match="document"):
+        with pytest.raises(ValidationError, match="placeholder"):
             ModelEvalConfig.model_validate({
                 "models": [{"name": "gpt-4o-mini"}],
                 "prompt": "No placeholder here.",
@@ -195,35 +195,35 @@ class TestModelEvalConfig:
         with pytest.raises(ValidationError):
             ModelEvalConfig.model_validate({
                 "models": [{"name": "gpt-4o-mini"}],
-                "prompt": "Classify: {document}",
+                "prompt": "Classify: {content}",
                 "unknown_field": "oops",
             })
 
     def test_manipulation_strings_coerced_to_enum(self):
         config = ModelEvalConfig.model_validate({
             "models": [{"name": "gpt-4o-mini", "prompt_manipulation": ["few_shot"]}],
-            "prompt": "Classify: {document}",
+            "prompt": "Classify: {content}",
         })
         assert config.models[0].prompt_manipulation == [Manipulation.few_shot]
 
     def test_model_prompt_override_accepted(self):
         config = ModelEvalConfig.model_validate({
-            "models": [{"name": "gpt-4o-mini", "prompt": "Custom: {document}"}],
-            "prompt": "Base: {document}",
+            "models": [{"name": "gpt-4o-mini", "prompt": "Custom: {content}"}],
+            "prompt": "Base: {content}",
         })
-        assert config.models[0].prompt == "Custom: {document}"
+        assert config.models[0].prompt == "Custom: {content}"
 
     def test_model_prompt_override_without_placeholder_raises(self):
-        with pytest.raises(ValidationError, match="document"):
+        with pytest.raises(ValidationError, match="content"):
             ModelEvalConfig.model_validate({
                 "models": [{"name": "gpt-4o-mini", "prompt": "No placeholder here."}],
-                "prompt": "Base: {document}",
+                "prompt": "Base: {content}",
             })
 
     def test_model_prompt_none_by_default(self):
         config = ModelEvalConfig.model_validate({
             "models": [{"name": "gpt-4o-mini"}],
-            "prompt": "Base: {document}",
+            "prompt": "Base: {content}",
         })
         assert config.models[0].prompt is None
 
@@ -328,13 +328,13 @@ class TestPrepareModelPrompts:
     async def test_no_manipulation_returns_original_prompt(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[])
         prompts = await eval_._prepare_model_prompts()
-        assert prompts["gpt-4o-mini"] == "Classify: {document}"
+        assert prompts["gpt-4o-mini"] == "Classify: {content}"
 
     @pytest.mark.asyncio
     async def test_transformer_gets_empty_prompt(self):
         config = {
             "models": [{"label": "my-t", "type": "transformer", "model_path": "./x"}],
-            "prompt": "Classify: {document}",
+            "prompt": "Classify: {content}",
         }
         eval_ = ModelEval(config=config, data=[])
         prompts = await eval_._prepare_model_prompts()
@@ -344,21 +344,21 @@ class TestPrepareModelPrompts:
     async def test_explanation_manipulation(self):
         config = {
             "models": [{"name": "gpt-4o-mini", "prompt_manipulation": ["explanation"]}],
-            "prompt": "Classify: {document}",
+            "prompt": "Classify: {content}",
         }
         eval_ = ModelEval(config=config, data=[])
         with patch.object(
             eval_.enhancer, "optimize", new_callable=AsyncMock,
-            return_value={"enhanced_prompt": "Enhanced: {document}"},
+            return_value={"enhanced_prompt": "Enhanced: {content}"},
         ):
             prompts = await eval_._prepare_model_prompts()
-        assert prompts["gpt-4o-mini"] == "Enhanced: {document}"
+        assert prompts["gpt-4o-mini"] == "Enhanced: {content}"
 
     @pytest.mark.asyncio
     async def test_few_shot_manipulation_injects_examples(self):
         config = {
             "models": [{"name": "gpt-4o-mini", "prompt_manipulation": ["few_shot"]}],
-            "prompt": "Classify: {document}",
+            "prompt": "Classify: {content}",
         }
         eval_ = ModelEval(config=config, data=[])
         eval_.few_shot_examples = [
@@ -371,50 +371,50 @@ class TestPrepareModelPrompts:
     @pytest.mark.asyncio
     async def test_model_override_prompt_used_as_base(self):
         config = {
-            "models": [{"name": "gpt-4o-mini", "prompt": "Override: {document}"}],
-            "prompt": "Base: {document}",
+            "models": [{"name": "gpt-4o-mini", "prompt": "Override: {content}"}],
+            "prompt": "Base: {content}",
         }
         eval_ = ModelEval(config=config, data=[])
         prompts = await eval_._prepare_model_prompts()
-        assert prompts["gpt-4o-mini"] == "Override: {document}"
+        assert prompts["gpt-4o-mini"] == "Override: {content}"
 
     @pytest.mark.asyncio
     async def test_model_without_override_uses_base_prompt(self):
         config = {
             "models": [
                 {"name": "gpt-4o-mini"},
-                {"name": "gpt-4o", "prompt": "Override: {document}"},
+                {"name": "gpt-4o", "prompt": "Override: {content}"},
             ],
-            "prompt": "Base: {document}",
+            "prompt": "Base: {content}",
         }
         eval_ = ModelEval(config=config, data=[])
         prompts = await eval_._prepare_model_prompts()
-        assert prompts["gpt-4o-mini"] == "Base: {document}"
-        assert prompts["gpt-4o"] == "Override: {document}"
+        assert prompts["gpt-4o-mini"] == "Base: {content}"
+        assert prompts["gpt-4o"] == "Override: {content}"
 
     @pytest.mark.asyncio
     async def test_override_prompts_tracked_in_attribute(self):
         config = {
             "models": [
                 {"name": "gpt-4o-mini"},
-                {"name": "gpt-4o", "prompt": "Override: {document}"},
+                {"name": "gpt-4o", "prompt": "Override: {content}"},
             ],
-            "prompt": "Base: {document}",
+            "prompt": "Base: {content}",
         }
         eval_ = ModelEval(config=config, data=[])
         await eval_._prepare_model_prompts()
-        assert eval_._model_override_prompts == {"gpt-4o": "Override: {document}"}
+        assert eval_._model_override_prompts == {"gpt-4o": "Override: {content}"}
 
     @pytest.mark.asyncio
     async def test_manipulation_applied_on_top_of_override_prompt(self):
         config = {
-            "models": [{"name": "gpt-4o-mini", "prompt": "Override: {document}", "prompt_manipulation": ["prompt_repetition"]}],
-            "prompt": "Base: {document}",
+            "models": [{"name": "gpt-4o-mini", "prompt": "Override: {content}", "prompt_manipulation": ["prompt_repetition"]}],
+            "prompt": "Base: {content}",
         }
         eval_ = ModelEval(config=config, data=[])
         prompts = await eval_._prepare_model_prompts()
-        assert prompts["gpt-4o-mini"].startswith("Override: {document}")
-        assert "Override: {document}" in prompts["gpt-4o-mini"].split("Let me repeat")[0]
+        assert prompts["gpt-4o-mini"].startswith("Override: {content}")
+        assert "Override: {content}" in prompts["gpt-4o-mini"].split("Let me repeat")[0]
 
 
 # ===========================================================================
@@ -426,7 +426,7 @@ class TestCreateResponseValidator:
     def test_json_labels_produce_validator(self):
         config = {
             "models": [{"name": "gpt-4o-mini"}],
-            "prompt": 'Output JSON: {"name": "", "age": 0}. {document}',
+            "prompt": 'Output JSON: {"name": "", "age": 0}. {content}',
         }
         eval_ = ModelEval(config=config, data=[{"content": "T", "label": '{"name": "J", "age": 30}'}])
         validator = eval_._create_response_validator()
@@ -441,7 +441,7 @@ class TestCreateResponseValidator:
     def test_explanation_with_json_schema_in_prompt_adds_field(self):
         config = {
             "models": [{"name": "gpt-4o-mini"}],
-            "prompt": 'Extract: {"name": ""} from {document}',
+            "prompt": 'Extract: {"name": ""} from {content}',
         }
         eval_ = ModelEval(config=config, data=[{"content": "T", "label": '{"name": "J"}'}])
         validator = eval_._create_response_validator(include_explanation=True)
@@ -459,7 +459,7 @@ class TestEvaluateTransformer:
     async def test_evaluate_transformer_basic(self, tmp_path):
         config = {
             "models": [{"label": "my-t", "type": "transformer", "model_path": "./models"}],
-            "prompt": "Classify: {document}",
+            "prompt": "Classify: {content}",
             "output_dir": str(tmp_path),
         }
         data = [{"id": "d1", "content": "Great!", "label": '{"sentiment": "positive"}'}]
@@ -487,7 +487,7 @@ class TestRunEvaluations:
     async def test_llm_model_evaluated(self, tmp_path):
         config = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path)}
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
-        model_prompts = {"gpt-4o-mini": "Classify: {document}"}
+        model_prompts = {"gpt-4o-mini": "Classify: {content}"}
 
         with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
             results, manipulations = await eval_._run_evaluations(model_prompts)
@@ -500,9 +500,9 @@ class TestRunEvaluations:
         config = {**EXTRACT_CONFIG, "output_dir": str(tmp_path)}
         data = [{"id": "d1", "content": "text", "label": '{"name": "x", "value": "y"}'}]
         eval_ = ModelEval(config=config, data=data, response_format=SampleSchema)
-        model_prompts = {"gpt-4o-mini": "Extract: {document}"}
+        model_prompts = {"gpt-4o-mini": "Extract: {content}"}
 
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result("gpt-4o-mini", "Extract: {document}")):
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result("gpt-4o-mini", "Extract: {content}")):
             results, manipulations = await eval_._run_evaluations(model_prompts)
 
         assert len(results) == 1
@@ -519,11 +519,11 @@ class TestSaveExperimentResults:
         config = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path), "use_case": "test"}
         eval_ = ModelEval(config=config, data=[{"content": "T", "label": "pos"}])
 
-        mock_r = EvaluationResult(run_id="r", model="gpt-4o-mini", prompt_template="Classify: {document}", status="completed")
+        mock_r = EvaluationResult(run_id="r", model="gpt-4o-mini", prompt_template="Classify: {content}", status="completed")
         mock_r.predictions = []
         eval_.results = [mock_r]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
-        eval_._model_prompts = {"gpt-4o-mini": "Classify: {document}"}
+        eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}"}
 
         run_dir = eval_.save_experiment_results()
 
@@ -533,34 +533,34 @@ class TestSaveExperimentResults:
         with open(run_dir / "metadata.json") as f:
             meta = json.load(f)
         assert meta["use_case"] == "test"
-        assert meta["original_prompt"] == "Classify: {document}"
+        assert meta["original_prompt"] == "Classify: {content}"
 
     def test_save_persists_override_prompt(self, tmp_path):
         config = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path)}
         eval_ = ModelEval(config=config, data=[{"content": "T", "label": "pos"}])
 
-        mock_r = EvaluationResult(run_id="r", model="gpt-4o-mini", prompt_template="Override: {document}", status="completed")
+        mock_r = EvaluationResult(run_id="r", model="gpt-4o-mini", prompt_template="Override: {content}", status="completed")
         mock_r.predictions = []
         eval_.results = [mock_r]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
-        eval_._model_prompts = {"gpt-4o-mini": "Override: {document}"}
-        eval_._model_override_prompts = {"gpt-4o-mini": "Override: {document}"}
+        eval_._model_prompts = {"gpt-4o-mini": "Override: {content}"}
+        eval_._model_override_prompts = {"gpt-4o-mini": "Override: {content}"}
 
         run_dir = eval_.save_experiment_results()
 
         with open(run_dir / "models" / "gpt-4o-mini.json") as f:
             model_data = json.load(f)
-        assert model_data["override_prompt"] == "Override: {document}"
+        assert model_data["override_prompt"] == "Override: {content}"
 
     def test_save_omits_override_prompt_when_not_set(self, tmp_path):
         config = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path)}
         eval_ = ModelEval(config=config, data=[{"content": "T", "label": "pos"}])
 
-        mock_r = EvaluationResult(run_id="r", model="gpt-4o-mini", prompt_template="Classify: {document}", status="completed")
+        mock_r = EvaluationResult(run_id="r", model="gpt-4o-mini", prompt_template="Classify: {content}", status="completed")
         mock_r.predictions = []
         eval_.results = [mock_r]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
-        eval_._model_prompts = {"gpt-4o-mini": "Classify: {document}"}
+        eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}"}
         eval_._model_override_prompts = {}
 
         run_dir = eval_.save_experiment_results()
@@ -580,7 +580,7 @@ class TestSaveHtmlReportFromMemory:
         mock_r = _mock_result()
         eval_.results = [mock_r]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
-        eval_._model_prompts = {"gpt-4o-mini": "Classify: {document}"}
+        eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}"}
         eval_._model_override_prompts = None
 
         with patch.object(eval_.runner, "generate_report", return_value=tmp_path / "evaluation_report.html") as mock_gen:
@@ -589,7 +589,7 @@ class TestSaveHtmlReportFromMemory:
         mock_gen.assert_called_once()
         call_kwargs = mock_gen.call_args.kwargs
         assert call_kwargs["results"] == [mock_r]
-        assert call_kwargs["generate_pdf"] is False
+        assert call_kwargs["output_formats"] == ["html"]
         assert call_kwargs["use_case"] == eval_.use_case
 
     def test_save_html_before_evaluate_raises(self, tmp_path):
@@ -644,7 +644,7 @@ class TestRun:
             with patch.object(eval_.runner, "generate_report", return_value=tmp_path / "report.html") as mock_report:
                 report_path = await eval_.arun()
 
-        mock_report.assert_called_once_with(**{**mock_report.call_args.kwargs, "generate_pdf": True})
+        mock_report.assert_called_once_with(**{**mock_report.call_args.kwargs, "output_formats": ["pdf"]})
         assert report_path != tmp_path / "report.html"
 
     @pytest.mark.asyncio
@@ -657,9 +657,9 @@ class TestRun:
                 report_path = await eval_.arun()
 
         assert mock_report.call_count == 2
-        generate_pdf_values = [c.kwargs["generate_pdf"] for c in mock_report.call_args_list]
-        assert False in generate_pdf_values
-        assert True in generate_pdf_values
+        formats_values = [c.kwargs["output_formats"] for c in mock_report.call_args_list]
+        assert ["html"] in formats_values
+        assert ["pdf"] in formats_values
         assert report_path == tmp_path / "report.html"
 
 
@@ -717,7 +717,7 @@ def _write_mock_run_dir(tmp_path, override_prompt=None):
     metadata = {
         "timestamp": "20260420_120000",
         "use_case": "test classification",
-        "original_prompt": "Classify: {document}",
+        "original_prompt": "Classify: {content}",
         "field_config": None,
         "documents": [
             {"id": "d1", "content": "Hello", "label": "positive"},
@@ -733,7 +733,7 @@ def _write_mock_run_dir(tmp_path, override_prompt=None):
         "started_at": "2026-04-20 12:00:00",
         "completed_at": "2026-04-20 12:00:05",
         "status": "completed",
-        "prompt_template": "Classify: {document}",
+        "prompt_template": "Classify: {content}",
         "prompt_manipulations": [],
         "override_prompt": override_prompt,
         "llm_config": {"model": "gpt-4o-mini", "temperature": 0.0},
@@ -769,7 +769,7 @@ class TestLoadExperimentResults:
     def test_load_restores_model_prompts(self, tmp_path):
         run_dir = _write_mock_run_dir(tmp_path)
         loaded = ModelEval.load_experiment_results(run_dir)
-        assert loaded._model_prompts["gpt-4o-mini"] == "Classify: {document}"
+        assert loaded._model_prompts["gpt-4o-mini"] == "Classify: {content}"
 
     def test_load_restores_data(self, tmp_path):
         run_dir = _write_mock_run_dir(tmp_path)
@@ -779,10 +779,10 @@ class TestLoadExperimentResults:
         assert loaded.data[0]["label"] == "positive"
 
     def test_load_restores_override_prompt(self, tmp_path):
-        run_dir = _write_mock_run_dir(tmp_path, override_prompt="Custom: {document}")
+        run_dir = _write_mock_run_dir(tmp_path, override_prompt="Custom: {content}")
         loaded = ModelEval.load_experiment_results(run_dir)
         assert loaded._model_override_prompts is not None
-        assert loaded._model_override_prompts.get("gpt-4o-mini") == "Custom: {document}"
+        assert loaded._model_override_prompts.get("gpt-4o-mini") == "Custom: {content}"
 
     def test_load_missing_dir_raises(self, tmp_path):
         with pytest.raises(FileNotFoundError, match="metadata.json"):
@@ -792,7 +792,7 @@ class TestLoadExperimentResults:
         run_dir = tmp_path / "run"
         (run_dir / "models").mkdir(parents=True)
         metadata = {
-            "use_case": "test", "original_prompt": "Classify: {document}",
+            "use_case": "test", "original_prompt": "Classify: {content}",
             "field_config": None, "documents": [],
         }
         with open(run_dir / "metadata.json", "w") as f:
@@ -813,7 +813,7 @@ class TestLoadExperimentResults:
         loaded = ModelEval.load_experiment_results(run_dir)
         loaded.add_models([{"name": "gpt-4o", "label": "gpt-4o-new"}])
 
-        new_result = _mock_result("gpt-4o-new", "Classify: {document}")
+        new_result = _mock_result("gpt-4o-new", "Classify: {content}")
         with patch.object(loaded.runner, "evaluate", new_callable=AsyncMock, return_value=new_result) as mock_eval:
             await loaded.aevaluate()
 
@@ -828,20 +828,67 @@ class TestLoadExperimentResults:
 # Incremental evaluation (aevaluate skips already-evaluated models)
 # ===========================================================================
 
+class TestDictContent:
+    """Tests for dict-based prompt variable content."""
+
+    @pytest.mark.asyncio
+    async def test_dict_content_prompt_is_built_correctly(self, tmp_path, mock_env_vars):
+        """Dict content fills all named placeholders; the LLM receives a fully-substituted prompt."""
+        from unittest.mock import AsyncMock, patch
+        from litellm.utils import ModelResponse
+        from unittest.mock import Mock
+
+        config = {
+            "models": [{"name": "gpt-4o-mini"}],
+            "prompt": "Text: {text} Is the topic '{topic}'? YES or NO only.",
+            "output_dir": str(tmp_path),
+        }
+        data = [
+            {
+                "id": "d1",
+                "content": {"text": "The sky is blue.", "topic": "weather"},
+                "label": "YES",
+            }
+        ]
+        eval_ = ModelEval(config=config, data=data)
+
+        mock_response = Mock(spec=ModelResponse)
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message = Mock()
+        mock_response.choices[0].message.content = "YES"
+        mock_response._hidden_params = {"response_cost": 0.0001}
+
+        captured_messages: list = []
+
+        async def fake_acompletion(**kwargs):
+            captured_messages.extend(kwargs.get("messages", []))
+            return mock_response
+
+        with patch("valtron_core.client.acompletion", side_effect=fake_acompletion):
+            await eval_.aevaluate()
+
+        assert captured_messages, "acompletion was never called"
+        user_message = next(m for m in captured_messages if m["role"] == "user")
+        assert "The sky is blue." in user_message["content"]
+        assert "weather" in user_message["content"]
+        assert "{text}" not in user_message["content"]
+        assert "{topic}" not in user_message["content"]
+
+
 class TestIncrementalEvaluation:
 
     @pytest.mark.asyncio
     async def test_skips_already_evaluated_models(self, tmp_path):
         config = {
             "models": [{"name": "gpt-4o-mini"}, {"name": "gpt-4o", "label": "gpt-4o-new"}],
-            "prompt": "Classify: {document}",
+            "prompt": "Classify: {content}",
         }
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
 
         # Pre-populate results for the first model only
         eval_.results = [_mock_result("gpt-4o-mini")]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
-        eval_._model_prompts = {"gpt-4o-mini": "Classify: {document}", "gpt-4o-new": "Classify: {document}"}
+        eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}", "gpt-4o-new": "Classify: {content}"}
 
         new_result = _mock_result("gpt-4o-new")
         with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=new_result) as mock_eval:
@@ -854,12 +901,12 @@ class TestIncrementalEvaluation:
     async def test_merges_existing_and_new_results(self, tmp_path):
         config = {
             "models": [{"name": "gpt-4o-mini"}, {"name": "gpt-4o", "label": "gpt-4o-new"}],
-            "prompt": "Classify: {document}",
+            "prompt": "Classify: {content}",
         }
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
         eval_.results = [_mock_result("gpt-4o-mini")]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
-        eval_._model_prompts = {"gpt-4o-mini": "Classify: {document}", "gpt-4o-new": "Classify: {document}"}
+        eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}", "gpt-4o-new": "Classify: {content}"}
 
         new_result = _mock_result("gpt-4o-new")
         with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=new_result):

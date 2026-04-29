@@ -36,7 +36,12 @@ class DocumentLoader:
         for item in data:
             # Coerce common fields to expected types (pydantic may be strict)
             doc_id = str(item.get("id", ""))
-            content = str(item.get("content", ""))
+            content_raw = item.get("content", "")
+            content: str | dict[str, str] = (
+                {str(k): str(v) for k, v in content_raw.items()}
+                if isinstance(content_raw, dict)
+                else str(content_raw)
+            )
             metadata = item.get("metadata", {}) or {}
 
             documents.append(Document(id=doc_id, content=content, metadata=metadata))
@@ -173,7 +178,12 @@ class DocumentLoader:
         for item in data:
             # Coerce to expected types: id and textual fields -> str
             doc_id = str(item.get("id", ""))
-            content = str(item.get("content", ""))
+            content_raw = item.get("content", "")
+            content: str | dict[str, str] = (
+                {str(k): str(v) for k, v in content_raw.items()}
+                if isinstance(content_raw, dict)
+                else str(content_raw)
+            )
             label_raw = item.get("label", "")
             label_value = json.dumps(label_raw) if isinstance(label_raw, (dict, list)) else str(label_raw)
             metadata = item.get("metadata", {}) or {}

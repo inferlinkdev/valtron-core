@@ -45,7 +45,7 @@ CONFIG = {
         "Classify the following news headline into exactly one category: "
         "legal, science, or finance. "
         "Reply with only the category name.\n\n"
-        "{document}"
+        "{content}"
     ),
     "models": [
         {"name": "gpt-4o-mini", "label": "GPT-4o mini"},

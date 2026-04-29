@@ -552,8 +552,8 @@
         <div class="left-panel">
           <div class="input-box">
             <div class="input-label">Input Document</div>
-            <div class="input-content">{% if doc_data.content|length > input_char_limit %}{{ doc_data.content[:input_char_limit]|e }}...{% else %}{{ doc_data.content|e }}{% endif %}</div>
-            {% if doc_data.content|length > input_char_limit %}
+            <div class="input-content">{% if doc_data.content is mapping %}{% for key, value in doc_data.content.items() %}<div class="content-field"><strong>{{ key|e }}</strong>: {{ value|e }}</div>{% endfor %}{% elif doc_data.content|length > input_char_limit %}{{ doc_data.content[:input_char_limit]|e }}...{% else %}{{ doc_data.content|e }}{% endif %}</div>
+            {% if doc_data.content is not mapping and doc_data.content|length > input_char_limit %}
             <div class="char-limit-info">
               Showing first {{ input_char_limit }} characters of {{
               doc_data.content|length }}
@@ -1035,7 +1035,13 @@
 
           const fullDoc = fullDocuments[docId];
           if (fullDoc) {
-              content.textContent = fullDoc;
+              if (typeof fullDoc === 'object' && fullDoc !== null) {
+                  content.textContent = Object.entries(fullDoc)
+                      .map(([k, v]) => `${k}: ${v}`)
+                      .join('\n');
+              } else {
+                  content.textContent = fullDoc;
+              }
           } else {
               content.textContent = 'Document not available';
           }

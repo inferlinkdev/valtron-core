@@ -11,18 +11,18 @@ The config controls which models to run, the prompt template, evaluation options
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `models` | `array` | required | List of model configs (see below) |
-| `prompt` | `string` | required | Prompt template; must contain `{document}` |
+| `prompt` | `string` | required | Prompt template; must contain `{content}` |
 | `output_dir` | `string` | `null` | Directory to write results to |
 | `use_case` | `string` | `"evaluation"` | Describes your task. Used in the report header and passed directly to the LLM that generates the AI recommendation (e.g. `"sentiment classification"`, `"medical entity extraction"`) |
 | `temperature` | `float` | `0.0` | Default temperature for all models (can be overridden per model) |
 | `few_shot` | `object` | `null` | Few-shot generation config (see below) |
 | `field_metrics_config` | `object` | `null` | Field-level scoring for structured extraction (see below) |
-| `output_formats` | `array[string]` | `["html"]` | Report formats to generate: `"html"`, `"pdf"`, or both. PDF requires [WeasyPrint system dependencies](./getting-started/installation#pdf-system-dependencies) |
+| `output_formats` | `array[string]` | `["html"]` | Report formats to generate. Acceptable formats include: `"html"`, `"pdf"` |
 
 ```json
 {
   "models": [...],
-  "prompt": "Classify the sentiment: {document}\n\nSentiment:",
+  "prompt": "Classify the sentiment: {content}\n\nSentiment:",
   "output_dir": "./results",
   "use_case": "sentiment classification",
   "temperature": 0.0,
@@ -62,7 +62,7 @@ Each entry in `models` is either an LLM model or a transformer model.
 ```json
 {
   "name": "claude-sonnet-4-6",
-  "prompt": "You are a sentiment classifier. Output only: positive, negative, or neutral.\n\n{document}"
+  "prompt": "You are a sentiment classifier. Output only: positive, negative, or neutral.\n\n{content}"
 }
 ```
 The report will show a "Base" / "Overridden" toggle for models with a custom prompt.
@@ -155,14 +155,14 @@ Required when using the `"decompose"` prompt manipulation. Controls how the sche
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `rewrite_model` | `string` | `"gpt-4o-mini"` | LLM used to generate per-field sub-prompts |
-| `sub_prompts` | `object` | `null` | Manual prompt overrides per field (keys are field names, values are prompt templates containing `{document}`) |
+| `sub_prompts` | `object` | `null` | Manual prompt overrides per field (keys are field names, values are prompt templates containing `{content}`) |
 
 ```json
 {
   "decompose_config": {
     "rewrite_model": "gpt-4o-mini",
     "sub_prompts": {
-      "institutions": "Extract only the list of institutions from this text: {document}"
+      "institutions": "Extract only the list of institutions from this text: {content}"
     }
   }
 }

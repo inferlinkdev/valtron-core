@@ -28,7 +28,7 @@ data = [
 
 ## 2. Write a config
 
-The config specifies which models to run and the prompt template. The prompt must contain `{document}`, which is where each document's content gets inserted.
+The config specifies which models to run and the prompt template. The prompt must contain `{content}`, which is where each document's content gets inserted.
 
 ```python
 config = {
@@ -36,7 +36,7 @@ config = {
         {"name": "gpt-4o-mini"},
         {"name": "claude-haiku-4-5-20251001"},
     ],
-    "prompt": "Classify the sentiment of the following review as positive, negative, or neutral.\n\nReview: {document}\n\nSentiment:",
+    "prompt": "Classify the sentiment of the following review as positive, negative, or neutral.\n\nReview: {content}\n\nSentiment:",
     "output_dir": "./results",
 }
 ```

@@ -23,7 +23,7 @@ CONFIG = {
         "Classify the sentiment of the following movie review as exactly one of: "
         "positive, negative, or neutral. "
         "Reply with only the single word label.\n\n"
-        "Review: {document}"
+        "Review: {content}"
     ),
     "models": [
         {"name": "gpt-4o-mini", "label": "GPT-4o mini"},

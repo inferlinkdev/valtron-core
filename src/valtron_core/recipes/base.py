@@ -179,7 +179,7 @@ class BaseRecipe(ABC):
             original_prompt=self.prompt_template,
             documents=documents,
             field_config=field_config,
-            generate_pdf=False,
+            output_formats=["html"],
         )
 
     def save_pdf_report(self, output_dir: "str | Path | None" = None) -> Path:
@@ -219,5 +219,5 @@ class BaseRecipe(ABC):
             original_prompt=self.prompt_template,
             documents=documents,
             field_config=field_config,
-            generate_pdf=True,
+            output_formats=["pdf"],
         )

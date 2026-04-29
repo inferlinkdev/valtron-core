@@ -42,7 +42,7 @@ The prompt is intentionally minimal:
 ```
 List all institutions in the following affiliation string.
 
-{document}
+{content}
 ```
 
 ## Field metrics config

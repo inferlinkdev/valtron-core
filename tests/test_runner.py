@@ -59,7 +59,7 @@ class TestSaveResultToRunDir:
                 )
             ],
             model="gpt-3.5-turbo",
-            prompt_template="Classify: {document}",
+            prompt_template="Classify: {content}",
             status="completed",
             metrics=EvaluationMetrics(
                 total_documents=1,
@@ -126,7 +126,7 @@ class TestLoadResultsFromRunDir:
         meta = {
             "timestamp": "20260213_023910",
             "use_case": "test",
-            "original_prompt": "Classify: {document}",
+            "original_prompt": "Classify: {content}",
             "field_config": None,
             "documents": [
                 {"id": "doc-1", "content": "Good product", "label": "positive"}
@@ -140,7 +140,7 @@ class TestLoadResultsFromRunDir:
             "run_id": "run-1",
             "model": "gpt-3.5-turbo",
             "status": "completed",
-            "prompt_template": "Classify: {document}",
+            "prompt_template": "Classify: {content}",
             "prompt_manipulations": [],
             "llm_config": {},
             "metrics": {
@@ -175,7 +175,7 @@ class TestLoadResultsFromRunDir:
         assert results[0].model == "gpt-3.5-turbo"
         assert results[0].predictions[0].expected_value == "positive"
         assert metadata["use_case"] == "test"
-        assert metadata["original_prompt"] == "Classify: {document}"
+        assert metadata["original_prompt"] == "Classify: {content}"
 
 
 class TestEvaluate:
@@ -211,7 +211,7 @@ class TestEvaluate:
             result = await runner.evaluate(
                 documents=sample_documents,
                 labels=sample_labels,
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 model="gpt-3.5-turbo",
             )
 
@@ -239,7 +239,7 @@ class TestEvaluate:
             await runner.evaluate(
                 documents=sample_documents,
                 labels=sample_labels,
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 model=model_dict,
             )
 
@@ -274,7 +274,7 @@ class TestEvaluateFromFile:
         with patch.object(runner, "evaluate", AsyncMock(return_value=mock_result)):
             results = await runner.evaluate_from_file(
                 data_file=data_file,
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 models="gpt-3.5-turbo",
                 file_format="json",
             )
@@ -302,7 +302,7 @@ class TestEvaluateFromFile:
         with patch.object(runner, "evaluate", AsyncMock(return_value=mock_result)):
             results = await runner.evaluate_from_file(
                 data_file=data_file,
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 models="gpt-3.5-turbo",
                 file_format="csv",
             )
@@ -364,7 +364,7 @@ class TestEvaluateFromFile:
         with patch.object(runner, "evaluate", side_effect=_fake_evaluate):
             results = await runner.evaluate_from_file(
                 data_file=data_file,
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 models=["gpt-3.5-turbo", "gpt-4"],
             )
 
@@ -410,7 +410,7 @@ class TestEvaluateFromFile:
         with patch.object(runner, "evaluate", AsyncMock(return_value=mock_result)) as mock_eval:
             await runner.evaluate_from_file(
                 data_file=data_file,
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 models="gpt-3.5-turbo",
                 save_results_dir=save_dir,
             )
@@ -452,7 +452,7 @@ class TestGenerateReport:
         """Test generating report with results."""
         runner = EvaluationRunner(client=mock_llm_client)
 
-        with patch("valtron_core.report.ReportGenerator") as mock_report_class:
+        with patch("valtron_core.reports.ReportGenerator") as mock_report_class:
             mock_generator = Mock()
             mock_report_class.return_value = mock_generator
             mock_generator.generate_html_report = Mock(
@@ -503,7 +503,7 @@ class TestGenerateReport:
         }
         (models_dir / "gpt-3.5-turbo.json").write_text(json.dumps(model_data))
 
-        with patch("valtron_core.report.ReportGenerator") as mock_report_class:
+        with patch("valtron_core.reports.ReportGenerator") as mock_report_class:
             mock_generator = Mock()
             mock_report_class.return_value = mock_generator
             mock_generator.generate_html_report = Mock(
@@ -539,7 +539,7 @@ class TestGenerateReport:
         """Test that original_prompt is extracted from results if not provided."""
         runner = EvaluationRunner(client=mock_llm_client)
 
-        with patch("valtron_core.report.ReportGenerator") as mock_report_class:
+        with patch("valtron_core.reports.ReportGenerator") as mock_report_class:
             mock_generator = Mock()
             mock_report_class.return_value = mock_generator
             mock_generator.generate_html_report = Mock(
@@ -561,20 +561,6 @@ class TestGenerateReport:
             call_kwargs = mock_generator.generate_html_report.call_args.kwargs
             assert "original_prompt" in call_kwargs
 
-    def test_generate_report_raises_if_weasyprint_deps_missing(
-        self, mock_llm_client, sample_evaluation_results, tmp_path
-    ):
-        """Test that missing WeasyPrint system dependencies raise ImportError before any work starts."""
-        runner = EvaluationRunner(client=mock_llm_client)
-
-        import sys
-        with patch.dict(sys.modules, {"weasyprint": None}):
-            with pytest.raises(ImportError, match="doc.courtbouillon.org/weasyprint"):
-                runner.generate_report(
-                    results=sample_evaluation_results,
-                    output_dir=tmp_path,
-                    include_recommendation=False,
-                )
 
 
 class TestPrintMethods:

@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, Mock, patch, MagicMock
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -12,7 +12,7 @@ from valtron_core.models import (
     EvaluationMetrics,
     PredictionResult,
 )
-from valtron_core.report import ReportGenerator, _check_weasyprint_available
+from valtron_core.reports import ReportGenerator
 
 
 class TestReportGeneratorInit:
@@ -20,7 +20,7 @@ class TestReportGeneratorInit:
 
     def test_init_with_default_client(self):
         """Test initialization with default client."""
-        with patch("valtron_core.report.LLMClient") as mock_client_class:
+        with patch("valtron_core.reports._base.LLMClient") as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
 
@@ -379,7 +379,7 @@ class TestGenerateHtmlReport:
             output_path=tmp_path / "report.html",
             include_recommendation=False,
             prompt_optimizations={"gpt-3.5-turbo": ["few_shot", "explanation"]},
-            original_prompt="Classify: {document}",
+            original_prompt="Classify: {content}",
         )
 
         assert report_path.exists()
@@ -401,53 +401,58 @@ class TestGenerateHtmlReport:
 
 
 class TestGeneratePdfReport:
-    """Tests for the generate_pdf_report method (using weasyprint)."""
+    """Tests for the generate_pdf_report method (using ReportLab — pure Python)."""
 
     def test_generate_pdf_report_basic(
         self, mock_llm_client, sample_evaluation_results, tmp_path
     ):
-        """Test basic PDF report generation."""
+        """Test that a real PDF file is created at the expected path."""
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report._check_weasyprint_available"), \
-             patch("weasyprint.HTML") as mock_html_class:
-            mock_html = MagicMock()
-            mock_html_class.return_value = mock_html
-            mock_html.write_pdf = Mock()
+        result = generator.generate_pdf_report(
+            results=sample_evaluation_results,
+            output_path=tmp_path / "report",
+        )
 
-            result = generator.generate_pdf_report(
-                results=sample_evaluation_results,
-                output_path=tmp_path / "report",
-            )
-
-            mock_html.write_pdf.assert_called_once()
+        assert result.exists()
+        assert result.suffix == ".pdf"
+        assert result.read_bytes()[:4] == b"%PDF"
 
     def test_generate_pdf_report_with_recommendation(
         self, mock_llm_client, sample_evaluation_results, tmp_path
     ):
-        """Test PDF report with recommendation."""
+        """Test PDF report including a recommendation string."""
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report._check_weasyprint_available"), \
-             patch("weasyprint.HTML") as mock_html_class:
-            mock_html = MagicMock()
-            mock_html_class.return_value = mock_html
-            mock_html.write_pdf = Mock()
+        result = generator.generate_pdf_report(
+            results=sample_evaluation_results,
+            output_path=tmp_path / "report",
+            recommendation="Use gpt-3.5-turbo for best value.",
+        )
 
-            generator.generate_pdf_report(
-                results=sample_evaluation_results,
-                output_path=tmp_path / "report",
-                recommendation="Use gpt-3.5-turbo for best value",
-            )
+        assert result.exists()
+        assert result.read_bytes()[:4] == b"%PDF"
 
-            mock_html.write_pdf.assert_called_once()
+    def test_generate_pdf_report_with_original_prompt(
+        self, mock_llm_client, sample_evaluation_results, tmp_path
+    ):
+        """Test PDF report with original prompt shown in Appendix B."""
+        generator = ReportGenerator(client=mock_llm_client)
+
+        result = generator.generate_pdf_report(
+            results=sample_evaluation_results,
+            output_path=tmp_path / "report",
+            original_prompt="Classify the sentiment: {document}",
+        )
+
+        assert result.exists()
+        assert result.read_bytes()[:4] == b"%PDF"
 
     def test_generate_pdf_report_model_name_shortening(
         self, mock_llm_client, tmp_path
     ):
-        """Test that long model names with prefixes are handled."""
-        # Create result with long model name
-        result = EvaluationResult(
+        """Test that model names with provider prefix render without error."""
+        result_obj = EvaluationResult(
             run_id="test",
             predictions=[],
             model="gemini/gemini-2.5-flash-preview",
@@ -467,30 +472,23 @@ class TestGeneratePdfReport:
         )
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report._check_weasyprint_available"), \
-             patch("weasyprint.HTML") as mock_html_class:
-            mock_html = MagicMock()
-            mock_html_class.return_value = mock_html
-            mock_html.write_pdf = Mock()
+        pdf_path = generator.generate_pdf_report(
+            results=[result_obj],
+            output_path=tmp_path / "report",
+        )
 
-            generator.generate_pdf_report(
-                results=[result],
-                output_path=tmp_path / "report",
-            )
-
-            # The method should complete without error
-            mock_html.write_pdf.assert_called_once()
+        assert pdf_path.exists()
+        assert pdf_path.read_bytes()[:4] == b"%PDF"
 
     def test_generate_pdf_report_special_characters(
         self, mock_llm_client, tmp_path
     ):
-        """Test that special characters are handled in HTML."""
-        # Create result with special characters
-        result = EvaluationResult(
+        """Test that XML-special characters in prompts are escaped correctly."""
+        result_obj = EvaluationResult(
             run_id="test_&_special",
             predictions=[],
             model="test_model_with_underscore",
-            prompt_template="Test with $pecial & characters",
+            prompt_template="Test with $pecial & <characters>",
             status="completed",
             metrics=EvaluationMetrics(
                 total_documents=10,
@@ -506,50 +504,38 @@ class TestGeneratePdfReport:
         )
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report._check_weasyprint_available"), \
-             patch("weasyprint.HTML") as mock_html_class:
-            mock_html = MagicMock()
-            mock_html_class.return_value = mock_html
-            mock_html.write_pdf = Mock()
+        pdf_path = generator.generate_pdf_report(
+            results=[result_obj],
+            output_path=tmp_path / "report",
+            original_prompt="Classify: {document} & check <this>",
+        )
 
-            generator.generate_pdf_report(
-                results=[result],
-                output_path=tmp_path / "report",
-            )
-
-            mock_html.write_pdf.assert_called_once()
+        assert pdf_path.exists()
+        assert pdf_path.read_bytes()[:4] == b"%PDF"
 
     def test_generate_pdf_report_empty_results(self, mock_llm_client, tmp_path):
-        """Test PDF report with empty results."""
+        """Test PDF report with empty results list does not crash."""
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report._check_weasyprint_available"), \
-             patch("weasyprint.HTML") as mock_html_class:
-            mock_html = MagicMock()
-            mock_html_class.return_value = mock_html
-            mock_html.write_pdf = Mock()
+        pdf_path = generator.generate_pdf_report(
+            results=[],
+            output_path=tmp_path / "report",
+        )
 
-            generator.generate_pdf_report(
-                results=[],
-                output_path=tmp_path / "report",
-            )
+        assert pdf_path.exists()
+        assert pdf_path.read_bytes()[:4] == b"%PDF"
 
-            mock_html.write_pdf.assert_called_once()
+    def test_generate_pdf_report_with_prompt_optimizations(
+        self, mock_llm_client, sample_evaluation_results, tmp_path
+    ):
+        """Test PDF report renders the Optimizations column."""
+        generator = ReportGenerator(client=mock_llm_client)
 
-    def test_check_weasyprint_available_raises_on_missing_python_package(self):
-        import sys
-        with patch.dict(sys.modules, {"weasyprint": None}):
-            with pytest.raises(ImportError, match="doc.courtbouillon.org/weasyprint"):
-                _check_weasyprint_available()
+        pdf_path = generator.generate_pdf_report(
+            results=sample_evaluation_results,
+            output_path=tmp_path / "report",
+            prompt_optimizations={"gpt-3.5-turbo": ["few_shot", "explanation"]},
+        )
 
-    def test_check_weasyprint_available_raises_on_missing_system_deps(self):
-        original_import = __import__
-
-        def mock_import(name, *args, **kwargs):
-            if name == "weasyprint":
-                raise OSError("cannot load library 'gobject-2.0-0'")
-            return original_import(name, *args, **kwargs)
-
-        with patch("builtins.__import__", side_effect=mock_import):
-            with pytest.raises(ImportError, match="doc.courtbouillon.org/weasyprint"):
-                _check_weasyprint_available()
+        assert pdf_path.exists()
+        assert pdf_path.read_bytes()[:4] == b"%PDF"

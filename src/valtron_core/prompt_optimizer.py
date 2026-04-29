@@ -159,7 +159,7 @@ Respond with ONLY the JSON, no additional text."""
     def create_chained_prompts(
         self,
         decomposition: dict[str, Any],
-        document_placeholder: str = "{document}",
+        document_placeholder: str = "{content}",
     ) -> list[str]:
         """
         Create executable chained prompts from decomposition.
@@ -448,7 +448,7 @@ class PromptChainEvaluator:
             # Format prompt with current input
             if i == 0:
                 # First prompt gets the document
-                formatted_prompt = prompt_template.format(document=current_input)
+                formatted_prompt = prompt_template.format(content=current_input)
             else:
                 # Subsequent prompts get previous output
                 # Replace step variable with actual output

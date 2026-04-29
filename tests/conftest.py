@@ -211,7 +211,7 @@ def sample_evaluation_result(
         completed_at=datetime(2026, 1, 15, 10, 0, 5),
         predictions=sample_prediction_results,
         model="gpt-3.5-turbo",
-        prompt_template="Classify the sentiment: {document}",
+        prompt_template="Classify the sentiment: {content}",
         status="completed",
     )
     # Compute metrics
@@ -241,7 +241,7 @@ def sample_evaluation_results() -> list[EvaluationResult]:
         run_id="gpt35-run",
         predictions=gpt35_predictions,
         model="gpt-3.5-turbo",
-        prompt_template="Classify: {document}",
+        prompt_template="Classify: {content}",
         status="completed",
         metrics=EvaluationMetrics(
             total_documents=10,
@@ -274,7 +274,7 @@ def sample_evaluation_results() -> list[EvaluationResult]:
         run_id="gpt4-run",
         predictions=gpt4_predictions,
         model="gpt-4",
-        prompt_template="Classify: {document}",
+        prompt_template="Classify: {content}",
         status="completed",
         metrics=EvaluationMetrics(
             total_documents=10,
@@ -307,7 +307,7 @@ def sample_evaluation_results() -> list[EvaluationResult]:
         run_id="gemini-run",
         predictions=gemini_predictions,
         model="gemini/gemini-2.0-flash",
-        prompt_template="Classify: {document}",
+        prompt_template="Classify: {content}",
         status="completed",
         metrics=EvaluationMetrics(
             total_documents=10,
@@ -345,7 +345,7 @@ def sample_evaluation_result_with_field_metrics() -> EvaluationResult:
         run_id="field-metrics-run",
         predictions=predictions,
         model="gpt-4",
-        prompt_template="Extract: {document}",
+        prompt_template="Extract: {content}",
         status="completed",
         metrics=EvaluationMetrics(
             total_documents=1,
@@ -388,7 +388,7 @@ def sample_json_results_file(tmp_path: Path, sample_evaluation_results: list[Eva
     results_data = {
         "timestamp": "20260115_100000",
         "use_case": "sentiment classification",
-        "original_prompt": "Classify the sentiment of the text: {document}",
+        "original_prompt": "Classify the sentiment of the text: {content}",
         "results": [
             {
                 "run_id": r.run_id,

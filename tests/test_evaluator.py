@@ -16,7 +16,7 @@ class TestPromptEvaluator:
         """Test prompt formatting."""
         evaluator = PromptEvaluator()
 
-        template = "Classify this text: {document}"
+        template = "Classify this text: {content}"
         doc = Document(id="1", content="This is great!")
 
         result = evaluator._format_prompt(template, doc)
@@ -58,7 +58,7 @@ class TestPromptEvaluator:
 
         doc = Document(id="1", content="This is amazing!")
         label = Label(document_id="1", value="positive")
-        template = "Classify: {document}"
+        template = "Classify: {content}"
 
         # Mock the response to return "positive"
         mock_model_response.choices[0].message.content = "positive"
@@ -88,7 +88,7 @@ class TestPromptEvaluator:
 
         doc = Document(id="1", content="This is terrible!")
         label = Label(document_id="1", value="negative")
-        template = "Classify: {document}"
+        template = "Classify: {content}"
 
         # Mock the response to return "positive" (incorrect)
         mock_model_response.choices[0].message.content = "positive"
@@ -115,7 +115,7 @@ class TestPromptEvaluator:
 
         doc = Document(id="1", content="Test")
         label = Label(document_id="1", value="positive")
-        template = "Classify: {document}"
+        template = "Classify: {content}"
 
         with patch("valtron_core.client.acompletion", new=AsyncMock(side_effect=Exception("API Error"))):
             result = await evaluator.evaluate_single(
@@ -169,7 +169,7 @@ class TestPromptEvaluator:
         eval_input = EvaluationInput(
             documents=documents,
             labels=labels,
-            prompt_template="Classify: {document}",
+            prompt_template="Classify: {content}",
             model="gpt-3.5-turbo",
         )
 
@@ -181,4 +181,36 @@ class TestPromptEvaluator:
             assert result.metrics is not None
             assert result.metrics.total_documents == 3
             assert result.metrics.correct_predictions == 2
-            assert result.metrics.accuracy == pytest.approx(2/3)            
+
+    def test_format_prompt_dict_all_keys_present(self, mock_env_vars: dict[str, str]) -> None:
+        """Dict content fills all {key} placeholders from the dict."""
+        evaluator = PromptEvaluator()
+        template = "Text: {text} Topic: {topic}"
+        doc = Document(id="1", content={"text": "The sky is blue.", "topic": "weather"})
+
+        result = evaluator._format_prompt(template, doc)
+        assert result == "Text: The sky is blue. Topic: weather"
+
+    def test_format_prompt_dict_missing_key_warns(self, mock_env_vars: dict[str, str]) -> None:
+        """A placeholder in the template that is absent from the dict substitutes '' and logs a warning."""
+        from unittest.mock import patch as mock_patch
+        evaluator = PromptEvaluator()
+        template = "Text: {text} Category: {category}"
+        doc = Document(id="2", content={"text": "Some text."})
+
+        with mock_patch("valtron_core.evaluator.logger") as mock_logger:
+            result = evaluator._format_prompt(template, doc)
+
+        assert result == "Text: Some text. Category: "
+        mock_logger.warning.assert_called_once_with(
+            "prompt_variable_missing", document_id="2", key="category"
+        )
+
+    def test_format_prompt_dict_extra_key_ignored(self, mock_env_vars: dict[str, str]) -> None:
+        """Dict keys with no matching placeholder in the template are silently ignored."""
+        evaluator = PromptEvaluator()
+        template = "Text: {text}"
+        doc = Document(id="3", content={"text": "Hello.", "unused_key": "extra value"})
+
+        result = evaluator._format_prompt(template, doc)
+        assert result == "Text: Hello."

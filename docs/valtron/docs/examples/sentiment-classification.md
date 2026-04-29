@@ -51,7 +51,7 @@ CONFIG = {
         "Classify the sentiment of the following movie review as exactly one of: "
         "positive, negative, or neutral. "
         "Reply with only the single word label.\n\n"
-        "Review: {document}"
+        "Review: {content}"
     ),
     "models": [
         {"name": "gpt-4o-mini", "label": "GPT-4o mini"},
@@ -68,7 +68,7 @@ for result in experiment.results:
 
 ## Key points
 
-- The prompt must contain `{document}`. That placeholder is replaced with each document's `content` at evaluation time.
+- The prompt must contain `{content}`. That placeholder is replaced with each document's `content` at evaluation time.
 - `run()` is synchronous and returns the path to the generated HTML report.
 - `experiment.results` is available after `run()` (or `evaluate()`) and contains per-model accuracy, cost, and per-document predictions.
 

@@ -69,7 +69,7 @@ config = {
         {"name": "ollama/llama3.1", "label": "LLama 3.1 (local)"},
         {"name": "vllm/mistral", "label": "Mistral (vLLM)"},
     ],
-    "prompt": "Classify: {document}",
+    "prompt": "Classify: {content}",
 }
 ```
 

@@ -1,6 +1,7 @@
 """Evaluation engine for LLM prompt testing."""
 
 import asyncio
+import re
 import time
 import uuid
 from datetime import datetime
@@ -54,15 +55,30 @@ class PromptEvaluator:
         Format a prompt template with document content.
 
         Args:
-            template: Prompt template with {document} placeholder
+            template: Prompt template with {content} placeholder (string content)
+                      or arbitrary {key} placeholders (dict content)
             document: Document to insert
 
         Returns:
             Formatted prompt string
         """
-        # Use replace() instead of format() to avoid issues with curly braces in document content
-        # This prevents JSON examples in prompts from being interpreted as format placeholders
-        return template.replace("{document}", document.content)
+        if isinstance(document.content, str):
+            # Use replace() instead of format() to avoid issues with curly braces in document content
+            # This prevents JSON examples in prompts from being interpreted as format placeholders
+            return template.replace("{content}", document.content)
+
+        result = template
+        for key in set(re.findall(r'\{(\w+)\}', template)):
+            if key in document.content:
+                result = result.replace(f"{{{key}}}", document.content[key])
+            else:
+                logger.warning(
+                    "prompt_variable_missing",
+                    document_id=document.id,
+                    key=key,
+                )
+                result = result.replace(f"{{{key}}}", "")
+        return result
 
     def _preflight_attachment_check(self, documents: list[Document], model_name: str) -> None:
         """

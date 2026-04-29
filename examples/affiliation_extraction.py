@@ -84,7 +84,7 @@ CONFIG = {
     "use_case": "academic affiliation extraction",
     "output_formats": ["html"],
     "temperature": 0.0,
-    "prompt": "List all institutions in the following affiliation string.\n\n{document}",
+    "prompt": "List all institutions in the following affiliation string.\n\n{content}",
     "models": [
         {"name": "gpt-4o-mini", "label": "GPT-4o mini"},
         {"name": "claude-haiku-4-5-20251001", "label": "Claude Haiku"},
