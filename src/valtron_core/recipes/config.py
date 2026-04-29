@@ -53,8 +53,8 @@ class LLMModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def model_prompt_has_placeholder(self) -> "LLMModelConfig":
-        if self.prompt is not None and "{content}" not in self.prompt:
-            raise ValueError("model prompt must contain {content} placeholder")
+        if self.prompt is not None and not re.search(r'\{\w+\}', self.prompt):
+            raise ValueError("model prompt must contain at least one {placeholder}")
         return self
 
 
