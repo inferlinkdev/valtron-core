@@ -425,10 +425,10 @@
         <!-- ── Step 3: Prompt ─────────────────────────────────────────────── -->
         <div class="step" data-step="3">
             <h2>Enter your prompt template</h2>
-            <p class="step-description">Your prompt must include the <code>{document}</code> placeholder where each test document will be inserted.</p>
+            <p class="step-description">Your prompt must include the <code>{content}</code> placeholder where each test document will be inserted.</p>
             <div class="form-group">
                 <label for="prompt-template">Prompt Template</label>
-                <textarea id="prompt-template" placeholder="Example:&#10;&#10;Determine if two geographic locations are the same or in close proximity (within 10 miles). Respond with yes or no in JSON format like {&quot;response&quot;:&quot;yes&quot;} or {&quot;response&quot;:&quot;no&quot;}.&#10;&#10;Document: {document}"></textarea>
+                <textarea id="prompt-template" placeholder="Example:&#10;&#10;Determine if two geographic locations are the same or in close proximity (within 10 miles). Respond with yes or no in JSON format like {&quot;response&quot;:&quot;yes&quot;} or {&quot;response&quot;:&quot;no&quot;}.&#10;&#10;Document: {content}"></textarea>
             </div>
             <div class="alert alert-warning" id="few-shot-alert" style="display:none">
                 📚 Few-shot learning is enabled. We'll configure training data on the next step.
@@ -766,7 +766,7 @@ function nextStep() {
     if (currentStep === 3) {
         const p = document.getElementById('prompt-template').value.trim();
         if (!p) { alert('Please enter a prompt template'); return; }
-        if (!p.includes('{document}')) { alert('Prompt must include {document} placeholder'); return; }
+        if (!p.includes('{content}')) { alert('Prompt must include {content} placeholder'); return; }
         config.prompt = p;
         if (config.few_shot.enabled) document.getElementById('few-shot-config-section').style.display = 'block';
     }

@@ -65,13 +65,13 @@ Use the **"Add local model (Ollama)"** or **"Add trained transformer"** help lin
 
 ![Step 3: Prompt](/img/2_wizard_prompt.png)
 
-Enter the prompt template you use for this task. The prompt **must contain `{document}`** as a placeholder. Each document's content is inserted there during evaluation.
+Enter the prompt template you use for this task. The prompt **must contain `{content}`** as a placeholder. Each document's content is inserted there during evaluation.
 
 **Example:**
 ```
 List all institutions in the following affiliation string.
 
-{document}
+{content}
 ```
 
 If you enabled prompt improvement in Step 2, a notice will appear confirming that few-shot examples will be configured in the next step.

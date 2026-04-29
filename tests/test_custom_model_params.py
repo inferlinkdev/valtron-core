@@ -168,7 +168,7 @@ class TestCustomModelParams:
             result = await evaluator.evaluate_single(
                 document=sample_documents[0],
                 label=sample_labels[0],
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 model="gpt-3.5-turbo",
                 temperature=0.0
             )
@@ -202,7 +202,7 @@ class TestCustomModelParams:
             result = await evaluator.evaluate_single(
                 document=sample_documents[0],
                 label=sample_labels[0],
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 model=model_config,
                 temperature=0.0
             )
@@ -242,7 +242,7 @@ class TestCustomModelParams:
 
             results = await runner.evaluate_from_file(
                 data_file=data_file,
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 models=models,
                 max_concurrent=1,
             )
@@ -258,7 +258,7 @@ class TestCustomModelParams:
         eval_input = EvaluationInput(
             documents=sample_documents,
             labels=sample_labels,
-            prompt_template="Classify: {document}",
+            prompt_template="Classify: {content}",
             model="gpt-3.5-turbo"
         )
 
@@ -277,7 +277,7 @@ class TestCustomModelParams:
         eval_input = EvaluationInput(
             documents=sample_documents,
             labels=sample_labels,
-            prompt_template="Classify: {document}",
+            prompt_template="Classify: {content}",
             model=model_config
         )
 
@@ -301,7 +301,7 @@ class TestCustomModelParams:
             result = await evaluator.evaluate_single(
                 document=sample_documents[0],
                 label=sample_labels[0],
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 model=model_config,
                 temperature=0.0
             )
@@ -355,7 +355,7 @@ class TestCustomModelParams:
             eval_input = EvaluationInput(
                 documents=sample_documents,
                 labels=sample_labels,
-                prompt_template="Classify: {document}",
+                prompt_template="Classify: {content}",
                 model=model_config
             )
 

@@ -43,7 +43,7 @@ class TestEvaluateWithDecomposition:
             "strategy": "chain",
         })
         mock_decomposer.create_chained_prompts = Mock(return_value=[
-            "First step: {document}",
+            "First step: {content}",
             "Second step: {previous_output}",
         ])
 
@@ -64,7 +64,7 @@ class TestEvaluateWithDecomposition:
         result, decomposition = await evaluator.evaluate_with_decomposition(
             documents=documents,
             labels=labels,
-            original_prompt="Classify sentiment: {document}",
+            original_prompt="Classify sentiment: {content}",
             model="gpt-4o-mini",
             temperature=0.0,
         )
@@ -101,7 +101,7 @@ class TestEvaluateWithDecomposition:
         result, _ = await evaluator.evaluate_with_decomposition(
             documents=documents,
             labels=labels,
-            original_prompt="Classify: {document}",
+            original_prompt="Classify: {content}",
             model="gpt-4o-mini",
         )
 
@@ -131,7 +131,7 @@ class TestEvaluateWithDecomposition:
         result, _ = await evaluator.evaluate_with_decomposition(
             documents=documents,
             labels=labels,
-            original_prompt="Classify: {document}",
+            original_prompt="Classify: {content}",
             model="gpt-4o-mini",
         )
 
@@ -163,7 +163,7 @@ class TestEvaluateWithDecomposition:
         result, _ = await evaluator.evaluate_with_decomposition(
             documents=documents,
             labels=labels,
-            original_prompt="Classify: {document}",
+            original_prompt="Classify: {content}",
             model="gpt-4o-mini",
             comparison_fn=custom_compare,
         )
@@ -193,7 +193,7 @@ class TestEvaluateWithDecomposition:
         result, _ = await evaluator.evaluate_with_decomposition(
             documents=documents,
             labels=labels,
-            original_prompt="Classify: {document}",
+            original_prompt="Classify: {content}",
             model="gpt-4o-mini",
         )
 
@@ -222,7 +222,7 @@ class TestEvaluateWithDecomposition:
         result, _ = await evaluator.evaluate_with_decomposition(
             documents=documents,
             labels=labels,
-            original_prompt="Classify: {document}",
+            original_prompt="Classify: {content}",
             model="gpt-4o-mini",
         )
 

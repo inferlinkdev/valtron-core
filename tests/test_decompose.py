@@ -162,7 +162,7 @@ class TestGenerateSubPrompts:
     @pytest.mark.asyncio
     async def test_default_prompts_uses_llm(self, mock_env_vars):
         """Default mode rewrites each prompt via LLM."""
-        original = "Extract entities from: {document}"
+        original = "Extract entities from: {content}"
         field_names = ["people", "pathogens"]
 
         async def mock_complete(model, messages, **kwargs):
@@ -172,9 +172,9 @@ class TestGenerateSubPrompts:
             # Return a rewritten prompt that references the field
             content = messages[0]["content"]
             if "people" in content:
-                response.choices[0].message.content = "Extract ONLY people from: {document}"
+                response.choices[0].message.content = "Extract ONLY people from: {content}"
             else:
-                response.choices[0].message.content = "Extract ONLY pathogens from: {document}"
+                response.choices[0].message.content = "Extract ONLY pathogens from: {content}"
             response._hidden_params = {"response_cost": 0.0}
             return response
 
@@ -192,10 +192,10 @@ class TestGenerateSubPrompts:
 
     @pytest.mark.asyncio
     async def test_custom_prompts(self):
-        original = "Extract entities from: {document}"
+        original = "Extract entities from: {content}"
         custom = {
-            "people": "Extract ONLY people from: {document}",
-            "pathogens": "Extract ONLY pathogens from: {document}",
+            "people": "Extract ONLY people from: {content}",
+            "pathogens": "Extract ONLY pathogens from: {content}",
         }
 
         prompts = await generate_sub_prompts(
@@ -309,8 +309,8 @@ class TestDecomposedEvaluator:
 
         sub_schemas = create_sub_schemas(split_info, ExtractionSchema)
         sub_prompts = {
-            "people": "Extract ONLY people from: {document}",
-            "pathogens": "Extract ONLY pathogens from: {document}",
+            "people": "Extract ONLY people from: {content}",
+            "pathogens": "Extract ONLY pathogens from: {content}",
         }
 
         documents = [
@@ -383,8 +383,8 @@ class TestDecomposedEvaluator:
 
         sub_schemas = create_sub_schemas(split_info, ExtractionSchema)
         sub_prompts = {
-            "people": "Extract ONLY people from: {document}",
-            "pathogens": "Extract ONLY pathogens from: {document}",
+            "people": "Extract ONLY people from: {content}",
+            "pathogens": "Extract ONLY pathogens from: {content}",
         }
 
         documents = [
@@ -572,10 +572,10 @@ class TestDecomposeFewShotExamples:
 
 class TestInjectFewShotIntoSubPrompts:
     def test_inject_few_shot_into_sub_prompts(self):
-        """Examples are injected into the sub-prompt before {document}."""
+        """Examples are injected into the sub-prompt before {content}."""
         sub_prompts = {
-            "people": "Extract people from: {document}",
-            "pathogens": "Extract pathogens from: {document}",
+            "people": "Extract people from: {content}",
+            "pathogens": "Extract pathogens from: {content}",
         }
         field_examples = {
             "people": [
@@ -588,24 +588,24 @@ class TestInjectFewShotIntoSubPrompts:
 
         result = inject_few_shot_into_sub_prompts(sub_prompts, field_examples)
 
-        assert "{document}" in result["people"]
+        assert "{content}" in result["people"]
         assert "Here are some examples:" in result["people"]
         assert "Alice was there." in result["people"]
 
-        assert "{document}" in result["pathogens"]
+        assert "{content}" in result["pathogens"]
         assert "E.coli found." in result["pathogens"]
 
-        # Examples should appear before {document}
+        # Examples should appear before {content}
         people_prompt = result["people"]
         examples_pos = people_prompt.index("Here are some examples:")
-        doc_pos = people_prompt.index("{document}")
+        doc_pos = people_prompt.index("{content}")
         assert examples_pos < doc_pos
 
     def test_inject_few_shot_into_sub_prompts_no_examples(self):
         """Sub-prompts unchanged when no examples exist for a field."""
         sub_prompts = {
-            "people": "Extract people from: {document}",
-            "pathogens": "Extract pathogens from: {document}",
+            "people": "Extract people from: {content}",
+            "pathogens": "Extract pathogens from: {content}",
         }
         field_examples = {
             "people": [
@@ -616,7 +616,7 @@ class TestInjectFewShotIntoSubPrompts:
 
         result = inject_few_shot_into_sub_prompts(sub_prompts, field_examples)
 
-        assert result["pathogens"] == "Extract pathogens from: {document}"
+        assert result["pathogens"] == "Extract pathogens from: {content}"
         assert "Here are some examples:" in result["people"]
 
 
@@ -629,14 +629,14 @@ class TestCleanupFewShotSubPrompts:
     async def test_cleanup_calls_llm_and_preserves_document_placeholder(self, mock_env_vars):
         """Cleanup sends each sub-prompt to the LLM and returns cleaned text."""
         sub_prompts = {
-            "people": "Extract people.\n\nText:\n\n\nHere are some examples:\n\nExample 1:\nDocument: Alice\nLabel: {}\n\nNow extract from this document:\n\n{document}",
+            "people": "Extract people.\n\nText:\n\n\nHere are some examples:\n\nExample 1:\nDocument: Alice\nLabel: {}\n\nNow extract from this document:\n\n{content}",
         }
 
         cleaned_prompt = (
             "Extract people.\n\n"
             "Here are some examples:\n\n"
             "Example 1:\nDocument: Alice\nLabel: {}\n\n"
-            "Now extract from this document:\n\n{document}"
+            "Now extract from this document:\n\n{content}"
         )
 
         async def mock_complete(model, messages, **kwargs):
@@ -652,7 +652,7 @@ class TestCleanupFewShotSubPrompts:
         with patch.object(client, "complete", side_effect=mock_complete) as mock:
             result = await cleanup_few_shot_sub_prompts(sub_prompts, client=client)
 
-        assert "{document}" in result["people"]
+        assert "{content}" in result["people"]
         assert "Text:" not in result["people"]
         mock.assert_called_once()
 

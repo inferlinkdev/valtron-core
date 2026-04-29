@@ -365,7 +365,7 @@ class EvaluationRunner:
         Args:
             documents: List of documents
             labels: List of labels
-            prompt_template: Prompt template with {document} placeholder
+            prompt_template: Prompt template with {content} placeholder
             model: Model name string, or dict containing 'model' key plus any
                 litellm params (temperature, max_tokens, api_base, reasoning_effort, …)
             response_format: Optional pydantic model for response parsing
@@ -435,7 +435,7 @@ class EvaluationRunner:
 
         Args:
             data_file: Path to data file (JSON or CSV)
-            prompt_template: Prompt template with {document} placeholder
+            prompt_template: Prompt template with {content} placeholder
             models: One model (string or dict) or a list of models.  All litellm
                 params belong in the model dict — no separate temperature/max_tokens.
             file_format: 'json' or 'csv'

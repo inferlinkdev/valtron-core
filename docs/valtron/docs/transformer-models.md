@@ -113,7 +113,7 @@ config = {
             "cost_rate_time_unit": "1hr"
         }
     ],
-    "prompt": "Classify the sentiment: {document}",
+    "prompt": "Classify the sentiment: {content}",
     "output_dir": "./results"
 }
 

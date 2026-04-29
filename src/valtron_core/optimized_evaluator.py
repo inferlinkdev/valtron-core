@@ -61,7 +61,7 @@ class OptimizedPromptEvaluator:
 
         # Create chained prompts
         chained_prompts = self.decomposer.create_chained_prompts(
-            decomposition, document_placeholder="{document}"
+            decomposition, document_placeholder="{content}"
         )
 
         logger.info(

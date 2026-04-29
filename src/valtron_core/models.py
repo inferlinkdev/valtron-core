@@ -72,7 +72,7 @@ class EvaluationInput(BaseModel):
 
     documents: list[Document] = Field(..., description="List of documents to evaluate")
     labels: list[Label] = Field(..., description="Expected labels for documents")
-    prompt_template: str = Field(..., description="Prompt template with {document} placeholder")
+    prompt_template: str = Field(..., description="Prompt template with {content} placeholder")
     model: str | dict[str, Any] = Field(
         ...,
         description=(

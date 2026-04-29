@@ -105,7 +105,7 @@ Contains experiment-level information:
 {
   "timestamp": "2024-01-15T10:30:00",
   "use_case": "sentiment classification",
-  "original_prompt": "Classify the sentiment: {document}\n\nSentiment:",
+  "original_prompt": "Classify the sentiment: {content}\n\nSentiment:",
   "field_config": { ... },
   "documents": [
     {
@@ -129,7 +129,7 @@ One file per model. Contains the full evaluation result:
   "started_at": "2024-01-15T10:30:01",
   "completed_at": "2024-01-15T10:30:45",
   "status": "completed",
-  "prompt_template": "Classify the sentiment: {document}\n\nSentiment:",
+  "prompt_template": "Classify the sentiment: {content}\n\nSentiment:",
   "prompt_manipulations": ["few_shot"],
   "override_prompt": null,
   "llm_config": {

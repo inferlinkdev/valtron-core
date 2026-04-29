@@ -114,6 +114,6 @@ The JSON file must be an array at the top level.
 ## Tips
 
 - `id` values must be unique across your dataset. They are used as keys in the output files.
-- `content` is inserted at the `{document}` placeholder in your prompt template
+- `content` is inserted at the `{content}` placeholder in your prompt template
 - `metadata` fields appear in the detailed analysis page of the HTML report but are not passed to the model
 - There is no minimum or maximum document count, but more documents produce more reliable accuracy estimates

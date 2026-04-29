@@ -47,7 +47,7 @@ These work in both label/classification mode and structured extraction mode.
 
 ### `few_shot`
 
-Generates synthetic document+label examples from your seed data and prepends them into the prompt before `{document}`.
+Generates synthetic document+label examples from your seed data and prepends them into the prompt before `{content}`.
 
 **How it works:**
 1. Seeds from the first `max_seed_examples` real documents in your dataset
@@ -137,7 +137,7 @@ Splits a multi-field schema into per-field sub-calls, then merges the results ba
   "decompose_config": {
     "rewrite_model": "gpt-4o-mini",
     "sub_prompts": {
-      "institutions": "Extract only the list of institution names from: {document}"
+      "institutions": "Extract only the list of institution names from: {content}"
     }
   }
 }

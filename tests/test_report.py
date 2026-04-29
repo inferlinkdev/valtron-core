@@ -379,7 +379,7 @@ class TestGenerateHtmlReport:
             output_path=tmp_path / "report.html",
             include_recommendation=False,
             prompt_optimizations={"gpt-3.5-turbo": ["few_shot", "explanation"]},
-            original_prompt="Classify: {document}",
+            original_prompt="Classify: {content}",
         )
 
         assert report_path.exists()

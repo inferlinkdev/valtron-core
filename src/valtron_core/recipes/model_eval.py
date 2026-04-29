@@ -81,7 +81,7 @@ class ModelEval(BaseRecipe):
 
         Args:
             config: Configuration dict, ModelEvalConfig, or path (str/Path) to a JSON config file.
-                Required keys: ``models``, ``prompt`` (must contain ``{document}``).
+                Required keys: ``models``, ``prompt`` (must contain ``{content}``).
                 Optional keys: ``output_dir``, ``use_case``, ``temperature``, ``few_shot``,
                 ``field_metrics_config``, ``save_html``, ``save_pdf``.
             data: List of dicts ``[{"id": ..., "content": ..., "label": ...}]``,
@@ -261,7 +261,7 @@ class ModelEval(BaseRecipe):
         with open(metadata_path) as f:
             meta = json.load(f)
 
-        original_prompt = meta.get("original_prompt") or "{document}"
+        original_prompt = meta.get("original_prompt") or "{content}"
         config_dict: dict[str, Any] = {
             "prompt": original_prompt,
             "use_case": meta.get("use_case", "model evaluation"),
@@ -667,7 +667,7 @@ class ModelEval(BaseRecipe):
         return model_prompts
 
     def _inject_few_shot_examples(self, prompt: str) -> str:
-        """Inject few-shot examples into the prompt before the {document} placeholder."""
+        """Inject few-shot examples into the prompt before the {content} placeholder."""
         if not self.few_shot_examples:
             return prompt
 
@@ -677,14 +677,14 @@ class ModelEval(BaseRecipe):
             examples_text += f"Document: {example['document']}\n"
             examples_text += f"Label: {example['label']}\n\n"
 
-        if "{document}" in prompt:
-            parts = prompt.split("{document}", 1)
+        if "{content}" in prompt:
+            parts = prompt.split("{content}", 1)
             # Use task-appropriate suffix depending on mode
             action = "classify" if self.response_format is None else "extract from"
             enhanced_prompt = (
                 parts[0]
                 + examples_text
-                + f"Now {action} this document:\n\n{{document}}"
+                + f"Now {action} this document:\n\n{{content}}"
                 + parts[1]
             )
         else:

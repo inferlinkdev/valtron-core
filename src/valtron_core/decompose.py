@@ -639,7 +639,7 @@ def inject_few_shot_into_sub_prompts(
     """Inject per-field few-shot examples into already-rewritten sub-prompts.
 
     For each field with examples, builds an examples text block and inserts it
-    before the ``{document}`` placeholder (or appends if the placeholder is
+    before the ``{content}`` placeholder (or appends if the placeholder is
     absent).  Sub-prompts with no matching examples are left unchanged.
     """
     result: dict[str, str] = {}
@@ -658,11 +658,11 @@ def inject_few_shot_into_sub_prompts(
 
         caveat = "Only extract values from the text, not the provided examples.\n\n"
 
-        if "{document}" in prompt:
-            parts = prompt.split("{document}", 1)
+        if "{content}" in prompt:
+            parts = prompt.split("{content}", 1)
             result[field_name] = (
                 parts[0] + examples_text + caveat
-                + "Now extract from this document:\n\n{document}" + parts[1]
+                + "Now extract from this document:\n\n{content}" + parts[1]
             )
         else:
             result[field_name] = prompt + examples_text + caveat
@@ -680,7 +680,7 @@ async def cleanup_few_shot_sub_prompts(
     The mechanical injection of examples can leave formatting artifacts
     (e.g. a dangling ``Text:`` label before the examples block).  This
     function asks a fast model to tidy each prompt while preserving the
-    exact content — examples, instructions, and the ``{document}``
+    exact content — examples, instructions, and the ``{content}``
     placeholder.
     """
     client = client or LLMClient()
@@ -698,7 +698,7 @@ async def cleanup_few_shot_sub_prompts(
             "examples section, and between the examples and the document "
             "placeholder.\n"
             "- Do NOT change the meaning, the examples, or the output schema.\n"
-            "- The placeholder {document} must remain exactly as-is.\n"
+            "- The placeholder {content} must remain exactly as-is.\n"
             "Return ONLY the cleaned-up prompt text, nothing else.\n\n"
             f"--- PROMPT TO CLEAN UP ---\n{prompt}"
         )

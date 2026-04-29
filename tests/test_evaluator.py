@@ -16,7 +16,7 @@ class TestPromptEvaluator:
         """Test prompt formatting."""
         evaluator = PromptEvaluator()
 
-        template = "Classify this text: {document}"
+        template = "Classify this text: {content}"
         doc = Document(id="1", content="This is great!")
 
         result = evaluator._format_prompt(template, doc)
@@ -58,7 +58,7 @@ class TestPromptEvaluator:
 
         doc = Document(id="1", content="This is amazing!")
         label = Label(document_id="1", value="positive")
-        template = "Classify: {document}"
+        template = "Classify: {content}"
 
         # Mock the response to return "positive"
         mock_model_response.choices[0].message.content = "positive"
@@ -88,7 +88,7 @@ class TestPromptEvaluator:
 
         doc = Document(id="1", content="This is terrible!")
         label = Label(document_id="1", value="negative")
-        template = "Classify: {document}"
+        template = "Classify: {content}"
 
         # Mock the response to return "positive" (incorrect)
         mock_model_response.choices[0].message.content = "positive"
@@ -115,7 +115,7 @@ class TestPromptEvaluator:
 
         doc = Document(id="1", content="Test")
         label = Label(document_id="1", value="positive")
-        template = "Classify: {document}"
+        template = "Classify: {content}"
 
         with patch("valtron_core.client.acompletion", new=AsyncMock(side_effect=Exception("API Error"))):
             result = await evaluator.evaluate_single(
@@ -169,7 +169,7 @@ class TestPromptEvaluator:
         eval_input = EvaluationInput(
             documents=documents,
             labels=labels,
-            prompt_template="Classify: {document}",
+            prompt_template="Classify: {content}",
             model="gpt-3.5-turbo",
         )
 

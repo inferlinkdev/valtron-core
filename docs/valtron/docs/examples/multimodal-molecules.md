@@ -56,11 +56,11 @@ DATA = [
 ```python
 "prompt": (
     "Count the number of carbon atoms in the molecular structure shown in the image. "
-    "Reply with only the integer.\n\n{document}"
+    "Reply with only the integer.\n\n{content}"
 )
 ```
 
-When `content` is empty, `{document}` resolves to an empty string, so the prompt ends with a blank line, which is harmless.
+When `content` is empty, `{content}` resolves to an empty string, so the prompt ends with a blank line, which is harmless.
 
 ## Key points
 

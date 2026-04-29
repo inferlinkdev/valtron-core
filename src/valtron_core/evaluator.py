@@ -54,7 +54,7 @@ class PromptEvaluator:
         Format a prompt template with document content.
 
         Args:
-            template: Prompt template with {document} placeholder
+            template: Prompt template with {content} placeholder
             document: Document to insert
 
         Returns:
@@ -62,7 +62,7 @@ class PromptEvaluator:
         """
         # Use replace() instead of format() to avoid issues with curly braces in document content
         # This prevents JSON examples in prompts from being interpreted as format placeholders
-        return template.replace("{document}", document.content)
+        return template.replace("{content}", document.content)
 
     def _preflight_attachment_check(self, documents: list[Document], model_name: str) -> None:
         """

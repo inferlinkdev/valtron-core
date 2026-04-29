@@ -59,7 +59,7 @@ CONFIG = {
     "temperature": 0.0,
     "prompt": (
         "Count the number of carbon atoms in the molecular structure shown in the image. "
-        "Reply with only the integer.\n\n{document}"
+        "Reply with only the integer.\n\n{content}"
     ),
     "models": [
         {"name": "gpt-4o-mini", "label": "GPT-4o mini"},

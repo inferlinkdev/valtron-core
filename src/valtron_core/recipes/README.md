@@ -54,7 +54,7 @@ Create a JSON configuration file:
       }
     }
   ],
-  "prompt": "Your prompt with {document} placeholder",
+  "prompt": "Your prompt with {content} placeholder",
   "few_shot": {
     "enabled": true,
     "max_seed_examples": 10,

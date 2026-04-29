@@ -19,6 +19,18 @@ services:
     working_dir: /app
     command: bash
 
+  wizard:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: valtron-wizard
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./configs:/app/configs
+    working_dir: /app
+    command: python -m valtron_core.utilities.config_wizard
+
   pipeline-test:
     build:
       context: .
