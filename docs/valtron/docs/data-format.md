@@ -6,6 +6,8 @@ sidebar_position: 3
 
 Valtron expects input data as a list of documents, each paired with an expected output (label). You can pass data as a Python list of dicts or as a path to a JSON file.
 
+Think of this as an experiment: the more diverse and representative your examples are, the more meaningful your results will be. Aim to include a broad mix of document types and edge cases that reflect real-world variation. This collection is your **random sample**.
+
 ## Document schema
 
 Each item in the data list has the following fields:

@@ -1,0 +1,62 @@
+name: Deploy Docs to SiteGround
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'docs/**'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  deploy-docs:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: docs/valtron/package-lock.json
+
+      - name: Install Dependencies
+        working-directory: docs/valtron
+        run: npm ci
+
+      - name: Build Docs
+        working-directory: docs/valtron
+        run: npm run build
+
+      - name: Deploy to SiteGround via rsync
+        if: github.ref == 'refs/heads/main'
+        uses: easingthemes/ssh-deploy@ece05a22752e524363164bfb2f69a5ba4f8ded0d  # v5.1.0
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SG_SSH_PRIVATE_KEY }}
+          ARGS: "-rlgoDzvc -i --delete"
+          SOURCE: "docs/valtron/build/"
+          REMOTE_HOST: ${{ secrets.SG_SERVER_IP }}
+          REMOTE_USER: ${{ secrets.SG_USERNAME }}
+          REMOTE_PORT: "18765"
+          TARGET: "/home/customer/www/valtron.ai/public_html/docs"
+
+      - name: Flush SiteGround Dynamic Cache
+        if: github.ref == 'refs/heads/main'
+        uses: appleboy/ssh-action@0ff4204d59e8e51228ff73bce53f80d53301dee2  # v1.2.5
+        with:
+          host: ${{ secrets.SG_SERVER_IP }}
+          username: ${{ secrets.SG_USERNAME }}
+          key: ${{ secrets.SG_SSH_PRIVATE_KEY }}
+          port: 18765
+          script: |
+            site-tools-client domain update id=1 flush_cache=1
