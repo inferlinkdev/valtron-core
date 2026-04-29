@@ -1,5 +1,6 @@
 """Typed configuration models for recipe classes."""
 
+import re
 from enum import Enum
 from typing import Annotated, Any, Literal
 
@@ -137,8 +138,8 @@ class BaseRecipeConfig(BaseModel):
 
     @model_validator(mode="after")
     def prompt_has_placeholder(self) -> "BaseRecipeConfig":
-        if "{content}" not in self.prompt:
-            raise ValueError("prompt must contain {content} placeholder")
+        if not re.search(r'\{\w+\}', self.prompt):
+            raise ValueError("prompt must contain at least one {placeholder}")
         return self
 
 

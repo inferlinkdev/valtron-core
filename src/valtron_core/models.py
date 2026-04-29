@@ -47,7 +47,13 @@ class Document(BaseModel):
     """Represents a document to be evaluated."""
 
     id: str = Field(..., description="Unique identifier for the document")
-    content: str = Field(..., description="The document content/text")
+    content: str | dict[str, str] = Field(
+        ...,
+        description=(
+            "The document content. Either a plain string inserted at {content}, "
+            "or a dict[str, str] mapping placeholder names to their values."
+        ),
+    )
     metadata: dict[str, Any] = Field(default_factory=dict, description="Optional metadata")
     attachments: list[str] = Field(
         default_factory=list,

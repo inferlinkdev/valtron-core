@@ -13,7 +13,7 @@ Each item in the data list has the following fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | `string` | Yes | Unique identifier for the document |
-| `content` | `string` | Yes | The text the model will evaluate |
+| `content` | `string \| object` | Yes | The text the model will evaluate, or a `{key: value}` map of prompt variables (see [Prompt variables](#prompt-variables-dict-content)) |
 | `label` | `string` | Yes | The expected/ground-truth output |
 | `metadata` | `object` | No | Arbitrary key-value pairs; displayed in the report |
 | `attachments` | `array[string]` | No | URLs or local file paths appended to the prompt |
@@ -72,6 +72,42 @@ The `label` field depends on the evaluation mode:
 }
 ```
 
+## Prompt variables (dict content)
+
+When `content` is a `dict[str, str]`, every key becomes a named `{placeholder}` in your prompt template. This lets you pass multiple variables alongside the main document text.
+
+```json
+[
+  {
+    "id": "doc-001",
+    "content": {
+      "text": "The annual rainfall in the Amazon basin exceeds 2,000 mm.",
+      "topic": "climate"
+    },
+    "label": "YES"
+  },
+  {
+    "id": "doc-002",
+    "content": {
+      "text": "The company reported record profits for Q3.",
+      "topic": "climate"
+    },
+    "label": "NO"
+  }
+]
+```
+
+Matching prompt template:
+
+```
+Text: {text}
+Question: Is the topic of this text '{topic}'? Respond with: YES or NO only.
+```
+
+Each key in the dict is substituted for its matching `{placeholder}` in the template. If a placeholder referenced in the template is missing from a document's dict, a warning is logged and an empty string is substituted for that document.
+
+Extra keys in the dict that are not referenced by the template are silently ignored.
+
 ## Attachments
 
 The `attachments` field allows you to pass supplementary files or URLs alongside the document text. These are automatically fetched and embedded in the prompt before evaluation.
@@ -114,6 +150,6 @@ The JSON file must be an array at the top level.
 ## Tips
 
 - `id` values must be unique across your dataset. They are used as keys in the output files.
-- `content` is inserted at the `{content}` placeholder in your prompt template
+- `content` is inserted at the `{content}` placeholder in your prompt template (string form), or each key is inserted at its matching `{key}` placeholder (dict form)
 - `metadata` fields appear in the detailed analysis page of the HTML report but are not passed to the model
 - There is no minimum or maximum document count, but more documents produce more reliable accuracy estimates

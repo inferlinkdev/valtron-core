@@ -151,7 +151,7 @@ class TestModelEvalInit:
             ModelEval(config=config, data=[], response_format=SampleSchema)
 
     def test_prompt_missing_placeholder_raises(self):
-        with pytest.raises(ValidationError, match="content"):
+        with pytest.raises(ValidationError, match="placeholder"):
             ModelEval(
                 config={"models": [{"name": "gpt-4o-mini"}], "prompt": "No placeholder."},
                 data=[],
@@ -185,7 +185,7 @@ class TestModelEvalConfig:
             ModelEvalConfig.model_validate({"models": [{"name": "gpt-4o-mini"}]})
 
     def test_prompt_without_placeholder_raises(self):
-        with pytest.raises(ValidationError, match="content"):
+        with pytest.raises(ValidationError, match="placeholder"):
             ModelEvalConfig.model_validate({
                 "models": [{"name": "gpt-4o-mini"}],
                 "prompt": "No placeholder here.",
@@ -827,6 +827,53 @@ class TestLoadExperimentResults:
 # ===========================================================================
 # Incremental evaluation (aevaluate skips already-evaluated models)
 # ===========================================================================
+
+class TestDictContent:
+    """Tests for dict-based prompt variable content."""
+
+    @pytest.mark.asyncio
+    async def test_dict_content_prompt_is_built_correctly(self, tmp_path, mock_env_vars):
+        """Dict content fills all named placeholders; the LLM receives a fully-substituted prompt."""
+        from unittest.mock import AsyncMock, patch
+        from litellm.utils import ModelResponse
+        from unittest.mock import Mock
+
+        config = {
+            "models": [{"name": "gpt-4o-mini"}],
+            "prompt": "Text: {text} Is the topic '{topic}'? YES or NO only.",
+            "output_dir": str(tmp_path),
+        }
+        data = [
+            {
+                "id": "d1",
+                "content": {"text": "The sky is blue.", "topic": "weather"},
+                "label": "YES",
+            }
+        ]
+        eval_ = ModelEval(config=config, data=data)
+
+        mock_response = Mock(spec=ModelResponse)
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message = Mock()
+        mock_response.choices[0].message.content = "YES"
+        mock_response._hidden_params = {"response_cost": 0.0001}
+
+        captured_messages: list = []
+
+        async def fake_acompletion(**kwargs):
+            captured_messages.extend(kwargs.get("messages", []))
+            return mock_response
+
+        with patch("valtron_core.client.acompletion", side_effect=fake_acompletion):
+            await eval_.aevaluate()
+
+        assert captured_messages, "acompletion was never called"
+        user_message = next(m for m in captured_messages if m["role"] == "user")
+        assert "The sky is blue." in user_message["content"]
+        assert "weather" in user_message["content"]
+        assert "{text}" not in user_message["content"]
+        assert "{topic}" not in user_message["content"]
+
 
 class TestIncrementalEvaluation:
 

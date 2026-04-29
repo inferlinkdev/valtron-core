@@ -152,6 +152,32 @@ class TestDocumentLoader:
         finally:
             Path(temp_path).unlink()
 
+    def test_load_combined_dict_content(self) -> None:
+        """content as a dict is preserved as dict[str, str], not coerced to a string."""
+        loader = DocumentLoader()
+
+        data = [
+            {
+                "id": "1",
+                "content": {"text": "The sky is blue.", "topic": "weather"},
+                "label": "YES",
+            }
+        ]
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
+            json.dump(data, f)
+            temp_path = f.name
+
+        try:
+            documents, labels = loader.load_combined_from_json(temp_path)
+
+            assert len(documents) == 1
+            assert isinstance(documents[0].content, dict)
+            assert documents[0].content == {"text": "The sky is blue.", "topic": "weather"}
+            assert labels[0].value == "YES"
+        finally:
+            Path(temp_path).unlink()
+
     def test_save_results_to_json(self) -> None:
         """Test saving results to JSON."""
         loader = DocumentLoader()
