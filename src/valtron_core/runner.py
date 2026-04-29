@@ -216,11 +216,6 @@ class EvaluationRunner:
             f"Affected fields: {', '.join(issue['list_path'] for issue in issues)}"
         )
 
-    def _preflight_report_check(self, generate_pdf: bool) -> None:
-        if generate_pdf:
-            from valtron_core.report import _check_weasyprint_available
-            _check_weasyprint_available()
-
     def _save_result_to_run_dir(
         self,
         result: EvaluationResult,
@@ -627,10 +622,10 @@ class EvaluationRunner:
         original_prompt: str | None = None,
         documents: list[Document] | None = None,
         field_config: dict | None = None,
-        generate_pdf: bool = True,
+        output_formats: list[str] | None = None,
     ) -> Path:
         """
-        Generate a comprehensive HTML report with visualizations and recommendations.
+        Generate evaluation reports in one or more formats.
 
         Can work in two modes:
         1. Direct mode: Pass results directly
@@ -646,13 +641,15 @@ class EvaluationRunner:
             model_prompts: Optional dict mapping model names to the actual prompts used
             original_prompt: Optional original prompt template (before any optimizations)
             documents: Optional list of Document objects for detailed analysis display
+            output_formats: List of formats to generate — any of "html", "pdf". Defaults to ["html", "pdf"].
 
         Returns:
-            Path to generated HTML report
+            Path to generated HTML report, or PDF report if only "pdf" was requested
         """
-        self._preflight_report_check(generate_pdf=generate_pdf)
+        if output_formats is None:
+            output_formats = ["html", "pdf"]
 
-        from valtron_core.report import ReportGenerator
+        from valtron_core.reports import ReportGenerator
 
         # Initialize metadata dict
         metadata = {}
@@ -692,9 +689,6 @@ class EvaluationRunner:
 
         console.print(f"\n[bold blue]Generating report...[/bold blue]")
 
-        # Create visualizations
-        # Generate HTML report
-        console.print("[cyan]Generating HTML report...[/cyan]")
         report_generator = ReportGenerator(client=self.client)
 
         # Use passed documents, or try to extract from metadata if available
@@ -707,22 +701,26 @@ class EvaluationRunner:
         if field_config is None and results:
             field_config = next((r.field_config for r in results if r.field_config is not None), None)
 
-        report_path, recommendation = report_generator.generate_html_report(
-            results=results,
-            output_path=output_dir / "evaluation_report.html",
-            use_case=use_case,
-            include_recommendation=include_recommendation,
-            prompt_optimizations=prompt_optimizations,
-            model_prompts=model_prompts,
-            model_override_prompts=model_override_prompts,
-            original_prompt=original_prompt,
-            documents=documents,
-            field_config=field_config,
-        )
+        report_path = None
+        recommendation = None
 
-        console.print(f"[bold green]HTML report generated: {report_path}[/bold green]")
+        if "html" in output_formats:
+            console.print("[cyan]Generating HTML report...[/cyan]")
+            report_path, recommendation = report_generator.generate_html_report(
+                results=results,
+                output_path=output_dir / "evaluation_report.html",
+                use_case=use_case,
+                include_recommendation=include_recommendation,
+                prompt_optimizations=prompt_optimizations,
+                model_prompts=model_prompts,
+                model_override_prompts=model_override_prompts,
+                original_prompt=original_prompt,
+                documents=documents,
+                field_config=field_config,
+            )
+            console.print(f"[bold green]HTML report generated: {report_path}[/bold green]")
 
-        if generate_pdf:
+        if "pdf" in output_formats:
             console.print("[cyan]Generating PDF report...[/cyan]")
             pdf_path = report_generator.generate_pdf_report(
                 results=results,
@@ -733,6 +731,8 @@ class EvaluationRunner:
                 model_override_prompts=model_override_prompts,
             )
             console.print(f"[bold green]PDF report generated: {pdf_path}[/bold green]")
+            if report_path is None:
+                report_path = pdf_path
 
         return report_path
 

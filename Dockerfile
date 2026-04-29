@@ -14,23 +14,12 @@ ENV PYTHONUNBUFFERED=1 \
 # Add poetry to PATH
 ENV PATH="$POETRY_HOME/bin:$VENV_PATH/bin:$PATH"
 
-# Install system dependencies including LaTeX for PDF generation and weasyprint deps
+# Install system dependencies
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         curl \
         build-essential \
         git \
-        texlive-latex-base \
-        texlive-latex-extra \
-        texlive-fonts-recommended \
-        latexmk \
-        # WeasyPrint dependencies
-        libpango-1.0-0 \
-        libpangocairo-1.0-0 \
-        libgdk-pixbuf-2.0-0 \
-        libffi-dev \
-        shared-mime-info \
-        libcairo2 \
         fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 

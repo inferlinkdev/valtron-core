@@ -589,7 +589,7 @@ class TestSaveHtmlReportFromMemory:
         mock_gen.assert_called_once()
         call_kwargs = mock_gen.call_args.kwargs
         assert call_kwargs["results"] == [mock_r]
-        assert call_kwargs["generate_pdf"] is False
+        assert call_kwargs["output_formats"] == ["html"]
         assert call_kwargs["use_case"] == eval_.use_case
 
     def test_save_html_before_evaluate_raises(self, tmp_path):
@@ -644,7 +644,7 @@ class TestRun:
             with patch.object(eval_.runner, "generate_report", return_value=tmp_path / "report.html") as mock_report:
                 report_path = await eval_.arun()
 
-        mock_report.assert_called_once_with(**{**mock_report.call_args.kwargs, "generate_pdf": True})
+        mock_report.assert_called_once_with(**{**mock_report.call_args.kwargs, "output_formats": ["pdf"]})
         assert report_path != tmp_path / "report.html"
 
     @pytest.mark.asyncio
@@ -657,9 +657,9 @@ class TestRun:
                 report_path = await eval_.arun()
 
         assert mock_report.call_count == 2
-        generate_pdf_values = [c.kwargs["generate_pdf"] for c in mock_report.call_args_list]
-        assert False in generate_pdf_values
-        assert True in generate_pdf_values
+        formats_values = [c.kwargs["output_formats"] for c in mock_report.call_args_list]
+        assert ["html"] in formats_values
+        assert ["pdf"] in formats_values
         assert report_path == tmp_path / "report.html"
 
 
