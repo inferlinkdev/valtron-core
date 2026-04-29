@@ -12,7 +12,8 @@ from valtron_core.models import (
     EvaluationMetrics,
     PredictionResult,
 )
-from valtron_core.report import ReportGenerator, _check_weasyprint_available
+from valtron_core.reports import ReportGenerator
+from valtron_core.reports.generate_pdf_report import _check_weasyprint_available
 
 
 class TestReportGeneratorInit:
@@ -20,7 +21,7 @@ class TestReportGeneratorInit:
 
     def test_init_with_default_client(self):
         """Test initialization with default client."""
-        with patch("valtron_core.report.LLMClient") as mock_client_class:
+        with patch("valtron_core.reports._base.LLMClient") as mock_client_class:
             mock_client = Mock()
             mock_client_class.return_value = mock_client
 
@@ -409,7 +410,7 @@ class TestGeneratePdfReport:
         """Test basic PDF report generation."""
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report._check_weasyprint_available"), \
+        with patch("valtron_core.reports.generate_pdf_report._check_weasyprint_available"), \
              patch("weasyprint.HTML") as mock_html_class:
             mock_html = MagicMock()
             mock_html_class.return_value = mock_html
@@ -428,7 +429,7 @@ class TestGeneratePdfReport:
         """Test PDF report with recommendation."""
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report._check_weasyprint_available"), \
+        with patch("valtron_core.reports.generate_pdf_report._check_weasyprint_available"), \
              patch("weasyprint.HTML") as mock_html_class:
             mock_html = MagicMock()
             mock_html_class.return_value = mock_html
@@ -467,7 +468,7 @@ class TestGeneratePdfReport:
         )
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report._check_weasyprint_available"), \
+        with patch("valtron_core.reports.generate_pdf_report._check_weasyprint_available"), \
              patch("weasyprint.HTML") as mock_html_class:
             mock_html = MagicMock()
             mock_html_class.return_value = mock_html
@@ -506,7 +507,7 @@ class TestGeneratePdfReport:
         )
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report._check_weasyprint_available"), \
+        with patch("valtron_core.reports.generate_pdf_report._check_weasyprint_available"), \
              patch("weasyprint.HTML") as mock_html_class:
             mock_html = MagicMock()
             mock_html_class.return_value = mock_html
@@ -523,7 +524,7 @@ class TestGeneratePdfReport:
         """Test PDF report with empty results."""
         generator = ReportGenerator(client=mock_llm_client)
 
-        with patch("valtron_core.report._check_weasyprint_available"), \
+        with patch("valtron_core.reports.generate_pdf_report._check_weasyprint_available"), \
              patch("weasyprint.HTML") as mock_html_class:
             mock_html = MagicMock()
             mock_html_class.return_value = mock_html

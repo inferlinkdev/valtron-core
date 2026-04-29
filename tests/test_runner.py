@@ -452,7 +452,7 @@ class TestGenerateReport:
         """Test generating report with results."""
         runner = EvaluationRunner(client=mock_llm_client)
 
-        with patch("valtron_core.report.ReportGenerator") as mock_report_class:
+        with patch("valtron_core.reports.ReportGenerator") as mock_report_class:
             mock_generator = Mock()
             mock_report_class.return_value = mock_generator
             mock_generator.generate_html_report = Mock(
@@ -503,7 +503,7 @@ class TestGenerateReport:
         }
         (models_dir / "gpt-3.5-turbo.json").write_text(json.dumps(model_data))
 
-        with patch("valtron_core.report.ReportGenerator") as mock_report_class:
+        with patch("valtron_core.reports.ReportGenerator") as mock_report_class:
             mock_generator = Mock()
             mock_report_class.return_value = mock_generator
             mock_generator.generate_html_report = Mock(
@@ -539,7 +539,7 @@ class TestGenerateReport:
         """Test that original_prompt is extracted from results if not provided."""
         runner = EvaluationRunner(client=mock_llm_client)
 
-        with patch("valtron_core.report.ReportGenerator") as mock_report_class:
+        with patch("valtron_core.reports.ReportGenerator") as mock_report_class:
             mock_generator = Mock()
             mock_report_class.return_value = mock_generator
             mock_generator.generate_html_report = Mock(
