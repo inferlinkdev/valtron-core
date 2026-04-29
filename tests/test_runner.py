@@ -561,20 +561,6 @@ class TestGenerateReport:
             call_kwargs = mock_generator.generate_html_report.call_args.kwargs
             assert "original_prompt" in call_kwargs
 
-    def test_generate_report_raises_if_weasyprint_deps_missing(
-        self, mock_llm_client, sample_evaluation_results, tmp_path
-    ):
-        """Test that missing WeasyPrint system dependencies raise ImportError before any work starts."""
-        runner = EvaluationRunner(client=mock_llm_client)
-
-        import sys
-        with patch.dict(sys.modules, {"weasyprint": None}):
-            with pytest.raises(ImportError, match="doc.courtbouillon.org/weasyprint"):
-                runner.generate_report(
-                    results=sample_evaluation_results,
-                    output_dir=tmp_path,
-                    include_recommendation=False,
-                )
 
 
 class TestPrintMethods:

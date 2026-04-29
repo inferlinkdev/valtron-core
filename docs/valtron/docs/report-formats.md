@@ -22,7 +22,7 @@ Set `output_formats` in your config:
 }
 ```
 
-Default is `["html"]`. PDF generation requires WeasyPrint and its system-level dependencies. See [PDF system dependencies](#pdf-system-dependencies) below.
+Default is `["html"]`.
 
 ---
 
@@ -72,18 +72,12 @@ The HTML report consists of two files:
 
 ---
 
-## PDF system dependencies
-
-WeasyPrint requires OS-level libraries that pip cannot install automatically. If these are missing, Valtron will raise a clear error when PDF generation is requested. Follow the [WeasyPrint installation guide](https://doc.courtbouillon.org/weasyprint/stable/first_steps.html) to install the required dependencies for your platform.
-
----
-
 ## PDF report
 
 The PDF report is a single file `evaluation_report.pdf` containing all the same information as the HTML report, optimized for print:
 
 - **Static charts** — accuracy, cost, and time charts rendered as embedded PNG images (matplotlib, pastel color theme)
-- **Generated via WeasyPrint** — renders an HTML template to PDF
+- **Generated via ReportLab** — pure Python, no system dependencies required
 - Suitable for sharing or archiving results
 
 ---

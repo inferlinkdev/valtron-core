@@ -17,7 +17,7 @@ The config controls which models to run, the prompt template, evaluation options
 | `temperature` | `float` | `0.0` | Default temperature for all models (can be overridden per model) |
 | `few_shot` | `object` | `null` | Few-shot generation config (see below) |
 | `field_metrics_config` | `object` | `null` | Field-level scoring for structured extraction (see below) |
-| `output_formats` | `array[string]` | `["html"]` | Report formats to generate: `"html"`, `"pdf"`, or both. PDF requires [WeasyPrint system dependencies](./getting-started/installation#pdf-system-dependencies) |
+| `output_formats` | `array[string]` | `["html"]` | Report formats to generate. Acceptable formats include: `"html"`, `"pdf"` |
 
 ```json
 {

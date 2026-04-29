@@ -216,11 +216,6 @@ class EvaluationRunner:
             f"Affected fields: {', '.join(issue['list_path'] for issue in issues)}"
         )
 
-    def _preflight_report_check(self, output_formats: list[str]) -> None:
-        if "pdf" in output_formats:
-            from valtron_core.reports.generate_pdf_report import _check_weasyprint_available
-            _check_weasyprint_available()
-
     def _save_result_to_run_dir(
         self,
         result: EvaluationResult,
@@ -653,7 +648,6 @@ class EvaluationRunner:
         """
         if output_formats is None:
             output_formats = ["html", "pdf"]
-        self._preflight_report_check(output_formats=output_formats)
 
         from valtron_core.reports import ReportGenerator
 
