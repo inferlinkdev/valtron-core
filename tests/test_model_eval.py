@@ -214,7 +214,7 @@ class TestModelEvalConfig:
         assert config.models[0].prompt == "Custom: {content}"
 
     def test_model_prompt_override_without_placeholder_raises(self):
-        with pytest.raises(ValidationError, match="content"):
+        with pytest.raises(ValidationError, match="placeholder"):
             ModelEvalConfig.model_validate({
                 "models": [{"name": "gpt-4o-mini", "prompt": "No placeholder here."}],
                 "prompt": "Base: {content}",
@@ -466,7 +466,7 @@ class TestEvaluateTransformer:
         eval_ = ModelEval(config=config, data=data)
         docs, _ = eval_._load_documents_and_labels()
 
-        with patch("valtron_core.recipes.model_eval.TransformerModelWrapper") as MockW:
+        with patch("valtron_core.transformer_wrapper.TransformerModelWrapper") as MockW:
             mock_w = Mock()
             mock_w.predict = Mock(return_value='{"sentiment": "positive"}')
             MockW.return_value = mock_w

@@ -39,10 +39,6 @@ from valtron_core.recipes.config import (
 )
 from valtron_core.runner import EvaluationResult, EvaluationRunner
 
-try:
-    from valtron_core.transformer_wrapper import TransformerModelWrapper
-except ImportError:
-    TransformerModelWrapper = None  # type: ignore[assignment,misc]
 from valtron_core.utilities.field_config_generator import infer_field_config
 
 logger = structlog.get_logger()
@@ -818,6 +814,8 @@ class ModelEval(BaseRecipe):
         model_path = model_config.model_path
 
         logger.info("evaluating_transformer", model=model_name, path=model_path)
+
+        from valtron_core.transformer_wrapper import TransformerModelWrapper
 
         transformer = TransformerModelWrapper(model_path, model_name)
 
