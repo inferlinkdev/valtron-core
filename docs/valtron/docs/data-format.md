@@ -6,9 +6,9 @@ sidebar_position: 3
 
 This page covers input documents: how to structure your data before passing it to `ModelEval`. Once your data is ready, see [Config Format](./config-format) to configure the evaluation run.
 
-Valtron expects input data as a list of documents, each paired with an expected output (label). You can pass data as a Python list of dicts or as a path to a JSON file.
+Valtron expects input data as a list of documents, each paired with an expected output (label). Documents can optionally include file attachments for multimodal evaluation. You can pass data as a Python list of dicts or as a path to a JSON file.
 
-Think of this as an experiment: the more diverse and representative your examples are, the more meaningful your results will be. Aim to include a broad mix of document types and edge cases that reflect real-world variation. This collection is your **random sample**.
+Think of this as an experiment: the closer your examples are to what you will see in production, the more meaningful your results will be. Aim to include a broad mix of document types and edge cases that reflects real-world variation.  Ideally your examples will be a "random sample" of the data you will see in production (i.e., the actual "distribution" of data).  This will improve the liklihood that the experimental results will reflect reality.
 
 ## Document schema
 
