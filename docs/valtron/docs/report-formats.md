@@ -111,31 +111,3 @@ experiment.save_html_report("./results")
 # PDF only
 experiment.save_pdf_report("./results")
 ```
-
----
-
-## Re-running reports on saved results
-
-Use the `aggregate_reports` utility to regenerate reports from a saved run directory without making any new API calls. This is useful when you want to:
-
-- Re-generate with updated report templates
-- Apply a new `field_metrics_config` to previously collected predictions
-
-```bash
-# Regenerate HTML report from a saved run
-python -m valtron_core.utilities.aggregate_reports \
-    --input ./results/my_run \
-    --output-dir ./results/my_run
-
-# Re-evaluate with a new field metrics config (no API calls)
-python -m valtron_core.utilities.aggregate_reports \
-    --input ./results/my_run \
-    --output-dir ./results/my_run \
-    --field-metrics-config ./new_field_config.json
-
-# Disable the AI recommendation
-python -m valtron_core.utilities.aggregate_reports \
-    --input ./results/my_run \
-    --output-dir ./reports \
-    --no-recommendation
-```

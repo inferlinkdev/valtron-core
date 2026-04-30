@@ -13,7 +13,10 @@ from rich.table import Table
 
 from valtron_core.client import LLMClient
 from valtron_core.evaluator import PromptEvaluator
-from valtron_core.evaluation.json_eval import ExpensiveListComparisonError, find_expensive_unordered_list_fields
+from valtron_core.evaluation.json_eval import (
+    ExpensiveListComparisonError,
+    find_expensive_unordered_list_fields,
+)
 from valtron_core.loader import DocumentLoader
 from valtron_core.models import (
     Document,
@@ -39,6 +42,8 @@ def save_run_dir(
     model_prompts: "dict[str, str] | None" = None,
     prompt_manipulations: "dict[str, list[str]] | None" = None,
     model_override_prompts: "dict[str, str] | None" = None,
+    response_format_schema: "str | None" = None,
+    disable_auto_response_format: bool = False,
 ) -> Path:
     """Write evaluation results to the canonical run directory layout.
 
@@ -74,6 +79,8 @@ def save_run_dir(
             "use_case": use_case,
             "original_prompt": original_prompt,
             "field_config": field_config,
+            "response_format_schema": response_format_schema,
+            "disable_auto_response_format": disable_auto_response_format,
             "documents": documents,
         }
         with open(metadata_path, "w") as f:
@@ -180,11 +187,20 @@ class EvaluationRunner:
             )
 
         example_named = json.dumps(
-            {"type": "list", "metric_config": {"ordered": False, "allow_expensive_comparisons_for": ["name", "zone"]}},
+            {
+                "type": "list",
+                "metric_config": {
+                    "ordered": False,
+                    "allow_expensive_comparisons_for": ["name", "zone"],
+                },
+            },
             indent=2,
         )
         example_item = json.dumps(
-            {"type": "list", "metric_config": {"ordered": False, "allow_expensive_comparisons_for": ["$item"]}},
+            {
+                "type": "list",
+                "metric_config": {"ordered": False, "allow_expensive_comparisons_for": ["$item"]},
+            },
             indent=2,
         )
         console.print(
@@ -205,9 +221,9 @@ class EvaluationRunner:
             f"    metric: [cyan]'comparator'[/cyan], element_compare: [cyan]'text_similarity'[/cyan]   (local fuzzy match)\n\n"
             f"  [bold]Option 2[/bold] — accept the cost per field by adding [cyan]allow_expensive_comparisons_for[/cyan] to the\n"
             f"  list's metric_config with only the specific sub-fields you intend to be expensive.\n"
-            f"  Each \"To allow\" line above shows exactly what to add.  Example:\n"
+            f'  Each "To allow" line above shows exactly what to add.  Example:\n'
             f"[green]{escape(example_named)}[/green]\n\n"
-            f"  Use [cyan]\"$item\"[/cyan] for a list of primitives (no sub-fields):\n"
+            f'  Use [cyan]"$item"[/cyan] for a list of primitives (no sub-fields):\n'
             f"[green]{escape(example_item)}[/green]\n"
         )
         raise ExpensiveListComparisonError(
@@ -239,14 +255,20 @@ class EvaluationRunner:
             documents.append(doc_entry)
 
         out_dir = save_run_dir(
-            run_dir, [result], documents,
+            run_dir,
+            [result],
+            documents,
             original_prompt=result.prompt_template,
             field_config=result.field_config,
         )
         safe_name = result.model.replace("/", "_")
-        console.print(f"[green]Saved predictions for {result.model} -> {out_dir / 'models' / (safe_name + '.json')}[/green]")
+        console.print(
+            f"[green]Saved predictions for {result.model} -> {out_dir / 'models' / (safe_name + '.json')}[/green]"
+        )
 
-    def _load_results_from_run_dir(self, run_dir: Path) -> "tuple[list[EvaluationResult], dict[str, Any]]":
+    def _load_results_from_run_dir(
+        self, run_dir: Path
+    ) -> "tuple[list[EvaluationResult], dict[str, Any]]":
         """Load results from new-format run directory (metadata.json + models/)."""
         from valtron_core.evaluation.json_eval import EvalResult
 
@@ -290,18 +312,20 @@ class EvaluationRunner:
                         field_metrics = EvalResult.model_validate(p["field_metrics"])
                     except Exception:
                         pass
-                predictions.append(PredictionResult(
-                    document_id=doc_id,
-                    predicted_value=p["predicted_value"],
-                    expected_value=label_map.get(doc_id, ""),
-                    is_correct=p.get("is_correct", False),
-                    example_score=p.get("example_score", 0.0),
-                    response_time=p.get("response_time", 0.0),
-                    original_cost=p.get("original_cost", 0.0),
-                    cost=p.get("cost", 0.0),
-                    model=model_name,
-                    field_metrics=field_metrics,
-                ))
+                predictions.append(
+                    PredictionResult(
+                        document_id=doc_id,
+                        predicted_value=p["predicted_value"],
+                        expected_value=label_map.get(doc_id, ""),
+                        is_correct=p.get("is_correct", False),
+                        example_score=p.get("example_score", 0.0),
+                        response_time=p.get("response_time", 0.0),
+                        original_cost=p.get("original_cost", 0.0),
+                        cost=p.get("cost", 0.0),
+                        model=model_name,
+                        field_metrics=field_metrics,
+                    )
+                )
 
             result_kwargs: dict[str, Any] = {
                 "run_id": model_data.get("run_id", model_file.stem),
@@ -313,7 +337,11 @@ class EvaluationRunner:
                 result_kwargs["completed_at"] = model_data["completed_at"]
             result = EvaluationResult(
                 **result_kwargs,
-                metrics=EvaluationMetrics(**model_data["metrics"]) if model_data.get("metrics") else None,
+                metrics=(
+                    EvaluationMetrics(**model_data["metrics"])
+                    if model_data.get("metrics")
+                    else None
+                ),
                 prompt_template=model_data.get("prompt_template", ""),
                 model=model_name,
                 llm_config=model_data.get("llm_config", {}),
@@ -333,6 +361,8 @@ class EvaluationRunner:
             "use_case": meta.get("use_case", "general purpose"),
             "timestamp": meta.get("timestamp"),
             "field_config": meta.get("field_config"),
+            "response_format_schema": meta.get("response_format_schema"),
+            "disable_auto_response_format": meta.get("disable_auto_response_format", False),
         }
         console.print(f"[green]Loaded {len(results)} model results from {run_dir}[/green]")
         return results, metadata_out
@@ -406,7 +436,9 @@ class EvaluationRunner:
             doc_content_map = {d.id: d.content for d in documents}
             doc_attachments_map = {d.id: d.attachments for d in documents}
             doc_label_map = {p.document_id: p.expected_value for p in result.predictions}
-            self._save_result_to_run_dir(result, save_results_dir, doc_content_map, doc_label_map, doc_attachments_map)
+            self._save_result_to_run_dir(
+                result, save_results_dir, doc_content_map, doc_label_map, doc_attachments_map
+            )
 
         self._print_result(result)
         return result
@@ -467,7 +499,9 @@ class EvaluationRunner:
 
         semaphore = asyncio.Semaphore(max_concurrent_models) if max_concurrent_models else None
 
-        async def _eval_one(index: int, model: str | dict[str, Any]) -> tuple[int, EvaluationResult]:
+        async def _eval_one(
+            index: int, model: str | dict[str, Any]
+        ) -> tuple[int, EvaluationResult]:
             async def _run() -> EvaluationResult:
                 return await self.evaluate(
                     documents=documents,
@@ -481,6 +515,7 @@ class EvaluationRunner:
                     max_concurrent=max_concurrent,
                     save_results_dir=save_results_dir,
                 )
+
             if semaphore:
                 async with semaphore:
                     result = await _run()
@@ -521,7 +556,9 @@ class EvaluationRunner:
 
         console.print(table)
 
-    def _print_comparison(self, results: list[EvaluationResult], show_field_metrics: bool = False) -> None:
+    def _print_comparison(
+        self, results: list[EvaluationResult], show_field_metrics: bool = False
+    ) -> None:
         """Print model comparison results."""
         console.print(f"\n[bold green]Model Comparison Complete![/bold green]")
 
@@ -658,7 +695,9 @@ class EvaluationRunner:
         if output_dir and not results:
             output_dir = Path(output_dir)
             if not (output_dir / "metadata.json").exists():
-                raise ValueError(f"No metadata.json found in {output_dir}. Not a valid run directory.")
+                raise ValueError(
+                    f"No metadata.json found in {output_dir}. Not a valid run directory."
+                )
             results, metadata = self._load_results_from_run_dir(output_dir)
             if use_case is None:
                 use_case = metadata.get("use_case", "general purpose")
@@ -671,7 +710,9 @@ class EvaluationRunner:
             if original_prompt is None:
                 original_prompt = metadata.get("original_prompt")
         elif not results:
-            raise ValueError("Must provide either 'results' or 'output_dir' pointing to a valid run directory")
+            raise ValueError(
+                "Must provide either 'results' or 'output_dir' pointing to a valid run directory"
+            )
 
         # Set defaults
         if use_case is None:
@@ -699,7 +740,9 @@ class EvaluationRunner:
         if field_config is None:
             field_config = metadata.get("field_config")
         if field_config is None and results:
-            field_config = next((r.field_config for r in results if r.field_config is not None), None)
+            field_config = next(
+                (r.field_config for r in results if r.field_config is not None), None
+            )
 
         report_path = None
         recommendation = None

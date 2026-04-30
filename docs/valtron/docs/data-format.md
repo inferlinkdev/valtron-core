@@ -15,7 +15,7 @@ Each item in the data list has the following fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | `string` | Yes | Unique identifier for the document |
-| `content` | `string \| object` | Yes | The text the model will evaluate, or a `{key: value}` map of prompt variables (see [Prompt variables](#prompt-variables-dict-content)) |
+| `content` | `string \| object` | Yes | The text the model will evaluate, or a `{key: value}` map of named prompt variables |
 | `label` | `string` | Yes | The expected/ground-truth output |
 | `metadata` | `object` | No | Arbitrary key-value pairs; displayed in the report |
 | `attachments` | `array[string]` | No | URLs or local file paths appended to the prompt |
@@ -39,44 +39,18 @@ Each item in the data list has the following fields:
 ]
 ```
 
-## Label format
+### How content fills your prompt
 
-The `label` field depends on the evaluation mode:
+**String content** - the value is substituted at the `{content}` placeholder in your prompt template:
 
-**Label/classification mode** (no `response_format` in config):
-- `label` is a plain string. It must be the exact value the model is expected to output.
-- Comparison is string equality (or custom comparator if configured)
+```
+Prompt:  Classify the sentiment of this review: {content}
+content: "Absolutely love this product!"
 
-```json
-{"id": "1", "content": "...", "label": "positive"}
+LLM sees: "Classify the sentiment of this review: Absolutely love this product!"
 ```
 
-**Structured extraction mode** (with `response_format` in config):
-- `label` can be either a **JSON object** or a **JSON string**. Both are accepted.
-- Must match the shape of the Pydantic model passed as `response_format`
-- If a dict/list is provided, it is serialized to a JSON string internally
-
-```json
-// As a JSON object (preferred, more readable)
-{
-  "id": "1",
-  "content": "Apple Inc. was founded in Cupertino, California.",
-  "label": {"name": "Apple Inc.", "city": "Cupertino", "state": "California"}
-}
-```
-
-```json
-// As a JSON string (also valid)
-{
-  "id": "1",
-  "content": "Apple Inc. was founded in Cupertino, California.",
-  "label": "{\"name\": \"Apple Inc.\", \"city\": \"Cupertino\", \"state\": \"California\"}"
-}
-```
-
-## Prompt variables (dict content)
-
-When `content` is a `dict[str, str]`, every key becomes a named `{placeholder}` in your prompt template. This lets you pass multiple variables alongside the main document text.
+**Dict content** - each key replaces its matching `{placeholder}`. Pass multiple variables alongside your document text by setting `content` to a key/value object:
 
 ```json
 [
@@ -106,9 +80,59 @@ Text: {text}
 Question: Is the topic of this text '{topic}'? Respond with: YES or NO only.
 ```
 
-Each key in the dict is substituted for its matching `{placeholder}` in the template. If a placeholder referenced in the template is missing from a document's dict, a warning is logged and an empty string is substituted for that document.
+Result for doc-001:
 
-Extra keys in the dict that are not referenced by the template are silently ignored.
+```
+LLM sees: "Text: The annual rainfall in the Amazon basin exceeds 2,000 mm.
+Question: Is the topic of this text 'climate'? Respond with: YES or NO only."
+```
+
+If a placeholder in the template is missing from a document's dict, a warning is logged and an empty string is substituted. Extra keys not referenced by the template are silently ignored.
+
+---
+
+## Label format
+
+The `label` field depends on the evaluation mode:
+
+**Label/classification mode** (no `response_format` in config):
+- `label` is a plain string matching one of the known output classes.
+- Valtron automatically generates a `Literal` enum from all unique label values in your dataset and uses it as the required output schema. This constrains the LLM to return one of the known classes exactly, reducing hallucinations and making correctness checking unambiguous.
+- If your dataset has more than 50 unique label values, evaluation raises an error before any LLM call. Set [`disable_auto_response_format: true`](./config-format#classification-mode) in your config to use free-text mode instead.
+
+```json
+{"id": "1", "content": "...", "label": "positive"}
+```
+
+For a dataset with labels `"positive"`, `"negative"`, and `"neutral"`, the generated schema looks like:
+
+```python
+class ResponseModel(BaseModel):
+    label: Literal["negative", "neutral", "positive"]
+```
+
+**Structured extraction mode** (with `response_format` in config):
+- `label` can be either a **JSON object** or a **JSON string**. Both are accepted.
+- Must match the shape of the Pydantic model passed as `response_format`
+- If a dict/list is provided, it is serialized to a JSON string internally
+
+```json
+// As a JSON object (preferred, more readable)
+{
+  "id": "1",
+  "content": "Apple Inc. was founded in Cupertino, California.",
+  "label": {"name": "Apple Inc.", "city": "Cupertino", "state": "California"}
+}
+```
+
+```json
+// As a JSON string (also valid)
+{
+  "id": "1",
+  "content": "Apple Inc. was founded in Cupertino, California.",
+  "label": "{\"name\": \"Apple Inc.\", \"city\": \"Cupertino\", \"state\": \"California\"}"
+}
+```
 
 ## Attachments
 
@@ -152,6 +176,5 @@ The JSON file must be an array at the top level.
 ## Tips
 
 - `id` values must be unique across your dataset. They are used as keys in the output files.
-- `content` is inserted at the `{content}` placeholder in your prompt template (string form), or each key is inserted at its matching `{key}` placeholder (dict form)
 - `metadata` fields appear in the detailed analysis page of the HTML report but are not passed to the model
 - There is no minimum or maximum document count, but more documents produce more reliable accuracy estimates

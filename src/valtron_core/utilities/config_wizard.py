@@ -111,9 +111,7 @@ def api_suggest_models():
 
     suggestions = suggest_models(current_model)
 
-    return jsonify({
-        "suggestions": suggestions
-    })
+    return jsonify({"suggestions": suggestions})
 
 
 @app.route("/api/download-data", methods=["POST"])
@@ -148,12 +146,14 @@ def api_download_data():
         # Return relative path for config
         relative_path = f"examples/example_data/{filename}"
 
-        return jsonify({
-            "success": True,
-            "path": relative_path,
-            "filename": filename,
-            "num_examples": len(json_data) if isinstance(json_data, list) else 1
-        })
+        return jsonify(
+            {
+                "success": True,
+                "path": relative_path,
+                "filename": filename,
+                "num_examples": len(json_data) if isinstance(json_data, list) else 1,
+            }
+        )
 
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"Failed to download file: {str(e)}"}), 400
@@ -196,21 +196,39 @@ def api_analyze_data():
             is_json = False
 
         if not is_json:
-            return jsonify({
-                "is_json": False,
-                "sample_label": first_label,
-                "num_examples": len(data_list),
-            })
+            enum_values = sorted(
+                {str(d.get("label", "")) for d in data_list if str(d.get("label", "")) != ""}
+            )
+            response_format_preview = ""
+            if enum_values:
+                args = ", ".join(repr(v) for v in enum_values)
+                response_format_preview = (
+                    f"class ResponseModel(BaseModel):\n    label: Literal[{args}]"
+                )
+            return jsonify(
+                {
+                    "is_json": False,
+                    "sample_label": first_label,
+                    "num_examples": len(data_list),
+                    "enum_values": enum_values,
+                    "response_format_preview": response_format_preview,
+                }
+            )
 
         from valtron_core.utilities.field_config_generator import infer_field_config
+
         field_config = infer_field_config(first_label)
 
-        return jsonify({
-            "is_json": True,
-            "sample_label": first_label,
-            "num_examples": len(data_list),
-            "field_config": field_config.model_dump(),
-        })
+        return jsonify(
+            {
+                "is_json": True,
+                "sample_label": first_label,
+                "num_examples": len(data_list),
+                "field_config": field_config.model_dump(),
+                "enum_values": [],
+                "response_format_preview": "",
+            }
+        )
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -231,10 +249,7 @@ def api_save_config():
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
-    return jsonify({
-        "success": True,
-        "path": str(config_path)
-    })
+    return jsonify({"success": True, "path": str(config_path)})
 
 
 def start_wizard(host="0.0.0.0", port=5000):

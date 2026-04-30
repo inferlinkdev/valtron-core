@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal, get_args, get_origin
 
 import structlog
 from pydantic import BaseModel, Field, create_model
@@ -124,6 +124,7 @@ class ModelEval(BaseRecipe):
         self._manipulations_applied: dict[str, list[Any]] | None = None
         self._model_prompts: dict[str, str] | None = None
         self._model_override_prompts: dict[str, str] | None = None
+        self._response_format_schema: str | None = None
 
         logger.info(
             "model_eval_initialized",
@@ -132,6 +133,29 @@ class ModelEval(BaseRecipe):
             few_shot_enabled=self.few_shot_config is not None and self.few_shot_config.enabled,
             has_response_format=response_format is not None,
         )
+
+    # -------------------------------------------------------------------------
+    # Preflight
+    # -------------------------------------------------------------------------
+
+    def _preflight_check(self) -> None:
+        if (
+            self.response_format is None
+            and not self.config.disable_auto_response_format
+            and self.data
+        ):
+            first_label = self.data[0].get("label", "")
+            try:
+                json.loads(str(first_label))
+            except (json.JSONDecodeError, TypeError):
+                unique_count = len({str(d.get("label", "")) for d in self.data})
+                if unique_count > 50:
+                    raise ValueError(
+                        f"Auto-enum response format would require {unique_count} unique enum values "
+                        f"(max 50). Reduce label cardinality or set disable_auto_response_format=True "
+                        f"in config to use free text."
+                    )
+        super()._preflight_check()
 
     # -------------------------------------------------------------------------
     # Model management
@@ -171,9 +195,7 @@ class ModelEval(BaseRecipe):
         for mc in normalized:
             label = mc.label or mc.name
             if label in existing_labels:
-                raise ValueError(
-                    f"Model label {label!r} already exists in this experiment."
-                )
+                raise ValueError(f"Model label {label!r} already exists in this experiment.")
             if label in seen_in_batch:
                 raise ValueError(f"Duplicate label {label!r} in provided models list.")
             seen_in_batch.add(label)
@@ -261,6 +283,7 @@ class ModelEval(BaseRecipe):
         config_dict: dict[str, Any] = {
             "prompt": original_prompt,
             "use_case": meta.get("use_case", "model evaluation"),
+            "disable_auto_response_format": meta.get("disable_auto_response_format", False),
         }
         if meta.get("field_config"):
             config_dict["field_metrics_config"] = meta["field_config"]
@@ -304,16 +327,17 @@ class ModelEval(BaseRecipe):
 
         model_files = sorted((dir_path / "models").glob("*.json"))
         if not model_files:
-            raise ValueError(
-                f"No model result files found in {dir_path / 'models'}."
-            )
+            raise ValueError(f"No model result files found in {dir_path / 'models'}.")
 
         all_model_data = [cls._model_data_from_file(f) for f in model_files]
 
         config_dict["models"] = [
-            {k: v for k, v in md.items()
-             if k in ("name", "label", "params", "prompt", "prompt_manipulation")
-             and v is not None}
+            {
+                k: v
+                for k, v in md.items()
+                if k in ("name", "label", "params", "prompt", "prompt_manipulation")
+                and v is not None
+            }
             for md in all_model_data
         ]
 
@@ -335,6 +359,7 @@ class ModelEval(BaseRecipe):
 
             try:
                 from valtron_core.evaluation.json_eval import EvalResult
+
                 _eval_result_cls = EvalResult
             except ImportError:
                 _eval_result_cls = None
@@ -347,18 +372,20 @@ class ModelEval(BaseRecipe):
                         field_metrics = _eval_result_cls.model_validate(p["field_metrics"])
                     except Exception:
                         pass
-                predictions.append(PredictionResult(
-                    document_id=p["document_id"],
-                    predicted_value=p["predicted_value"],
-                    expected_value=label_map.get(p["document_id"], ""),
-                    is_correct=p.get("is_correct", False),
-                    example_score=p.get("example_score", 0.0),
-                    response_time=p.get("response_time", 0.0),
-                    original_cost=p.get("original_cost", 0.0),
-                    cost=p.get("cost", 0.0),
-                    model=model_label,
-                    field_metrics=field_metrics,
-                ))
+                predictions.append(
+                    PredictionResult(
+                        document_id=p["document_id"],
+                        predicted_value=p["predicted_value"],
+                        expected_value=label_map.get(p["document_id"], ""),
+                        is_correct=p.get("is_correct", False),
+                        example_score=p.get("example_score", 0.0),
+                        response_time=p.get("response_time", 0.0),
+                        original_cost=p.get("original_cost", 0.0),
+                        cost=p.get("cost", 0.0),
+                        model=model_label,
+                        field_metrics=field_metrics,
+                    )
+                )
 
             result = EvaluationResult(
                 run_id=md["run_id"],
@@ -464,6 +491,17 @@ class ModelEval(BaseRecipe):
         self._preflight_check()
         field_metrics_config = self._get_field_metrics_config()
 
+        if self.response_format is not None:
+            self._response_format_schema = self._serialize_response_format_schema(
+                self.response_format
+            )
+        elif not self.config.disable_auto_response_format:
+            self._response_format_schema = self._serialize_response_format_schema(
+                self._create_response_validator()
+            )
+        else:
+            self._response_format_schema = None
+
         if self.few_shot_config and self.few_shot_config.enabled:
             await self._generate_few_shot_data()
 
@@ -480,7 +518,8 @@ class ModelEval(BaseRecipe):
             if self.results:
                 self.results = list(self.results) + new_results
                 self._manipulations_applied = {
-                    **(self._manipulations_applied or {}), **new_manipulations
+                    **(self._manipulations_applied or {}),
+                    **new_manipulations,
                 }
             else:
                 self.results = new_results
@@ -526,8 +565,7 @@ class ModelEval(BaseRecipe):
         logger.info("generating_few_shot_data")
 
         examples = [
-            LabeledExample(document=item["content"], label=item["label"])
-            for item in self.data
+            LabeledExample(document=item["content"], label=item["label"]) for item in self.data
         ]
 
         generator = FewShotTrainingDataGenerator(
@@ -542,9 +580,7 @@ class ModelEval(BaseRecipe):
             num_examples=self.few_shot_config.num_examples,
         )
 
-        correct_examples = [
-            ex for ex in result["examples"] if ex["consensus"] == "correct"
-        ]
+        correct_examples = [ex for ex in result["examples"] if ex["consensus"] == "correct"]
 
         # Keep first 5 correct examples for few-shot prompting
         self.few_shot_examples = correct_examples[:5]
@@ -678,10 +714,7 @@ class ModelEval(BaseRecipe):
             # Use task-appropriate suffix depending on mode
             action = "classify" if self.response_format is None else "extract from"
             enhanced_prompt = (
-                parts[0]
-                + examples_text
-                + f"Now {action} this document:\n\n{{content}}"
-                + parts[1]
+                parts[0] + examples_text + f"Now {action} this document:\n\n{{content}}" + parts[1]
             )
         else:
             enhanced_prompt = prompt + examples_text
@@ -704,11 +737,18 @@ class ModelEval(BaseRecipe):
                 continue
         return False
 
-    def _create_response_validator(self, include_explanation: bool = False) -> type[BaseModel] | None:
-        """Auto-generate a Pydantic validator from the first label's JSON schema.
+    def _create_response_validator(
+        self, include_explanation: bool = False
+    ) -> type[BaseModel] | None:
+        """Auto-generate a Pydantic validator from label data.
 
-        Only used in label mode (``response_format=None``). Returns ``None`` when
-        labels are plain text or when the explanation format uses text rather than JSON.
+        Only used in label mode (``response_format=None``).
+
+        For JSON-object labels: builds a Pydantic model with one field per key.
+        For plain-text labels: builds a model with a ``Literal[...]`` enum field
+            covering every unique label value in the dataset, unless
+            ``disable_auto_response_format`` is set.
+        Returns ``None`` when no validator can be produced.
         """
         if not self.data:
             return None
@@ -717,7 +757,27 @@ class ModelEval(BaseRecipe):
         try:
             label_json = json.loads(first_label)
         except (json.JSONDecodeError, TypeError):
-            return None
+            # Plain-text label path
+            if self.config.disable_auto_response_format:
+                return None
+            unique_values = sorted(
+                {str(d.get("label", "")) for d in self.data if str(d.get("label", "")) != ""}
+            )
+            if not unique_values:
+                return None
+            literal_type = Literal[tuple(unique_values)]  # type: ignore[valid-type]
+            field_definitions: dict[str, Any] = {}
+            if include_explanation:
+                field_definitions["explanation"] = (str, Field(description="Reasoning explanation"))
+            field_definitions["label"] = (literal_type, Field(description="Predicted class label"))
+            model_name = "ResponseModelWithExplanation" if include_explanation else "ResponseModel"
+            response_model = create_model(model_name, **field_definitions)
+            logger.info(
+                "auto_enum_validator_created",
+                model_name=model_name,
+                num_values=len(unique_values),
+            )
+            return response_model
 
         if not isinstance(label_json, dict):
             return None
@@ -734,10 +794,13 @@ class ModelEval(BaseRecipe):
 
         from pydantic import Field as PydanticField
 
-        field_definitions: dict[str, Any] = {}
+        field_definitions = {}
 
         if include_explanation:
-            field_definitions["explanation"] = (str, PydanticField(description="Reasoning explanation"))
+            field_definitions["explanation"] = (
+                str,
+                PydanticField(description="Reasoning explanation"),
+            )
 
         for key, value in label_json.items():
             if isinstance(value, bool):
@@ -758,6 +821,25 @@ class ModelEval(BaseRecipe):
             fields=list(field_definitions.keys()),
         )
         return response_model
+
+    def _serialize_response_format_schema(self, rf: type[BaseModel] | None) -> str | None:
+        """Return a Python class-definition string for a dynamic Pydantic model.
+
+        Handles ``Literal[...]`` annotations produced by the auto-enum path.
+        Returns ``None`` when *rf* is ``None``.
+        """
+        if rf is None:
+            return None
+        lines = [f"class {rf.__name__}(BaseModel):"]
+        for field_name, annotation in rf.__annotations__.items():
+            if get_origin(annotation) is Literal:
+                args = ", ".join(repr(a) for a in get_args(annotation))
+                lines.append(f"    {field_name}: Literal[{args}]")
+            else:
+                lines.append(
+                    f"    {field_name}: {getattr(annotation, '__name__', str(annotation))}"
+                )
+        return "\n".join(lines)
 
     # -------------------------------------------------------------------------
     # Response format helpers (extraction mode)
@@ -929,7 +1011,7 @@ class ModelEval(BaseRecipe):
         async def _evaluate_single_model(
             index: int, model_config: Any
         ) -> tuple[int, Any, str, list, str | None]:
-            model_name = getattr(model_config, 'name', None) or model_config.label
+            model_name = getattr(model_config, "name", None) or model_config.label
             model_label = model_config.label or model_name
             manipulations = getattr(model_config, "prompt_manipulation", [])
 
@@ -952,7 +1034,9 @@ class ModelEval(BaseRecipe):
             else:
                 # Label mode: auto-generate validator from label data
                 include_explanation = Manipulation.explanation in manipulations
-                effective_rf = self._create_response_validator(include_explanation=include_explanation)
+                effective_rf = self._create_response_validator(
+                    include_explanation=include_explanation
+                )
 
             logger.info(
                 "evaluating_model",
@@ -982,12 +1066,15 @@ class ModelEval(BaseRecipe):
                     Manipulation.hallucination_filter in manipulations
                     and self.response_format is not None
                 ):
-                    async def _hallucination_filter(
-                        predicted_json, document, _model=model_name
-                    ):
+
+                    async def _hallucination_filter(predicted_json, document, _model=model_name):
                         return await filter_hallucinated_values(
-                            predicted_json, document.content, _model, self.client,
+                            predicted_json,
+                            document.content,
+                            _model,
+                            self.client,
                         )
+
                     post_extraction_filter = _hallucination_filter
 
                 multi_pass = 2 if Manipulation.multi_pass in manipulations else 1
@@ -1088,7 +1175,9 @@ class ModelEval(BaseRecipe):
             field_examples = decompose_few_shot_examples(self.few_shot_examples, split_info)
             sub_prompts = inject_few_shot_into_sub_prompts(sub_prompts, field_examples)
             sub_prompts = await cleanup_few_shot_sub_prompts(
-                sub_prompts, client=self.client, cleanup_model=rewrite_model,
+                sub_prompts,
+                client=self.client,
+                cleanup_model=rewrite_model,
             )
 
         params = model_config.params

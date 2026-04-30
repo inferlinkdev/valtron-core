@@ -118,15 +118,34 @@ Click **Next**. The wizard downloads (if needed) and analyzes your data before m
 
 ---
 
-## Step 5: Field-Level Metrics
+## Step 5: Response Format
 
-![Step 5: Field Metrics](/img/4_wizard_field_metrics.png)
+This step only appears when your labels are **plain text** (not JSON objects).
+
+The wizard displays the `Literal` enum that will be automatically generated from your label values and sent to the LLM as its required output schema — constraining responses to exactly the classes present in your data.
+
+Example display for a dataset with three label values:
+
+```python
+class ResponseModel(BaseModel):
+    label: Literal['negative', 'neutral', 'positive']
+```
+
+The list of detected values is shown below the class definition.
+
+If your dataset has more than 50 unique label values the wizard will not reach this step — the evaluation API will raise an error at runtime. In that case, set `disable_auto_response_format: true` in your config to use free-text mode instead (see [Config reference](../config-format#base-recipe-fields)).
+
+For JSON-structured labels, this step is skipped automatically.
+
+---
+
+## Step 6: Field-Level Metrics
 
 The wizard inspects your data labels to decide what grading options are available.
 
 ### Plain-text labels
 
-If labels are plain strings (e.g. `"yes"`, `"negative"`, `"New York"`), field-level grading is not available. The wizard proceeds with standard string-match accuracy.
+Field-level grading is not available for plain-text labels. The wizard proceeds using the auto-generated enum response format described in Step 5.
 
 ### JSON-structured labels
 
@@ -154,9 +173,7 @@ See [Field Metrics](../field-metrics) for a full reference.
 
 ---
 
-## Step 6: Review and Download
-
-![Step 6: Save Config](/img/5_wizard_save_config.png)
+## Step 7: Review and Download
 
 The wizard displays the generated configuration as editable JSON. You can tweak any value directly before saving.
 

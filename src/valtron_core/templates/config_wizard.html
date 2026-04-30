@@ -371,8 +371,9 @@
         <div class="progress-step" data-step="2">Test Models</div>
         <div class="progress-step" data-step="3">Prompt</div>
         <div class="progress-step" data-step="4">Training Data</div>
-        <div class="progress-step" data-step="5">Field Metrics</div>
-        <div class="progress-step" data-step="6">Review</div>
+        <div class="progress-step" data-step="5">Response Format</div>
+        <div class="progress-step" data-step="6">Field Metrics</div>
+        <div class="progress-step" data-step="7">Review</div>
     </div>
 
     <div class="content">
@@ -474,8 +475,21 @@
             </div>
         </div>
 
-        <!-- ── Step 5: Field Metrics ──────────────────────────────────────── -->
+        <!-- ── Step 5: Response Format ───────────────────────────────────── -->
         <div class="step" data-step="5">
+            <h2>Response Format</h2>
+            <p class="step-description">This enum will constrain model output to the label values detected in your training data.</p>
+            <div id="rf-count-badge" style="margin-bottom:12px;font-size:.9em;color:#8b949e"></div>
+            <pre id="rf-preview" style="background:#161b22;color:#e6edf3;padding:1rem;border-radius:6px;overflow:auto;font-size:.85em;border:1px solid #30363d"></pre>
+            <ul id="rf-enum-list" style="margin-top:12px;padding-left:1.4rem;color:#e6edf3;font-size:.9em"></ul>
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+                <button class="btn btn-primary" onclick="nextStep()">Next →</button>
+            </div>
+        </div>
+
+        <!-- ── Step 6: Field Metrics ──────────────────────────────────────── -->
+        <div class="step" data-step="6">
             <h2>Field-Level Metrics</h2>
             <p class="step-description" id="fm-description"></p>
 
@@ -538,8 +552,8 @@
             </div>
         </div>
 
-        <!-- ── Step 6: Review ─────────────────────────────────────────────── -->
-        <div class="step" data-step="6">
+        <!-- ── Step 7: Review ─────────────────────────────────────────────── -->
+        <div class="step" data-step="7">
             <h2>Review &amp; Download Configuration</h2>
             <p class="step-description">Your configuration is ready! You can edit it below or download it directly.</p>
             <div class="alert alert-success">✅ Configuration generated successfully! Save this file to use with the recipe.</div>
@@ -639,6 +653,7 @@ ollama pull mistral</pre></li>
    ════════════════════════════════════════════════════════════════ */
 let currentStep = 1;
 let analysisResult = null;
+let analysisIsJson = false;
 
 let config = {
     models: [],
@@ -797,7 +812,11 @@ function nextStep() {
     updateStepDisplay(currentStep + 1);
 }
 
-function prevStep() { updateStepDisplay(currentStep - 1); }
+function prevStep() {
+    // Skip the response format step when going back from field metrics if labels are JSON
+    if (currentStep === 6 && analysisIsJson) { updateStepDisplay(4); return; }
+    updateStepDisplay(currentStep - 1);
+}
 
 function updateStepDisplay(step) {
     document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
@@ -851,8 +870,10 @@ async function analyzeData() {
         if (!resp.ok) { alert('Error analyzing data: ' + result.error); return; }
 
         analysisResult = result;
+        analysisIsJson = !!result.is_json;
+        populateRfStep(result);
         populateFmStep(result);
-        updateStepDisplay(5);
+        updateStepDisplay(result.is_json ? 6 : 5);
     } catch (e) {
         alert('Error: ' + e.message);
     } finally {
@@ -861,7 +882,20 @@ async function analyzeData() {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   Step 5: populate field metrics UI
+   Step 5: populate response format preview
+   ════════════════════════════════════════════════════════════════ */
+function populateRfStep(result) {
+    const preview = result.response_format_preview || '';
+    const values = result.enum_values || [];
+    document.getElementById('rf-preview').textContent = preview;
+    document.getElementById('rf-count-badge').textContent =
+        values.length ? `${values.length} unique label value${values.length !== 1 ? 's' : ''} detected` : '';
+    const ul = document.getElementById('rf-enum-list');
+    ul.innerHTML = values.map(v => `<li>${v}</li>`).join('');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Step 6: populate field metrics UI
    ════════════════════════════════════════════════════════════════ */
 function populateFmStep(result) {
     const desc = document.getElementById('fm-description');
@@ -1155,7 +1189,7 @@ function readRow(rowEl) {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   Step 5 → Step 6: build final config
+   Step 6 → Step 7: build final config
    ════════════════════════════════════════════════════════════════ */
 function generateConfig() {
     const useYes = document.querySelector('input[name="use-fm"]:checked')?.value === 'yes';
@@ -1169,7 +1203,7 @@ function generateConfig() {
         delete outputConfig.few_shot;
     }
     document.getElementById('final-config').value = JSON.stringify(outputConfig, null, 2);
-    updateStepDisplay(6);
+    updateStepDisplay(7);
 }
 
 /* ════════════════════════════════════════════════════════════════

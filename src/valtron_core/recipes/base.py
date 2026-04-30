@@ -41,10 +41,10 @@ class BaseRecipe(ABC):
     _manipulations_applied: dict[str, list[Any]] | None
     _model_prompts: dict[str, str] | None
     _model_override_prompts: dict[str, str] | None
+    _response_format_schema: str | None
 
     @abstractmethod
-    def _get_field_metrics_config(self) -> FieldMetricsConfig | None:
-        ...
+    def _get_field_metrics_config(self) -> FieldMetricsConfig | None: ...
 
     def _preflight_check(self) -> None:
         """Run all pre-flight checks before any evaluation work begins.
@@ -140,6 +140,8 @@ class BaseRecipe(ABC):
             model_prompts=self._model_prompts,
             prompt_manipulations=self._manipulations_applied,
             model_override_prompts=self._model_override_prompts,
+            response_format_schema=getattr(self, "_response_format_schema", None),
+            disable_auto_response_format=self.config.disable_auto_response_format,
         )
         return run_dir
 
@@ -156,6 +158,7 @@ class BaseRecipe(ABC):
         if self.results is None:
             raise RuntimeError("Call evaluate() before save_html_report().")
         from valtron_core.models import Document
+
         documents = [
             Document(
                 id=str(d.get("id", "")),
@@ -196,6 +199,7 @@ class BaseRecipe(ABC):
         if self.results is None:
             raise RuntimeError("Call evaluate() before save_pdf_report().")
         from valtron_core.models import Document
+
         documents = [
             Document(
                 id=str(d.get("id", "")),

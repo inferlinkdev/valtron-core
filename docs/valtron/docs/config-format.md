@@ -17,6 +17,7 @@ The config controls which models to run, the prompt template, evaluation options
 | `temperature` | `float` | `0.0` | Default temperature for all models (can be overridden per model) |
 | `few_shot` | `object` | `null` | Few-shot generation config (see below) |
 | `field_metrics_config` | `object` | `null` | Field-level scoring for structured extraction (see below) |
+| `disable_auto_response_format` | `boolean` | `false` | Set `true` to disable auto-enum and use free-text mode. See [Classification mode](#classification-mode). |
 | `output_formats` | `array[string]` | `["html"]` | Report formats to generate. Acceptable formats include: `"html"`, `"pdf"` |
 
 ```json
@@ -29,6 +30,35 @@ The config controls which models to run, the prompt template, evaluation options
   "output_formats": ["html", "pdf"]
 }
 ```
+
+---
+
+## Classification mode
+
+When `label` fields in your dataset are plain strings (not JSON), Valtron automatically builds a `Literal` enum from all unique label values and uses it as the LLM's required output schema. This constrains the model to return one of the known classes exactly, reducing hallucinations and making correctness checking unambiguous.
+
+For a dataset with labels `"positive"`, `"negative"`, and `"neutral"`, the generated schema looks like:
+
+```python
+class ResponseModel(BaseModel):
+    label: Literal["negative", "neutral", "positive"]
+```
+
+The schema is serialized and stored in `metadata.json` under `response_format_schema` for every run.
+
+**Cardinality guard**: if your dataset has more than 50 unique label values, evaluation raises a `ValueError` before any LLM call is made.
+
+**Opt out**: set `disable_auto_response_format: true` to disable enum generation entirely. The LLM will return free text and correctness is determined by string equality. The >50-value cardinality guard is also suppressed.
+
+```json
+{
+  "disable_auto_response_format": true
+}
+```
+
+An explicit `response_format` passed to `ModelEval(...)` always takes priority; auto-enum logic is skipped entirely when one is provided.
+
+See also: [`label` field in Data Format](./data-format#label-format).
 
 ---
 
