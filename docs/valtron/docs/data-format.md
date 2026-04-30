@@ -4,6 +4,8 @@ sidebar_position: 3
 
 # Data Format
 
+This page covers input documents: how to structure your data before passing it to `ModelEval`. Once your data is ready, see [Config Format](./config-format) to configure the evaluation run.
+
 Valtron expects input data as a list of documents, each paired with an expected output (label). You can pass data as a Python list of dicts or as a path to a JSON file.
 
 Think of this as an experiment: the more diverse and representative your examples are, the more meaningful your results will be. Aim to include a broad mix of document types and edge cases that reflect real-world variation. This collection is your **random sample**.
@@ -178,3 +180,11 @@ The JSON file must be an array at the top level.
 - `id` values must be unique across your dataset. They are used as keys in the output files.
 - `metadata` fields appear in the detailed analysis page of the HTML report but are not passed to the model
 - There is no minimum or maximum document count, but more documents produce more reliable accuracy estimates
+
+---
+
+## What's next?
+
+- Set up your evaluation in [Config Format](./config-format)
+- For structured extraction with field-level scoring, see [Field Metrics](../field-metrics)
+- Run your evaluation: [Evaluation API](./recipes)

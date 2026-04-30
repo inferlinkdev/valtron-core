@@ -4,14 +4,14 @@ sidebar_position: 4
 
 # Config Format
 
-The config controls which models to run, the prompt template, evaluation options, and output settings. You can pass it as a Python dict or a path to a JSON file.
+The config controls which models to run, the prompt template, evaluation options, and output settings. You can pass it as a Python dict or a path to a JSON file. See [Data Format](./data-format) for the input schema and [Field Metrics](../field-metrics) for per-field scoring on structured extraction.
 
 ## Top-level fields
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `models` | `array` | required | List of model configs (see below) |
-| `prompt` | `string` | required | Prompt template; must contain `{content}` |
+| `prompt` | `string` | required | Prompt template with placeholders. Use `{content}` for string document content, or any named key (e.g. `{text}`, `{topic}`) when `content` is a dict. See [Data Format: content placeholders](./data-format#how-content-fills-your-prompt). |
 | `output_dir` | `string` | `null` | Directory to write results to |
 | `use_case` | `string` | `"evaluation"` | Describes your task. Used in the report header and passed directly to the LLM that generates the AI recommendation (e.g. `"sentiment classification"`, `"medical entity extraction"`) |
 | `temperature` | `float` | `0.0` | Default temperature for all models (can be overridden per model) |
@@ -242,3 +242,11 @@ experiment = ModelEval(config={"models": [...], "prompt": "..."}, data=data)
 ```python
 experiment = ModelEval(config="./config.json", data="./data.json")
 ```
+
+---
+
+## What's next?
+
+- Run your evaluation: [Evaluation API](./recipes)
+- Apply prompt strategies per model: [Optimizers](../optimizers)
+- For field-level scoring on structured extraction: [Field Metrics](../field-metrics)

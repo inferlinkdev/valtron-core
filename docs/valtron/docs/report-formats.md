@@ -4,7 +4,7 @@ sidebar_position: 7
 
 # Report Formats
 
-Valtron generates HTML and/or PDF reports after evaluation. Reports are written to `output_dir` alongside the raw JSON result files.
+Valtron generates HTML and/or PDF reports after evaluation. Reports are written to `output_dir` alongside the raw JSON result files. For the raw metrics and JSON schema behind the report data, see [Evaluation Results](./evaluation-results).
 
 ## Enabling report formats
 
@@ -30,8 +30,8 @@ Default is `["html"]`.
 
 The HTML report consists of two files:
 
-- **`evaluation_report.html`** — main interactive report
-- **`detailed_analysis.html`** — per-document breakdown
+- **`evaluation_report.html`**: main interactive report
+- **`detailed_analysis.html`**: per-document breakdown
 
 ### Main report sections
 
@@ -76,8 +76,8 @@ The HTML report consists of two files:
 
 The PDF report is a single file `evaluation_report.pdf` containing all the same information as the HTML report, optimized for print:
 
-- **Static charts** — accuracy, cost, and time charts rendered as embedded PNG images (matplotlib, pastel color theme)
-- **Generated via ReportLab** — pure Python, no system dependencies required
+- **Static charts**: accuracy, cost, and time charts rendered as embedded PNG images (matplotlib, pastel color theme)
+- **Generated via ReportLab**: pure Python, no system dependencies required
 - Suitable for sharing or archiving results
 
 ---
@@ -90,10 +90,7 @@ The PDF report is a single file `evaluation_report.pdf` containing all the same 
 | `models/<label>.json` | Yes | Per-model metrics and predictions |
 | `evaluation_report.html` | With `"html"` | Main interactive report |
 | `detailed_analysis.html` | With `"html"` | Per-document breakdown |
-| `chart_accuracy.png` | With `"html"` | Accuracy bar chart (used by HTML) |
-| `chart_cost.png` | With `"html"` | Cost bar chart |
-| `chart_time.png` | With `"html"` | Latency bar chart |
-| `evaluation_report.pdf` | With `"pdf"` | Full printable report |
+| `evaluation_report.pdf` | With `"pdf"` | Full printable report (charts rendered internally via matplotlib, not written to disk) |
 
 ---
 
@@ -111,3 +108,11 @@ experiment.save_html_report("./results")
 # PDF only
 experiment.save_pdf_report("./results")
 ```
+
+---
+
+## What's next?
+
+- See working end-to-end examples: [Examples](../examples/)
+- Add a local model with no API cost: [Self-Hosted Models](../self-hosted-models)
+- Train a zero-cost local classifier: [Transformer Models](../transformer-models)

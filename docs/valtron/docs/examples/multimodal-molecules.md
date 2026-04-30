@@ -72,4 +72,4 @@ When `content` is empty, `{content}` resolves to an empty string, so the prompt 
 ## What's next
 
 - Swap `content` for a short textual description if you want to combine text and image context.
-- Use `response_format` with a Pydantic schema to extract structured answers (e.g. molecular formula + carbon count together). See [Response Format](../response-format).
+- Use `response_format` with a Pydantic schema to extract structured answers (e.g. molecular formula + carbon count together). See [Evaluation Results](../evaluation-results).
