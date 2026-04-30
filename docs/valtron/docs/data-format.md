@@ -17,42 +17,43 @@ Each item in the data list has the following fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | `string` | Yes | Unique identifier for the document |
-| `content` | `string \| object` | Yes | The text the model will evaluate, or a `{key: value}` map of named prompt variables |
+| `content` | `string \| object` | Yes | Text filled into your [configured prompt](./config-format): either a single string or a `{key: value}` map for multiple placeholders |
 | `label` | `string` | Yes | The expected/ground-truth output |
 | `metadata` | `object` | No | Arbitrary key-value pairs; displayed in the report |
 | `attachments` | `array[string]` | No | URLs or local file paths appended to the prompt |
+
+### How content fills your prompt
+
+**String content** - When `content` is a string, your prompt template is expected to have a `{content}` placeholder:
 
 ```json
 [
   {
     "id": "doc-001",
-    "content": "The patient presented with acute chest pain and shortness of breath.",
-    "label": "cardiology",
-    "metadata": {
-      "source": "hospital-a",
-      "year": 2024
-    }
+    "content": "Absolutely love this product!",
+    "label": "positive"
   },
   {
     "id": "doc-002",
-    "content": "Follow-up appointment for knee replacement surgery.",
-    "label": "orthopedics"
+    "content": "Terrible experience, would not recommend.",
+    "label": "negative"
   }
 ]
 ```
 
-### How content fills your prompt
-
-**String content** - the value is substituted at the `{content}` placeholder in your prompt template:
+Example prompt:
 
 ```
-Prompt:  Classify the sentiment of this review: {content}
-content: "Absolutely love this product!"
-
-LLM sees: "Classify the sentiment of this review: Absolutely love this product!"
+Classify the sentiment of this review: {content}
 ```
 
-**Dict content** - each key replaces its matching `{placeholder}`. Pass multiple variables alongside your document text by setting `content` to a key/value object:
+What LLM receives as input for `doc-001`
+
+```
+Classify the sentiment of this review: Absolutely love this product!
+```
+
+**Dict content** - When `content` is a dict, your prompt is expected to have a placeholder for each key in the content object:
 
 ```json
 [
@@ -75,17 +76,17 @@ LLM sees: "Classify the sentiment of this review: Absolutely love this product!"
 ]
 ```
 
-Matching prompt template:
+Example prompt:
 
 ```
 Text: {text}
 Question: Is the topic of this text '{topic}'? Respond with: YES or NO only.
 ```
 
-Result for doc-001:
+What LLM receives as input for `doc-001`
 
 ```
-LLM sees: "Text: The annual rainfall in the Amazon basin exceeds 2,000 mm.
+"Text: The annual rainfall in the Amazon basin exceeds 2,000 mm.
 Question: Is the topic of this text 'climate'? Respond with: YES or NO only."
 ```
 
@@ -100,7 +101,7 @@ The `label` field depends on the evaluation mode:
 **Label/classification mode** (no `response_format` in config):
 - `label` is a plain string matching one of the known output classes.
 - Valtron automatically generates a `Literal` enum from all unique label values in your dataset and uses it as the required output schema. This constrains the LLM to return one of the known classes exactly, reducing hallucinations and making correctness checking unambiguous.
-- If your dataset has more than 50 unique label values, evaluation raises an error before any LLM call. Set [`disable_auto_response_format: true`](./config-format#classification-mode) in your config to use free-text mode instead.
+- If your dataset has more than 50 unique label values, the evaluation raises an error before any LLM call. Set [`disable_auto_response_format: true`](./config-format#classification-mode) in your config to have the LLM respond with free text.
 
 ```json
 {"id": "1", "content": "...", "label": "positive"}

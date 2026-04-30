@@ -46,9 +46,9 @@ class ResponseModel(BaseModel):
 
 The schema is serialized and stored in `metadata.json` under `response_format_schema` for every run.
 
-**Cardinality guard**: if your dataset has more than 50 unique label values, evaluation raises a `ValueError` before any LLM call is made.
+If your dataset has more than 50 unique label values, evaluation raises a `ValueError` before any LLM call is made.
 
-**Opt out**: set `disable_auto_response_format: true` to disable enum generation entirely. The LLM will return free text and correctness is determined by string equality. The >50-value cardinality guard is also suppressed.
+Set `disable_auto_response_format: true` to disable enum generation entirely. The LLM will return free text and correctness is determined by string equality. The >50-value cardinality guard is also suppressed.
 
 ```json
 {
@@ -56,7 +56,7 @@ The schema is serialized and stored in `metadata.json` under `response_format_sc
 }
 ```
 
-An explicit `response_format` passed to `ModelEval(...)` always takes priority; auto-enum logic is skipped entirely when one is provided.
+An explicit `response_format` passed to `ModelEval(...)` always takes priority over any inferred response format.
 
 See also: [`label` field in Data Format](./data-format#label-format).
 

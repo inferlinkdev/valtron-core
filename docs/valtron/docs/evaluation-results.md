@@ -10,7 +10,7 @@ This page covers what `ModelEval` produces: the metrics schema, the output direc
 
 ### Label / classification mode
 
-Used when no `response_format` is passed to `ModelEval`. The model is expected to return a plain string that matches the `label` field in your data.
+Used when no `response_format` is passed to `ModelEval`. Valtron automatically infers a response format from your dataset by building a `Literal` enum of all unique label values, constraining the model to return one of the known classes exactly. When [`disable_auto_response_format: true`](./config-format#classification-mode) is set, this inference is skipped and the model returns free text compared against the label by string equality.
 
 ```python
 experiment = ModelEval(config=config, data=data)
