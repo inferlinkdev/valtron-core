@@ -453,8 +453,13 @@
             <p class="step-description">Upload or link to your labeled dataset. This will be used for evaluation and few-shot learning.</p>
             <div class="form-group">
                 <label for="data-url">Data URL or Path</label>
-                <input type="url" id="data-url" placeholder="https://example.com/data.json or ./examples/my_data.json" />
-                <p class="step-description" style="margin-top:8px">
+                <div style="display:flex;gap:8px;align-items:center">
+                    <input type="text" id="data-url" placeholder="https://example.com/data.json or ./examples/my_data.json" style="flex:1" />
+                    <button type="button" class="btn btn-secondary" style="white-space:nowrap;flex-shrink:0" onclick="document.getElementById('file-picker').click()">Browse...</button>
+                </div>
+                <input type="file" id="file-picker" accept=".json" style="display:none" onchange="handleFilePick(this)" />
+                <div id="upload-status" style="margin-top:6px;font-size:0.85em;color:#8b949e;min-height:1.2em">Browse supports files up to 500 MB. For larger files, enter the path directly.</div>
+                <p class="step-description" style="margin-top:4px">
                     <a href="#" class="help-link" onclick="showModal('format-modal');return false">📋 View required data format</a>
                 </p>
             </div>
@@ -478,7 +483,7 @@
         <!-- ── Step 5: Response Format ───────────────────────────────────── -->
         <div class="step" data-step="5">
             <h2>Response Format</h2>
-            <p class="step-description">This enum will constrain model output to the label values detected in your training data.</p>
+            <p class="step-description">The response format is inferred automatically from your JSON data. For plain-text labels with up to 50 unique values, a <code>Literal</code> enum constrains model output to the known classes. For more than 50 unique values, the field falls back to <code>str</code> and the model returns free text.</p>
             <div id="rf-count-badge" style="margin-bottom:12px;font-size:.9em;color:#8b949e"></div>
             <pre id="rf-preview" style="background:#161b22;color:#e6edf3;padding:1rem;border-radius:6px;overflow:auto;font-size:.85em;border:1px solid #30363d"></pre>
             <ul id="rf-enum-list" style="margin-top:12px;padding-left:1.4rem;color:#e6edf3;font-size:.9em"></ul>
@@ -493,14 +498,14 @@
             <h2>Field-Level Metrics</h2>
             <p class="step-description" id="fm-description"></p>
 
-            <!-- Plain-text labels: no field metrics available -->
+            <!-- No usable labels detected -->
             <div id="no-json-section" style="display:none">
                 <div class="alert alert-info">
-                    Your training data labels are plain text — field-level grading is only available for JSON-structured labels.
+                    Could not detect label values in your training data. Field-level grading requires either JSON-structured labels or plain-text enum labels.
                 </div>
             </div>
 
-            <!-- JSON labels detected -->
+            <!-- JSON labels or plain-text enum labels detected -->
             <div id="json-detected-section" style="display:none">
                 <div class="fm-question">
                     <p>Configure per-field grading to get detailed insights on which fields each model gets right or wrong?</p>
@@ -653,7 +658,6 @@ ollama pull mistral</pre></li>
    ════════════════════════════════════════════════════════════════ */
 let currentStep = 1;
 let analysisResult = null;
-let analysisIsJson = false;
 
 let config = {
     models: [],
@@ -813,8 +817,6 @@ function nextStep() {
 }
 
 function prevStep() {
-    // Skip the response format step when going back from field metrics if labels are JSON
-    if (currentStep === 6 && analysisIsJson) { updateStepDisplay(4); return; }
     updateStepDisplay(currentStep - 1);
 }
 
@@ -827,6 +829,35 @@ function updateStepDisplay(step) {
         else if (i + 1 === step) s.classList.add('active');
     });
     currentStep = step;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Step 4: file picker upload
+   ════════════════════════════════════════════════════════════════ */
+async function handleFilePick(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const status = document.getElementById('upload-status');
+    status.textContent = `Uploading ${file.name}…`;
+    status.style.color = '#8b949e';
+    const form = new FormData();
+    form.append('file', file);
+    try {
+        const resp = await fetch('/api/upload-data', { method: 'POST', body: form });
+        const result = await resp.json();
+        if (!resp.ok) {
+            status.textContent = 'Upload failed: ' + result.error;
+            status.style.color = '#f85149';
+            return;
+        }
+        document.getElementById('data-url').value = result.path;
+        status.textContent = `Uploaded — ${result.num_examples} examples`;
+        status.style.color = '#3fb950';
+    } catch (e) {
+        status.textContent = 'Upload error: ' + e.message;
+        status.style.color = '#f85149';
+    }
+    input.value = '';
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -870,10 +901,9 @@ async function analyzeData() {
         if (!resp.ok) { alert('Error analyzing data: ' + result.error); return; }
 
         analysisResult = result;
-        analysisIsJson = !!result.is_json;
         populateRfStep(result);
         populateFmStep(result);
-        updateStepDisplay(result.is_json ? 6 : 5);
+        updateStepDisplay(5);
     } catch (e) {
         alert('Error: ' + e.message);
     } finally {
@@ -902,7 +932,7 @@ function populateFmStep(result) {
     document.getElementById('no-json-section').style.display    = 'none';
     document.getElementById('json-detected-section').style.display = 'none';
 
-    if (!result.is_json) {
+    if (!result.is_json && !result.enum_values?.length) {
         document.getElementById('no-json-section').style.display = 'block';
         desc.textContent = result.num_examples
             ? `Detected ${result.num_examples} examples. Labels are plain text.`
@@ -911,16 +941,23 @@ function populateFmStep(result) {
     }
 
     document.getElementById('json-detected-section').style.display = 'block';
-    desc.textContent = `Detected ${result.num_examples} examples. Labels are JSON — configure how each field is graded.`;
 
     // Reset radio to "No" and hide editor
     document.querySelectorAll('input[name="use-fm"]').forEach(r => { r.checked = r.value === 'no'; });
     document.getElementById('fm-editor').classList.remove('visible');
 
-    // Build the tree (so it's ready when the user picks Yes)
-    const labelValue = JSON.parse(result.sample_label);
-    const fieldConfig = result.field_config;   // raw from server (nulls present)
-    buildTree(document.getElementById('fm-tree'), fieldConfig, labelValue);
+    if (result.is_json) {
+        desc.textContent = `Detected ${result.num_examples} examples. Labels are JSON — configure how each field is graded.`;
+        const labelValue = JSON.parse(result.sample_label);
+        buildTree(document.getElementById('fm-tree'), result.field_config, labelValue);
+    } else {
+        desc.textContent = `Detected ${result.num_examples} examples. Labels are plain text — configure how the label field is graded.`;
+        const syntheticConfig = {
+            type: 'object',
+            fields: { label: { type: 'leaf', metric_config: { metric: 'exact' }, weight: 1.0, optional: false } }
+        };
+        buildTree(document.getElementById('fm-tree'), syntheticConfig, { label: result.sample_label });
+    }
 }
 
 function onFmChoice(radio) {
@@ -1193,7 +1230,7 @@ function readRow(rowEl) {
    ════════════════════════════════════════════════════════════════ */
 function generateConfig() {
     const useYes = document.querySelector('input[name="use-fm"]:checked')?.value === 'yes';
-    if (useYes && analysisResult && analysisResult.is_json) {
+    if (useYes && analysisResult) {
         config.field_metrics_config = { config: readTree() };
     } else {
         delete config.field_metrics_config;

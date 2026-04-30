@@ -281,9 +281,19 @@ class TestStructuredManipulations:
 
 class TestGetFieldMetricsConfig:
 
-    def test_returns_none_for_plain_text_labels(self):
+    def test_returns_none_for_plain_text_labels_without_resolved_rf(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "positive"}])
         assert eval_._get_field_metrics_config() is None
+
+    def test_infers_label_field_for_plain_text_labels_with_resolved_rf(self):
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": lbl} for lbl in ["yes", "no"]],
+        )
+        resolved_rf = eval_._resolve_response_format()
+        result = eval_._get_field_metrics_config(resolved_rf)
+        assert result is not None
+        assert "label" in result.config["fields"]
 
     def test_returns_none_for_empty_data(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[])
@@ -312,6 +322,37 @@ class TestGetFieldMetricsConfig:
         result = eval_._get_field_metrics_config()
         assert result is not None
         assert result.config == explicit["config"]
+
+
+class TestResolveResponseFormat:
+
+    @pytest.mark.unit
+    def test_returns_provided_response_format(self):
+        class MySchema(BaseModel):
+            field: str
+
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[], response_format=MySchema)
+        assert eval_._resolve_response_format() is MySchema
+
+    @pytest.mark.unit
+    def test_auto_infers_literal_model_for_plain_text_labels(self):
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": lbl} for lbl in ["yes", "no"]],
+        )
+        rf = eval_._resolve_response_format()
+        assert rf is not None
+        assert "label" in rf.model_fields
+
+    @pytest.mark.unit
+    def test_auto_infers_typed_model_for_json_labels(self):
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": '{"sentiment": "positive"}'}],
+        )
+        rf = eval_._resolve_response_format()
+        assert rf is not None
+        assert "sentiment" in rf.model_fields
 
 
 # ===========================================================================
@@ -464,9 +505,11 @@ class TestCreateResponseValidator:
         assert "name" in validator.model_fields
         assert "age" in validator.model_fields
 
-    def test_plain_text_labels_return_none(self):
+    def test_plain_text_labels_create_literal_validator(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "positive"}])
-        assert eval_._create_response_validator() is None
+        validator = eval_._create_response_validator()
+        assert validator is not None
+        assert "label" in validator.model_fields
 
     def test_explanation_with_json_schema_in_prompt_adds_field(self):
         config = {
@@ -1081,9 +1124,15 @@ class TestAutoEnumResponseValidator:
         assert set(args) == {"yes", "no"}
 
     @pytest.mark.unit
-    def test_returns_none_when_disabled(self):
-        eval_ = self._eval(["positive", "negative"], {"disable_auto_response_format": True})
-        assert eval_._create_response_validator() is None
+    def test_plain_text_labels_use_str_when_over_50(self):
+        labels = [f"label_{i}" for i in range(51)]
+        eval_ = self._eval(labels)
+        rf = eval_._create_response_validator()
+        assert rf is not None
+        import typing
+        annotation = rf.__annotations__["label"]
+        assert typing.get_origin(annotation) is not typing.Literal
+        assert annotation is str
 
     @pytest.mark.unit
     def test_json_labels_unaffected(self):
@@ -1099,6 +1148,21 @@ class TestAutoEnumResponseValidator:
         assert eval_._create_response_validator() is None
 
     @pytest.mark.unit
+    def test_dict_label_detected_as_json_not_plain_text(self):
+        # Labels that are native Python dicts (not pre-serialized strings) must be
+        # converted to JSON strings before parsing, matching the wizard's behaviour.
+        data = [
+            {"content": "T1", "label": {"sentiment": "positive", "confidence": 0.9}},
+            {"content": "T2", "label": {"sentiment": "negative", "confidence": 0.7}},
+        ]
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=data)
+        rf = eval_._create_response_validator()
+        assert rf is not None
+        assert "sentiment" in rf.__annotations__, (
+            "dict label should be detected as JSON, not turned into a Literal enum"
+        )
+
+    @pytest.mark.unit
     def test_explicit_response_format_takes_priority(self):
         class MySchema(BaseModel):
             category: str
@@ -1110,61 +1174,12 @@ class TestAutoEnumResponseValidator:
 
 
 # ===========================================================================
-# Preflight: auto-enum cardinality guard
-# ===========================================================================
-
-
-class TestAutoEnumPreflight:
-    """_preflight_check raises when auto-enum would exceed 50 unique values."""
-
-    @pytest.mark.unit
-    def test_raises_when_more_than_50_unique_labels(self):
-        labels = [f"label_{i}" for i in range(51)]
-        data = [{"content": "T", "label": lbl} for lbl in labels]
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=data)
-        with pytest.raises(ValueError, match="51 unique enum values"):
-            eval_._preflight_check()
-
-    @pytest.mark.unit
-    def test_passes_when_exactly_50_unique_labels(self):
-        labels = [f"label_{i}" for i in range(50)]
-        data = [{"content": "T", "label": lbl} for lbl in labels]
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=data)
-        eval_._preflight_check()  # should not raise
-
-    @pytest.mark.unit
-    def test_disabled_flag_suppresses_error(self):
-        labels = [f"label_{i}" for i in range(51)]
-        data = [{"content": "T", "label": lbl} for lbl in labels]
-        cfg = {**CLASSIFY_CONFIG, "disable_auto_response_format": True}
-        eval_ = ModelEval(config=cfg, data=data)
-        eval_._preflight_check()  # should not raise
-
-    @pytest.mark.unit
-    def test_explicit_response_format_suppresses_error(self):
-        class MySchema(BaseModel):
-            category: str
-
-        labels = [f"label_{i}" for i in range(51)]
-        data = [{"content": "T", "label": lbl} for lbl in labels]
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=data, response_format=MySchema)
-        eval_._preflight_check()  # should not raise
-
-    @pytest.mark.unit
-    def test_json_labels_not_subject_to_cardinality_check(self):
-        labels = [f'{{"key": "value_{i}"}}' for i in range(51)]
-        data = [{"content": "T", "label": lbl} for lbl in labels]
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=data)
-        eval_._preflight_check()  # should not raise (JSON labels, not plain-text)
-
-
-# ===========================================================================
 # Response format schema serialization
 # ===========================================================================
 
 
 class TestSerializeResponseFormatSchema:
-    """_serialize_response_format_schema produces correct class-def strings."""
+    """_serialize_response_format_schema produces a Pydantic JSON Schema dict."""
 
     @pytest.mark.unit
     def test_returns_none_for_none(self):
@@ -1172,30 +1187,29 @@ class TestSerializeResponseFormatSchema:
         assert eval_._serialize_response_format_schema(None) is None
 
     @pytest.mark.unit
-    def test_literal_field_rendered_correctly(self):
+    def test_literal_field_produces_enum_in_schema(self):
         eval_ = ModelEval(
             config=CLASSIFY_CONFIG,
             data=[{"content": "T", "label": lbl} for lbl in ["yes", "no"]],
         )
         rf = eval_._create_response_validator()
         assert rf is not None
-        schema_str = eval_._serialize_response_format_schema(rf)
-        assert schema_str is not None
-        assert "class ResponseModel(BaseModel):" in schema_str
-        assert "label: Literal[" in schema_str
-        assert "'no'" in schema_str
-        assert "'yes'" in schema_str
+        schema = eval_._serialize_response_format_schema(rf)
+        assert isinstance(schema, dict)
+        assert schema["title"] == "ResponseModel"
+        enum_values = schema["properties"]["label"]["enum"]
+        assert set(enum_values) == {"no", "yes"}
 
     @pytest.mark.unit
-    def test_non_literal_field_uses_type_name(self):
+    def test_non_literal_field_produces_type_string(self):
         from pydantic import create_model, Field
 
         DynModel = create_model("DynModel", name=(str, Field(description="Name")))
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
-        schema_str = eval_._serialize_response_format_schema(DynModel)
-        assert schema_str is not None
-        assert "class DynModel(BaseModel):" in schema_str
-        assert "name: str" in schema_str
+        schema = eval_._serialize_response_format_schema(DynModel)
+        assert isinstance(schema, dict)
+        assert schema["title"] == "DynModel"
+        assert schema["properties"]["name"]["type"] == "string"
 
 
 # ===========================================================================
@@ -1217,22 +1231,25 @@ class TestResponseFormatSchemaInMetadata:
         eval_._manipulations_applied = {"gpt-4o-mini": []}
         eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}"}
         eval_._model_override_prompts = {}
-        eval_._response_format_schema = (
-            "class ResponseModel(BaseModel):\n    label: Literal['neg', 'pos']"
-        )
+        eval_._response_format_schema = {
+            "title": "ResponseModel",
+            "type": "object",
+            "properties": {"label": {"enum": ["neg", "pos"], "title": "Label", "type": "string"}},
+            "required": ["label"],
+        }
 
         eval_.save_experiment_results()
 
-        runs = list(tmp_path.iterdir())
-        assert runs, "No run directory written"
-        metadata = json.loads((runs[0] / "metadata.json").read_text())
+        metadata = json.loads((tmp_path / "metadata.json").read_text())
         assert "response_format_schema" in metadata
-        assert metadata["response_format_schema"] is not None
-        assert "Literal" in metadata["response_format_schema"]
+        schema = metadata["response_format_schema"]
+        assert isinstance(schema, dict)
+        assert schema["title"] == "ResponseModel"
+        assert set(schema["properties"]["label"]["enum"]) == {"neg", "pos"}
 
     @pytest.mark.unit
-    def test_schema_null_when_disabled(self, tmp_path):
-        cfg = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path), "disable_auto_response_format": True}
+    def test_schema_null_when_explicitly_none(self, tmp_path):
+        cfg = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path)}
         eval_ = ModelEval(
             config=cfg,
             data=[{"content": "T", "label": "pos"}],
@@ -1245,7 +1262,5 @@ class TestResponseFormatSchemaInMetadata:
 
         eval_.save_experiment_results()
 
-        runs = list(tmp_path.iterdir())
-        metadata = json.loads((runs[0] / "metadata.json").read_text())
+        metadata = json.loads((tmp_path / "metadata.json").read_text())
         assert metadata["response_format_schema"] is None
-        assert "gpt-4o-new" in eval_._manipulations_applied

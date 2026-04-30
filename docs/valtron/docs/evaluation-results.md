@@ -10,7 +10,7 @@ This page covers what `ModelEval` produces: the metrics schema, the output direc
 
 ### Label / classification mode
 
-Used when no `response_format` is passed to `ModelEval`. Valtron automatically infers a response format from your dataset by building a `Literal` enum of all unique label values, constraining the model to return one of the known classes exactly. When [`disable_auto_response_format: true`](./config-format#classification-mode) is set, this inference is skipped and the model returns free text compared against the label by string equality.
+Used when no `response_format` is passed to `ModelEval`. Valtron automatically infers a response format from your dataset by building a `Literal` enum of all unique label values (up to 50), constraining the model to return one of the known classes exactly. For datasets with more than 50 unique label values, Valtron falls back to `label: str` and the model returns free text compared against the label by string equality.
 
 ```python
 experiment = ModelEval(config=config, data=data)
@@ -103,7 +103,7 @@ Contains experiment-level information:
   "timestamp": "2024-01-15T10:30:00",
   "use_case": "sentiment classification",
   "original_prompt": "Classify the sentiment: {content}\n\nSentiment:",
-  "field_config": { ... },
+  "field_metrics_config": { "config": { ... } },
   "documents": [
     {
       "id": "1",

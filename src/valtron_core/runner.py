@@ -42,8 +42,7 @@ def save_run_dir(
     model_prompts: "dict[str, str] | None" = None,
     prompt_manipulations: "dict[str, list[str]] | None" = None,
     model_override_prompts: "dict[str, str] | None" = None,
-    response_format_schema: "str | None" = None,
-    disable_auto_response_format: bool = False,
+    response_format_schema: "dict[str, Any] | None" = None,
 ) -> Path:
     """Write evaluation results to the canonical run directory layout.
 
@@ -78,9 +77,8 @@ def save_run_dir(
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
             "use_case": use_case,
             "original_prompt": original_prompt,
-            "field_config": field_config,
+            "field_metrics_config": {"config": field_config} if field_config else None,
             "response_format_schema": response_format_schema,
-            "disable_auto_response_format": disable_auto_response_format,
             "documents": documents,
         }
         with open(metadata_path, "w") as f:
@@ -345,7 +343,7 @@ class EvaluationRunner:
                 prompt_template=model_data.get("prompt_template", ""),
                 model=model_name,
                 llm_config=model_data.get("llm_config", {}),
-                field_config=meta.get("field_config"),
+                field_config=(meta.get("field_metrics_config") or {}).get("config"),
                 status=model_data.get("status", "completed"),
             )
             if not result.metrics and result.predictions:
@@ -360,9 +358,8 @@ class EvaluationRunner:
             "original_prompt": meta.get("original_prompt"),
             "use_case": meta.get("use_case", "general purpose"),
             "timestamp": meta.get("timestamp"),
-            "field_config": meta.get("field_config"),
+            "field_config": (meta.get("field_metrics_config") or {}).get("config"),
             "response_format_schema": meta.get("response_format_schema"),
-            "disable_auto_response_format": meta.get("disable_auto_response_format", False),
         }
         console.print(f"[green]Loaded {len(results)} model results from {run_dir}[/green]")
         return results, metadata_out

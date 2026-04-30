@@ -18,7 +18,7 @@ class HtmlReportGenerator(_ReportBase):
         self,
         results: list[EvaluationResult],
         use_case: str = "general purpose",
-    ) -> str:
+    ) -> str | None:
         """Generate LLM-powered recommendation for best model."""
         metrics_summary = []
         for result in results:
@@ -62,7 +62,7 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
 
             return response.choices[0].message.content.strip()
         except Exception as e:
-            return f"Could not generate recommendation: {str(e)}"
+            return None
 
     def _encode_image(self, image_path: Path) -> str:
         """Encode image to base64 for embedding in HTML."""

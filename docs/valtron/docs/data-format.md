@@ -101,7 +101,7 @@ The `label` field depends on the evaluation mode:
 **Label/classification mode** (no `response_format` in config):
 - `label` is a plain string matching one of the known output classes.
 - Valtron automatically generates a `Literal` enum from all unique label values in your dataset and uses it as the required output schema. This constrains the LLM to return one of the known classes exactly, reducing hallucinations and making correctness checking unambiguous.
-- If your dataset has more than 50 unique label values, the evaluation raises an error before any LLM call. Set [`disable_auto_response_format: true`](./config-format#classification-mode) in your config to have the LLM respond with free text.
+- If your dataset has more than 50 unique label values, Valtron falls back to `label: str` and the LLM returns free text compared against the label by string equality.
 
 ```json
 {"id": "1", "content": "...", "label": "positive"}

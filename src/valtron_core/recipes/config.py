@@ -129,12 +129,6 @@ class BaseRecipeConfig(BaseModel):
     few_shot: FewShotConfig | None = None
     field_metrics_config: dict[str, Any] | None = None
 
-    # When True, disables automatic Literal-enum response_format generation for
-    # plain-text label datasets. The LLM returns free text and correctness is
-    # checked via string equality. Also suppresses the >50-unique-values preflight
-    # error.
-    disable_auto_response_format: bool = False
-
     # Saving behaviour when using run() — individual save_*() methods always work
     # regardless of this setting.
     output_formats: list[str] = ["html"]

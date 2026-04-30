@@ -17,7 +17,6 @@ The config controls which models to run, the prompt template, evaluation options
 | `temperature` | `float` | `0.0` | Default temperature for all models (can be overridden per model) |
 | `few_shot` | `object` | `null` | Few-shot generation config (see below) |
 | `field_metrics_config` | `object` | `null` | Field-level scoring for structured extraction (see below) |
-| `disable_auto_response_format` | `boolean` | `false` | Set `true` to disable auto-enum and use free-text mode. See [Classification mode](#classification-mode). |
 | `output_formats` | `array[string]` | `["html"]` | Report formats to generate. Acceptable formats include: `"html"`, `"pdf"` |
 
 ```json
@@ -44,17 +43,24 @@ class ResponseModel(BaseModel):
     label: Literal["negative", "neutral", "positive"]
 ```
 
-The schema is serialized and stored in `metadata.json` under `response_format_schema` for every run.
-
-If your dataset has more than 50 unique label values, evaluation raises a `ValueError` before any LLM call is made.
-
-Set `disable_auto_response_format: true` to disable enum generation entirely. The LLM will return free text and correctness is determined by string equality. The >50-value cardinality guard is also suppressed.
+The active schema is serialized as a standard [Pydantic JSON Schema](https://docs.pydantic.dev/latest/concepts/json_schema/) object and stored in `metadata.json` under `response_format_schema` for every run:
 
 ```json
 {
-  "disable_auto_response_format": true
+  "title": "ResponseModel",
+  "type": "object",
+  "properties": {
+    "label": {
+      "enum": ["negative", "neutral", "positive"],
+      "title": "Label",
+      "type": "string"
+    }
+  },
+  "required": ["label"]
 }
 ```
+
+For datasets with more than 50 unique label values, Valtron automatically falls back to `label: str` instead of a `Literal` enum. The LLM returns free text and correctness is determined by string equality.
 
 An explicit `response_format` passed to `ModelEval(...)` always takes priority over any inferred response format.
 
@@ -155,20 +161,22 @@ Quick example for a schema like `{"name": str, "institutions": [{"city": str, "c
 ```json
 {
   "field_metrics_config": {
-    "type": "object",
-    "fields": {
-      "name": {
-        "type": "leaf",
-        "metric_config": {
-          "metric": "comparator",
-          "params": {"element_compare": "text_similarity", "text_similarity_threshold": 0.8}
-        }
-      },
-      "institutions": {
-        "type": "list",
-        "fields": {
-          "city": {"type": "leaf", "metric_config": {"metric": "exact"}},
-          "country": {"type": "leaf", "metric_config": {"metric": "exact"}}
+    "config": {
+      "type": "object",
+      "fields": {
+        "name": {
+          "type": "leaf",
+          "metric_config": {
+            "metric": "comparator",
+            "params": {"element_compare": "text_similarity", "text_similarity_threshold": 0.8}
+          }
+        },
+        "institutions": {
+          "type": "list",
+          "fields": {
+            "city": {"type": "leaf", "metric_config": {"metric": "exact"}},
+            "country": {"type": "leaf", "metric_config": {"metric": "exact"}}
+          }
         }
       }
     }

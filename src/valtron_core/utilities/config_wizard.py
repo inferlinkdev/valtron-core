@@ -12,6 +12,7 @@ from flask_cors import CORS
 
 app = Flask(__name__, template_folder="../templates")
 CORS(app)
+app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
 
 _all_models_cache: list[dict] | None = None
 
@@ -163,6 +164,42 @@ def api_download_data():
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
 
 
+@app.route("/api/upload-data", methods=["POST"])
+def api_upload_data() -> tuple:
+    """Accept a multipart file upload, validate it is JSON, and save to examples directory."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    try:
+        json_data = json.load(file)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return jsonify({"error": "File is not valid JSON"}), 400
+
+    random_suffix = secrets.token_hex(4)
+    filename = f"training_data_{random_suffix}.json"
+
+    examples_dir = Path(__file__).parent.parent.parent / "examples" / "example_data"
+    examples_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = examples_dir / filename
+    with open(file_path, "w") as f:
+        json.dump(json_data, f, indent=2)
+
+    relative_path = f"examples/example_data/{filename}"
+    return jsonify(
+        {
+            "success": True,
+            "path": relative_path,
+            "filename": filename,
+            "num_examples": len(json_data) if isinstance(json_data, list) else 1,
+        }
+    )
+
+
 @app.route("/api/analyze-data", methods=["POST"])
 def api_analyze_data():
     """Analyze training data to detect JSON labels and infer field metrics config."""
@@ -188,6 +225,8 @@ def api_analyze_data():
             return jsonify({"is_json": False, "reason": "Empty or non-list data"})
 
         first_label = data_list[0].get("label", "")
+        if isinstance(first_label, (dict, list)):
+            first_label = json.dumps(first_label)
 
         try:
             label_value = json.loads(first_label)
@@ -201,10 +240,14 @@ def api_analyze_data():
             )
             response_format_preview = ""
             if enum_values:
-                args = ", ".join(repr(v) for v in enum_values)
-                response_format_preview = (
-                    f"class ResponseModel(BaseModel):\n    label: Literal[{args}]"
-                )
+                if len(enum_values) <= 50:
+                    args = ", ".join(repr(v) for v in enum_values)
+                    response_format_preview = (
+                        f"class ResponseModel(BaseModel):\n    label: Literal[{args}]"
+                    )
+                else:
+                    response_format_preview = "class ResponseModel(BaseModel):\n    label: str"
+                    enum_values = []
             return jsonify(
                 {
                     "is_json": False,
@@ -219,6 +262,24 @@ def api_analyze_data():
 
         field_config = infer_field_config(first_label)
 
+        def _type_name(v: object) -> str:
+            if isinstance(v, bool):
+                return "bool"
+            if isinstance(v, int):
+                return "int"
+            if isinstance(v, float):
+                return "float"
+            return "str"
+
+        label_json = json.loads(first_label)
+        if isinstance(label_json, dict):
+            field_lines = "\n".join(
+                f"    {k}: {_type_name(v)}" for k, v in label_json.items()
+            )
+            response_format_preview = f"class ResponseModel(BaseModel):\n{field_lines}"
+        else:
+            response_format_preview = ""
+
         return jsonify(
             {
                 "is_json": True,
@@ -226,7 +287,7 @@ def api_analyze_data():
                 "num_examples": len(data_list),
                 "field_config": field_config.model_dump(),
                 "enum_values": [],
-                "response_format_preview": "",
+                "response_format_preview": response_format_preview,
             }
         )
 

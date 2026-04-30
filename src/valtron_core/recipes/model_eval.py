@@ -7,7 +7,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal, get_args, get_origin
+from typing import Any, Literal
 
 import structlog
 from pydantic import BaseModel, Field, create_model
@@ -124,7 +124,7 @@ class ModelEval(BaseRecipe):
         self._manipulations_applied: dict[str, list[Any]] | None = None
         self._model_prompts: dict[str, str] | None = None
         self._model_override_prompts: dict[str, str] | None = None
-        self._response_format_schema: str | None = None
+        self._response_format_schema: dict[str, Any] | None = None
 
         logger.info(
             "model_eval_initialized",
@@ -139,22 +139,6 @@ class ModelEval(BaseRecipe):
     # -------------------------------------------------------------------------
 
     def _preflight_check(self) -> None:
-        if (
-            self.response_format is None
-            and not self.config.disable_auto_response_format
-            and self.data
-        ):
-            first_label = self.data[0].get("label", "")
-            try:
-                json.loads(str(first_label))
-            except (json.JSONDecodeError, TypeError):
-                unique_count = len({str(d.get("label", "")) for d in self.data})
-                if unique_count > 50:
-                    raise ValueError(
-                        f"Auto-enum response format would require {unique_count} unique enum values "
-                        f"(max 50). Reduce label cardinality or set disable_auto_response_format=True "
-                        f"in config to use free text."
-                    )
         super()._preflight_check()
 
     # -------------------------------------------------------------------------
@@ -283,10 +267,9 @@ class ModelEval(BaseRecipe):
         config_dict: dict[str, Any] = {
             "prompt": original_prompt,
             "use_case": meta.get("use_case", "model evaluation"),
-            "disable_auto_response_format": meta.get("disable_auto_response_format", False),
         }
-        if meta.get("field_config"):
-            config_dict["field_metrics_config"] = meta["field_config"]
+        if meta.get("field_metrics_config"):
+            config_dict["field_metrics_config"] = meta["field_metrics_config"]
 
         data: list[dict[str, Any]] = meta.get("documents", [])
         return config_dict, data
@@ -414,13 +397,26 @@ class ModelEval(BaseRecipe):
     # Field metrics
     # -------------------------------------------------------------------------
 
-    def _get_field_metrics_config(self) -> FieldMetricsConfig | None:
+    def _resolve_response_format(self) -> "type[BaseModel] | None":
+        """Return the base response format (no per-model explanation wrapping).
+
+        Used for schema serialisation and field-metrics inference. The per-model
+        explanation variation is handled separately in ``_run_evaluations``.
+        """
+        if self.response_format is not None:
+            return self.response_format
+        return self._create_response_validator()
+
+    def _get_field_metrics_config(
+        self, resolved_rf: "type[BaseModel] | None" = None
+    ) -> FieldMetricsConfig | None:
         """Return a FieldMetricsConfig, either from explicit config or auto-inferred.
 
         If ``field_metrics_config`` was provided in the recipe config, that is
-        validated and returned. Otherwise, if the first data label is valid JSON,
-        a config is auto-generated via ``infer_field_config``. Returns ``None``
-        when labels are plain text.
+        validated and returned. Otherwise the config is inferred from label data:
+        JSON labels use the label structure directly; plain-text labels with an
+        auto-inferred response format wrap the label in the ``{"label": ...}``
+        shape that ``_create_response_validator`` produces.
         """
         if self._field_metrics_config_raw is not None:
             return FieldMetricsConfig.model_validate(self._field_metrics_config_raw)
@@ -431,13 +427,19 @@ class ModelEval(BaseRecipe):
         first_label = self.data[0].get("label", "")
         if isinstance(first_label, (dict, list)):
             first_label = json.dumps(first_label)
+
         try:
             json.loads(first_label)
+            field_config = infer_field_config(first_label)
+            return FieldMetricsConfig(config=field_config.model_dump())
         except (json.JSONDecodeError, TypeError):
-            return None
+            pass
 
-        field_config = infer_field_config(first_label)
-        return FieldMetricsConfig(config=field_config.model_dump())
+        if self.response_format is None and resolved_rf is not None:
+            field_config = infer_field_config(json.dumps({"label": first_label}))
+            return FieldMetricsConfig(config=field_config.model_dump())
+
+        return None
 
     # -------------------------------------------------------------------------
     # Main pipeline
@@ -489,18 +491,9 @@ class ModelEval(BaseRecipe):
         logger.info("starting_model_eval_pipeline")
 
         self._preflight_check()
-        field_metrics_config = self._get_field_metrics_config()
-
-        if self.response_format is not None:
-            self._response_format_schema = self._serialize_response_format_schema(
-                self.response_format
-            )
-        elif not self.config.disable_auto_response_format:
-            self._response_format_schema = self._serialize_response_format_schema(
-                self._create_response_validator()
-            )
-        else:
-            self._response_format_schema = None
+        resolved_rf = self._resolve_response_format()
+        self._response_format_schema = self._serialize_response_format_schema(resolved_rf)
+        field_metrics_config = self._get_field_metrics_config(resolved_rf)
 
         if self.few_shot_config and self.few_shot_config.enabled:
             await self._generate_few_shot_data()
@@ -746,37 +739,47 @@ class ModelEval(BaseRecipe):
 
         For JSON-object labels: builds a Pydantic model with one field per key.
         For plain-text labels: builds a model with a ``Literal[...]`` enum field
-            covering every unique label value in the dataset, unless
-            ``disable_auto_response_format`` is set.
+            covering every unique label value (up to 50 values); falls back to
+            ``label: str`` for larger datasets.
         Returns ``None`` when no validator can be produced.
         """
         if not self.data:
             return None
 
         first_label = self.data[0].get("label", "")
+        if isinstance(first_label, (dict, list)):
+            first_label = json.dumps(first_label)
         try:
             label_json = json.loads(first_label)
         except (json.JSONDecodeError, TypeError):
             # Plain-text label path
-            if self.config.disable_auto_response_format:
-                return None
             unique_values = sorted(
                 {str(d.get("label", "")) for d in self.data if str(d.get("label", "")) != ""}
             )
             if not unique_values:
                 return None
-            literal_type = Literal[tuple(unique_values)]  # type: ignore[valid-type]
             field_definitions: dict[str, Any] = {}
             if include_explanation:
                 field_definitions["explanation"] = (str, Field(description="Reasoning explanation"))
-            field_definitions["label"] = (literal_type, Field(description="Predicted class label"))
-            model_name = "ResponseModelWithExplanation" if include_explanation else "ResponseModel"
-            response_model = create_model(model_name, **field_definitions)
-            logger.info(
-                "auto_enum_validator_created",
-                model_name=model_name,
-                num_values=len(unique_values),
-            )
+            if len(unique_values) <= 50:
+                literal_type = Literal[tuple(unique_values)]  # type: ignore[valid-type]
+                field_definitions["label"] = (literal_type, Field(description="Predicted class label"))
+                model_name = "ResponseModelWithExplanation" if include_explanation else "ResponseModel"
+                response_model = create_model(model_name, **field_definitions)
+                logger.info(
+                    "auto_enum_validator_created",
+                    model_name=model_name,
+                    num_values=len(unique_values),
+                )
+            else:
+                field_definitions["label"] = (str, Field(description="Predicted class label"))
+                model_name = "ResponseModelWithExplanation" if include_explanation else "ResponseModel"
+                response_model = create_model(model_name, **field_definitions)
+                logger.info(
+                    "auto_str_validator_created",
+                    model_name=model_name,
+                    num_values=len(unique_values),
+                )
             return response_model
 
         if not isinstance(label_json, dict):
@@ -822,24 +825,16 @@ class ModelEval(BaseRecipe):
         )
         return response_model
 
-    def _serialize_response_format_schema(self, rf: type[BaseModel] | None) -> str | None:
-        """Return a Python class-definition string for a dynamic Pydantic model.
+    def _serialize_response_format_schema(
+        self, rf: type[BaseModel] | None
+    ) -> dict[str, Any] | None:
+        """Return the Pydantic JSON Schema for a model class.
 
-        Handles ``Literal[...]`` annotations produced by the auto-enum path.
         Returns ``None`` when *rf* is ``None``.
         """
         if rf is None:
             return None
-        lines = [f"class {rf.__name__}(BaseModel):"]
-        for field_name, annotation in rf.__annotations__.items():
-            if get_origin(annotation) is Literal:
-                args = ", ".join(repr(a) for a in get_args(annotation))
-                lines.append(f"    {field_name}: Literal[{args}]")
-            else:
-                lines.append(
-                    f"    {field_name}: {getattr(annotation, '__name__', str(annotation))}"
-                )
-        return "\n".join(lines)
+        return rf.model_json_schema()
 
     # -------------------------------------------------------------------------
     # Response format helpers (extraction mode)
@@ -938,9 +933,18 @@ class ModelEval(BaseRecipe):
             pred_time = time.time() - pred_start
 
             if json_evaluator is not None:
-                eval_result = json_evaluator.evaluate(
-                    field_metrics_config.config, expected_label, prediction  # type: ignore[union-attr]
-                )
+                cfg = field_metrics_config.config  # type: ignore[union-attr]
+                eval_expected = expected_label
+                eval_predicted = prediction
+                try:
+                    json.loads(expected_label)
+                except (json.JSONDecodeError, ValueError):
+                    fields = cfg.get("fields") or {} if isinstance(cfg, dict) else {}
+                    if isinstance(cfg, dict) and cfg.get("type") == "object" and len(fields) == 1:
+                        field_name = next(iter(fields))
+                        eval_expected = json.dumps({field_name: expected_label})
+                        eval_predicted = json.dumps({field_name: prediction})
+                eval_result = json_evaluator.evaluate(cfg, eval_expected, eval_predicted)
                 is_correct = eval_result.score == 1.0
             else:
                 is_correct = prediction.strip() == expected_label.strip()
@@ -1003,7 +1007,7 @@ class ModelEval(BaseRecipe):
             maps model label to the list of Manipulation values that were applied.
         """
         if field_metrics_config is None:
-            field_metrics_config = self._get_field_metrics_config()
+            field_metrics_config = self._get_field_metrics_config(self._resolve_response_format())
 
         effective_models = models if models is not None else self.models
         documents, labels = self._load_documents_and_labels()

@@ -4,12 +4,13 @@ sidebar_position: 3
 
 # Configuration Wizard
 
-The configuration wizard is a browser-based UI that walks you through building a Valtron config file step by step. It is the fastest way to get a working config without writing JSON by hand.
+The configuration wizard is a browser-based UI that walks you through building a Valtron config file step by step. It is the fastest way to get a working config without writing JSON by hand. For fine-grained control over every available option, see the [Config Format](../config-format) reference.
 
 The wizard covers:
 - Selecting your current model and the models you want to test against
 - Writing your prompt template
 - Linking your labeled dataset
+- Reviewing the auto-generated response format
 - Optionally configuring few-shot learning and per-field metrics
 
 At the end it generates a ready-to-use `custom_config.json` that you can download or copy to clipboard.
@@ -120,11 +121,11 @@ Click **Next**. The wizard downloads (if needed) and analyzes your data before m
 
 ## Step 5: Response Format
 
-This step only appears when your labels are **plain text** (not JSON objects).
+{/* ![Step 5: Response Format](/img/4_wizard_response_format.png) */}
 
-The wizard displays the `Literal` enum that will be automatically generated from your label values and sent to the LLM as its required output schema — constraining responses to exactly the classes present in your data.
+The wizard displays the Pydantic model that will be automatically generated from your label values and used to constrain the LLM's output.
 
-Example display for a dataset with three label values:
+**Plain-text labels (up to 50 unique values)** — a `Literal` enum is generated covering every unique value in your dataset:
 
 ```python
 class ResponseModel(BaseModel):
@@ -133,19 +134,32 @@ class ResponseModel(BaseModel):
 
 The list of detected values is shown below the class definition.
 
-If your dataset has more than 50 unique label values the wizard will not reach this step — the evaluation API will raise an error at runtime. In that case, set `disable_auto_response_format: true` in your config to use free-text mode instead (see [Config reference](../config-format#base-recipe-fields)).
+**Plain-text labels (more than 50 unique values)** — the field falls back to `str` so the LLM returns free text:
 
-For JSON-structured labels, this step is skipped automatically.
+```python
+class ResponseModel(BaseModel):
+    label: str
+```
+
+**JSON-structured labels** — a typed model is generated with one field per key in your label objects, using the type inferred from the first example:
+
+```python
+class ResponseModel(BaseModel):
+    sentiment: str
+    score: float
+```
 
 ---
 
 ## Step 6: Field-Level Metrics
 
+{/* ![Step 6: Field-Level Metrics](/img/5_wizard_field_metrics.png) */}
+
 The wizard inspects your data labels to decide what grading options are available.
 
 ### Plain-text labels
 
-Field-level grading is not available for plain-text labels. The wizard proceeds using the auto-generated enum response format described in Step 5.
+You can configure how the `label` field is graded (default: exact match). Select **"Yes — configure field grading"** to change the metric.
 
 ### JSON-structured labels
 
@@ -174,6 +188,8 @@ See [Field Metrics](../field-metrics) for a full reference.
 ---
 
 ## Step 7: Review and Download
+
+{/*![Step 7: Review and Download](/img/6_wizard_review.png) */}
 
 The wizard displays the generated configuration as editable JSON. You can tweak any value directly before saving.
 

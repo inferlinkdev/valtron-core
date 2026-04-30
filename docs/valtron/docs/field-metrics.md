@@ -12,7 +12,7 @@ Field metrics are configured via `field_metrics_config` in the recipe config and
 
 ## FieldConfig schema
 
-The `field_metrics_config` mirrors the shape of your Pydantic schema. Each node describes how that field should be scored.
+The `config` value inside `field_metrics_config` mirrors the shape of your Pydantic schema. Each node describes how that field should be scored.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
