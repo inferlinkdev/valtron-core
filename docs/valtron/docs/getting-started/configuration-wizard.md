@@ -124,35 +124,36 @@ Click **Next**. The wizard downloads (if needed) and analyzes your data before m
 
 ![Step 5: Response Format](/img/5_wizard_response_format.png)
 
-The wizard displays the Pydantic model that will be automatically inferred from your label values and used to constrain the LLM's output. This is a best-effort inference from your data — if you need a more precise schema (custom field types, optional fields, nested validation), pass your own Pydantic model directly as `response_format` when constructing `ModelEval`. See [Structured extraction mode](https://valtron.ai/docs/evaluation-results#structured-extraction-mode) for details.
+The wizard displays the Pydantic model inferred from your label values and shows a note that the schema will be saved to your config file. This is a best-effort inference from your data — if you need a more precise schema, pass your own Pydantic model directly as `response_format` when constructing `ModelEval`. See [Structured extraction mode](https://valtron.ai/docs/evaluation-results#structured-extraction-mode) for details.
 
-**Plain-text labels (up to 50 unique values)** — a `Literal` enum is generated covering every unique value in your dataset:
+The inferred schema is saved to the config file as `response_format_schema` in litellm format, which is what the system uses to constrain LLM output. For example, a plain-text label dataset with three classes produces:
 
-```python
-class ResponseModel(BaseModel):
-    label: Literal['negative', 'neutral', 'positive']
+```json
+{
+  "response_format_schema": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "ResponseModel",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "title": "ResponseModel",
+        "properties": {
+          "label": {
+            "type": "string",
+            "description": "Predicted class label",
+            "enum": ["negative", "neutral", "positive"]
+          }
+        },
+        "required": ["label"],
+        "additionalProperties": false
+      }
+    }
+  }
+}
 ```
 
-The list of detected values is shown below the class definition.
-
-**Plain-text labels (more than 50 unique values)** — the field falls back to `str` so the LLM returns free text:
-
-```python
-class ResponseModel(BaseModel):
-    label: str
-```
-
-**JSON-structured labels** — a typed model is recursively generated from the structure of your first label example:
-
-```python
-class Institution(BaseModel):
-    name: str
-    city: str
-    country: str
-
-class ResponseModel(BaseModel):
-    institutions: list[Institution]
-```
+For datasets with more than 50 distinct label values the `enum` constraint is omitted and the field is typed as a plain string. For JSON-structured labels, the schema is recursively inferred from the structure of your first label example. The list of detected enum values (for plain-text labels) is shown below the Pydantic class preview.
 
 ---
 

@@ -123,12 +123,7 @@ class BaseRecipe(ABC):
 
         dest = self._resolve_output_dir(output_dir)
 
-        field_config: dict[str, Any] = {}
-        for result in self.results:
-            if result.metrics and result.metrics.aggregated_field_metrics:
-                for field_name, fm in result.metrics.aggregated_field_metrics.items():
-                    if field_name not in field_config:
-                        field_config[field_name] = {"method": fm.metric, "params": fm.params or {}}
+        fmc = self._get_field_metrics_config()
 
         run_dir = save_run_dir(
             dest,
@@ -136,7 +131,7 @@ class BaseRecipe(ABC):
             self._build_save_documents(),
             use_case=self.use_case,
             original_prompt=self.prompt_template,
-            field_config=field_config or None,
+            field_config=fmc.config if fmc else None,
             model_prompts=self._model_prompts,
             prompt_manipulations=self._manipulations_applied,
             model_override_prompts=self._model_override_prompts,

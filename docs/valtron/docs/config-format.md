@@ -17,6 +17,7 @@ The config controls which models to run, the prompt template, evaluation options
 | `temperature` | `float` | `0.0` | Default temperature for all models (can be overridden per model) |
 | `few_shot` | `object` | `null` | Few-shot generation config (see below) |
 | `field_metrics_config` | `object` | `null` | Field-level scoring for structured extraction (see below) |
+| `response_format_schema` | `object` | `null` | Structured output schema in litellm format (see below). Lower priority than a Pydantic `response_format` passed to the constructor. |
 | `output_formats` | `array[string]` | `["html"]` | Report formats to generate. Acceptable formats include: `"html"`, `"pdf"` |
 
 ```json
@@ -32,37 +33,34 @@ The config controls which models to run, the prompt template, evaluation options
 
 ---
 
-## Classification mode
+## Response format schema
 
-When `label` fields in your dataset are plain strings (not JSON), Valtron automatically builds a `Literal` enum from all unique label values and uses it as the LLM's required output schema. This constrains the model to return one of the known classes exactly, reducing hallucinations and making correctness checking unambiguous.
-
-For a dataset with labels `"positive"`, `"negative"`, and `"neutral"`, the generated schema looks like:
-
-```python
-class ResponseModel(BaseModel):
-    label: Literal["negative", "neutral", "positive"]
-```
-
-The active schema is serialized as a standard [Pydantic JSON Schema](https://docs.pydantic.dev/latest/concepts/json_schema/) object and stored in `metadata.json` under `response_format_schema` for every run:
+`response_format_schema` accepts the litellm JSON schema format and tells the LLM to return structured output. The configuration wizard infers and populates this field automatically from your data.
 
 ```json
 {
-  "title": "ResponseModel",
-  "type": "object",
-  "properties": {
-    "label": {
-      "enum": ["negative", "neutral", "positive"],
-      "title": "Label",
-      "type": "string"
+  "response_format_schema": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "ResponseModel",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "title": "ResponseModel",
+        "properties": {
+          "label": { "type": "string", "description": "Predicted class label" }
+        },
+        "required": ["label"],
+        "additionalProperties": false
+      }
     }
-  },
-  "required": ["label"]
+  }
 }
 ```
 
-For datasets with more than 50 unique label values, Valtron automatically falls back to `label: str` instead of a `Literal` enum. The LLM returns free text and correctness is determined by string equality.
+The schema is stored under `response_format_schema` in `metadata.json` for every run, in the same format, so that results can be replayed with the exact schema that produced them.
 
-An explicit `response_format` passed to `ModelEval(...)` always takes priority over any inferred response format.
+**Priority order**: a Pydantic `response_format` class passed to `ModelEval(...)` takes priority over `config.response_format_schema`, which takes priority over the schema loaded from a previous run's metadata. When none of these are provided and labels are plain strings, Valtron falls back to a minimal `{"label": str}` wrapper so the LLM returns structured JSON. When none are provided and labels are JSON-structured, Valtron raises a `ValueError` -- you must supply a schema explicitly in that case.
 
 See also: [`label` field in Data Format](./data-format#label-format).
 

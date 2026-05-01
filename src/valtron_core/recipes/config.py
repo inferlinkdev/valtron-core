@@ -129,6 +129,11 @@ class BaseRecipeConfig(BaseModel):
     few_shot: FewShotConfig | None = None
     field_metrics_config: dict[str, Any] | None = None
 
+    # Optional structured output schema in litellm format:
+    # {"type": "json_schema", "json_schema": {"name": str, "strict": bool, "schema": {...}}}
+    # Takes lower priority than a Pydantic response_format passed to the recipe constructor.
+    response_format_schema: dict[str, Any] | None = None
+
     # Saving behaviour when using run() — individual save_*() methods always work
     # regardless of this setting.
     output_formats: list[str] = ["html"]

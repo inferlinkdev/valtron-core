@@ -248,6 +248,20 @@ def api_analyze_data():
                 else:
                     response_format_preview = "class ResponseModel(BaseModel):\n    label: str"
                     enum_values = []
+            label_property: dict = {"type": "string", "description": "Predicted class label"}
+            if enum_values:
+                label_property["enum"] = enum_values
+            string_label_schema: dict = {
+                "type": "object",
+                "title": "ResponseModel",
+                "properties": {"label": label_property},
+                "required": ["label"],
+                "additionalProperties": False,
+            }
+            response_format_schema = {
+                "type": "json_schema",
+                "json_schema": {"name": "ResponseModel", "strict": True, "schema": string_label_schema},
+            }
             return jsonify(
                 {
                     "is_json": False,
@@ -255,6 +269,7 @@ def api_analyze_data():
                     "num_examples": len(data_list),
                     "enum_values": enum_values,
                     "response_format_preview": response_format_preview,
+                    "response_format_schema": response_format_schema,
                 }
             )
 
@@ -286,6 +301,28 @@ def api_analyze_data():
                 return "list[str]"
             return "str"
 
+        def _json_schema_from_value(value: object, title: str) -> dict:
+            if isinstance(value, bool):
+                return {"type": "boolean"}
+            if isinstance(value, int):
+                return {"type": "integer"}
+            if isinstance(value, float):
+                return {"type": "number"}
+            if isinstance(value, dict):
+                props = {k: _json_schema_from_value(v, k) for k, v in value.items()}
+                return {
+                    "type": "object",
+                    "title": title,
+                    "properties": props,
+                    "required": list(value.keys()),
+                    "additionalProperties": False,
+                }
+            if isinstance(value, list) and value:
+                return {"type": "array", "items": _json_schema_from_value(value[0], title)}
+            if isinstance(value, list):
+                return {"type": "array", "items": {"type": "string"}}
+            return {"type": "string"}
+
         label_json = json.loads(first_label)
         if isinstance(label_json, dict):
             extra_classes: list[str] = []
@@ -295,8 +332,19 @@ def api_analyze_data():
                 main_lines.append(f"    {k}: {field_type}")
             all_parts = extra_classes + ["\n".join(main_lines)]
             response_format_preview = "\n\n".join(all_parts)
+            json_label_schema = _json_schema_from_value(label_json, "ResponseModel")
+            json_label_schema["title"] = "ResponseModel"
+            response_format_schema = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "ResponseModel",
+                    "strict": True,
+                    "schema": json_label_schema,
+                },
+            }
         else:
             response_format_preview = ""
+            response_format_schema = None
 
         return jsonify(
             {
@@ -306,6 +354,7 @@ def api_analyze_data():
                 "field_config": field_config.model_dump(),
                 "enum_values": [],
                 "response_format_preview": response_format_preview,
+                "response_format_schema": response_format_schema,
             }
         )
 

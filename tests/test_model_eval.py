@@ -5,7 +5,7 @@ import pytest
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
 from valtron_core.recipes.model_eval import ModelEval
 from valtron_core.recipes.config import (
@@ -32,9 +32,25 @@ EXTRACT_CONFIG = {
     "prompt": "Extract: {content}",
 }
 
+_LABEL_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "ResponseModel",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "title": "ResponseModel",
+            "properties": {"label": {"type": "string"}},
+            "required": ["label"],
+            "additionalProperties": False,
+        },
+    },
+}
+
 CLASSIFY_CONFIG = {
     "models": [{"name": "gpt-4o-mini"}],
     "prompt": "Classify: {content}",
+    "response_format_schema": _LABEL_SCHEMA,
 }
 
 
@@ -281,17 +297,12 @@ class TestStructuredManipulations:
 
 class TestGetFieldMetricsConfig:
 
-    def test_returns_none_for_plain_text_labels_without_resolved_rf(self):
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "positive"}])
-        assert eval_._get_field_metrics_config() is None
-
-    def test_infers_label_field_for_plain_text_labels_with_resolved_rf(self):
+    def test_infers_label_field_for_plain_text_labels(self):
         eval_ = ModelEval(
             config=CLASSIFY_CONFIG,
             data=[{"content": "T", "label": lbl} for lbl in ["yes", "no"]],
         )
-        resolved_rf = eval_._resolve_response_format()
-        result = eval_._get_field_metrics_config(resolved_rf)
+        result = eval_._get_field_metrics_config()
         assert result is not None
         assert "label" in result.config["fields"]
 
@@ -324,35 +335,39 @@ class TestGetFieldMetricsConfig:
         assert result.config == explicit["config"]
 
 
-class TestResolveResponseFormat:
+class TestCreateLabelWrapper:
 
     @pytest.mark.unit
-    def test_returns_provided_response_format(self):
-        class MySchema(BaseModel):
-            field: str
-
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[], response_format=MySchema)
-        assert eval_._resolve_response_format() is MySchema
-
-    @pytest.mark.unit
-    def test_auto_infers_literal_model_for_plain_text_labels(self):
+    def test_returns_str_label_model_for_plain_text(self):
         eval_ = ModelEval(
             config=CLASSIFY_CONFIG,
             data=[{"content": "T", "label": lbl} for lbl in ["yes", "no"]],
         )
-        rf = eval_._resolve_response_format()
+        rf = eval_._create_label_wrapper()
         assert rf is not None
         assert "label" in rf.model_fields
+        assert rf.model_fields["label"].annotation is str
 
     @pytest.mark.unit
-    def test_auto_infers_typed_model_for_json_labels(self):
+    def test_returns_none_for_json_labels(self):
         eval_ = ModelEval(
             config=CLASSIFY_CONFIG,
             data=[{"content": "T", "label": '{"sentiment": "positive"}'}],
         )
-        rf = eval_._resolve_response_format()
-        assert rf is not None
-        assert "sentiment" in rf.model_fields
+        assert eval_._create_label_wrapper() is None
+
+    @pytest.mark.unit
+    def test_returns_none_for_dict_labels(self):
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": {"sentiment": "positive"}}],
+        )
+        assert eval_._create_label_wrapper() is None
+
+    @pytest.mark.unit
+    def test_returns_none_for_empty_data(self):
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[])
+        assert eval_._create_label_wrapper() is None
 
 
 # ===========================================================================
@@ -486,13 +501,20 @@ class TestPrepareModelPrompts:
 
 
 # ===========================================================================
-# Response validator (label mode)
+# Label wrapper (string-label fallback)
 # ===========================================================================
 
 
-class TestCreateResponseValidator:
+class TestCreateLabelWrapperBehavior:
 
-    def test_json_labels_produce_validator(self):
+    def test_plain_text_labels_create_label_str_model(self):
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "positive"}])
+        wrapper = eval_._create_label_wrapper()
+        assert wrapper is not None
+        assert "label" in wrapper.model_fields
+        assert wrapper.model_fields["label"].annotation is str
+
+    def test_json_labels_return_none(self):
         config = {
             "models": [{"name": "gpt-4o-mini"}],
             "prompt": 'Output JSON: {"name": "", "age": 0}. {content}',
@@ -500,26 +522,7 @@ class TestCreateResponseValidator:
         eval_ = ModelEval(
             config=config, data=[{"content": "T", "label": '{"name": "J", "age": 30}'}]
         )
-        validator = eval_._create_response_validator()
-        assert validator is not None
-        assert "name" in validator.model_fields
-        assert "age" in validator.model_fields
-
-    def test_plain_text_labels_create_literal_validator(self):
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "positive"}])
-        validator = eval_._create_response_validator()
-        assert validator is not None
-        assert "label" in validator.model_fields
-
-    def test_explanation_with_json_schema_in_prompt_adds_field(self):
-        config = {
-            "models": [{"name": "gpt-4o-mini"}],
-            "prompt": 'Extract: {"name": ""} from {content}',
-        }
-        eval_ = ModelEval(config=config, data=[{"content": "T", "label": '{"name": "J"}'}])
-        validator = eval_._create_response_validator(include_explanation=True)
-        assert validator is not None
-        assert "explanation" in validator.model_fields
+        assert eval_._create_label_wrapper() is None
 
 
 # ===========================================================================
@@ -848,6 +851,7 @@ def _write_mock_run_dir(tmp_path, override_prompt=None):
         "use_case": "test classification",
         "original_prompt": "Classify: {content}",
         "field_config": None,
+        "response_format_schema": _LABEL_SCHEMA,
         "documents": [
             {"id": "d1", "content": "Hello", "label": "positive"},
             {"id": "d2", "content": "Bye", "label": "negative"},
@@ -995,6 +999,7 @@ class TestDictContent:
             "models": [{"name": "gpt-4o-mini"}],
             "prompt": "Text: {text} Is the topic '{topic}'? YES or NO only.",
             "output_dir": str(tmp_path),
+            "response_format_schema": _LABEL_SCHEMA,
         }
         data = [
             {
@@ -1035,6 +1040,7 @@ class TestIncrementalEvaluation:
         config = {
             "models": [{"name": "gpt-4o-mini"}, {"name": "gpt-4o", "label": "gpt-4o-new"}],
             "prompt": "Classify: {content}",
+            "response_format_schema": _LABEL_SCHEMA,
         }
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
 
@@ -1060,6 +1066,7 @@ class TestIncrementalEvaluation:
         config = {
             "models": [{"name": "gpt-4o-mini"}, {"name": "gpt-4o", "label": "gpt-4o-new"}],
             "prompt": "Classify: {content}",
+            "response_format_schema": _LABEL_SCHEMA,
         }
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
         eval_.results = [_mock_result("gpt-4o-mini")]
@@ -1080,97 +1087,75 @@ class TestIncrementalEvaluation:
 
 
 # ===========================================================================
-# Auto-enum response format
+# aevaluate schema resolution priority
 # ===========================================================================
 
 
-class TestAutoEnumResponseValidator:
-    """_create_response_validator for plain-text label datasets."""
-
-    def _eval(self, labels: list[str], extra_config: dict | None = None) -> ModelEval:
-        cfg = {**CLASSIFY_CONFIG, **(extra_config or {})}
-        data = [{"content": "T", "label": lbl} for lbl in labels]
-        return ModelEval(config=cfg, data=data)
+class TestAevaluateSchemaPriority:
+    """Schema resolution priority: constructor > config > loaded metadata > label wrapper."""
 
     @pytest.mark.unit
-    def test_plain_text_builds_literal_enum(self):
-        eval_ = self._eval(["positive", "negative", "neutral"])
-        rf = eval_._create_response_validator()
-        assert rf is not None
-        assert rf.__name__ == "ResponseModel"
-        import typing
-
-        args = typing.get_args(rf.__annotations__["label"])
-        assert set(args) == {"positive", "negative", "neutral"}
-
-    @pytest.mark.unit
-    def test_values_are_sorted(self):
-        eval_ = self._eval(["zebra", "apple", "mango"])
-        rf = eval_._create_response_validator()
-        assert rf is not None
-        import typing
-
-        args = typing.get_args(rf.__annotations__["label"])
-        assert list(args) == ["apple", "mango", "zebra"]
-
-    @pytest.mark.unit
-    def test_duplicate_labels_deduplicated(self):
-        eval_ = self._eval(["yes", "no", "yes", "no"])
-        rf = eval_._create_response_validator()
-        assert rf is not None
-        import typing
-
-        args = typing.get_args(rf.__annotations__["label"])
-        assert set(args) == {"yes", "no"}
-
-    @pytest.mark.unit
-    def test_plain_text_labels_use_str_when_over_50(self):
-        labels = [f"label_{i}" for i in range(51)]
-        eval_ = self._eval(labels)
-        rf = eval_._create_response_validator()
-        assert rf is not None
-        import typing
-        annotation = rf.__annotations__["label"]
-        assert typing.get_origin(annotation) is not typing.Literal
-        assert annotation is str
-
-    @pytest.mark.unit
-    def test_json_labels_unaffected(self):
-        data = [{"content": "T", "label": '{"name": "Alice"}'}]
-        eval_ = ModelEval(config=EXTRACT_CONFIG, data=data)
-        rf = eval_._create_response_validator()
-        assert rf is not None
-        assert "name" in rf.__annotations__
-
-    @pytest.mark.unit
-    def test_empty_data_returns_none(self):
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[])
-        assert eval_._create_response_validator() is None
-
-    @pytest.mark.unit
-    def test_dict_label_detected_as_json_not_plain_text(self):
-        # Labels that are native Python dicts (not pre-serialized strings) must be
-        # converted to JSON strings before parsing, matching the wizard's behaviour.
-        data = [
-            {"content": "T1", "label": {"sentiment": "positive", "confidence": 0.9}},
-            {"content": "T2", "label": {"sentiment": "negative", "confidence": 0.7}},
-        ]
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=data)
-        rf = eval_._create_response_validator()
-        assert rf is not None
-        assert "sentiment" in rf.__annotations__, (
-            "dict label should be detected as JSON, not turned into a Literal enum"
-        )
-
-    @pytest.mark.unit
-    def test_explicit_response_format_takes_priority(self):
+    async def test_constructor_response_format_takes_priority(self):
         class MySchema(BaseModel):
-            category: str
+            field: str
 
-        data = [{"content": "T", "label": "positive"}]
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=data, response_format=MySchema)
-        # When response_format is set, _create_response_validator is never used for enum
-        assert eval_.response_format is MySchema
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": "pos"}],
+            response_format=MySchema,
+        )
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+            await eval_.aevaluate()
+        assert eval_._response_format_schema is not None
+        assert eval_._response_format_schema["type"] == "json_schema"
+        assert eval_._response_format_schema["json_schema"]["name"] == "MySchema"
+
+    @pytest.mark.unit
+    async def test_config_response_format_schema_used_when_no_constructor_format(self):
+        schema = {
+            "type": "json_schema",
+            "json_schema": {"name": "MyModel", "strict": True, "schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
+        }
+        cfg = {**CLASSIFY_CONFIG, "response_format_schema": schema}
+        eval_ = ModelEval(config=cfg, data=[{"content": "T", "label": "pos"}])
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+            await eval_.aevaluate()
+        assert eval_._response_format_schema == schema
+
+    @pytest.mark.unit
+    async def test_loaded_schema_preserved_when_no_other_source(self):
+        loaded_schema = {
+            "type": "json_schema",
+            "json_schema": {"name": "Loaded", "strict": True, "schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
+        }
+        cfg_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
+        eval_ = ModelEval(config=cfg_no_schema, data=[{"content": "T", "label": "pos"}])
+        eval_._response_format_schema = loaded_schema
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+            await eval_.aevaluate()
+        assert eval_._response_format_schema == loaded_schema
+
+    @pytest.mark.unit
+    async def test_string_labels_auto_wrap_when_no_schema(self):
+        cfg_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
+        eval_ = ModelEval(
+            config=cfg_no_schema,
+            data=[{"content": "T", "label": "pos"}],
+        )
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+            await eval_.aevaluate()
+        assert eval_._response_format_schema is not None
+        assert eval_._response_format_schema["json_schema"]["name"] == "ResponseModel"
+
+    @pytest.mark.unit
+    async def test_missing_schema_raises_value_error_for_json_labels(self):
+        cfg_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
+        eval_ = ModelEval(
+            config=cfg_no_schema,
+            data=[{"content": "T", "label": {"field": "value"}}],
+        )
+        with pytest.raises(ValueError, match="response format schema is required"):
+            await eval_.aevaluate()
 
 
 # ===========================================================================
@@ -1179,7 +1164,7 @@ class TestAutoEnumResponseValidator:
 
 
 class TestSerializeResponseFormatSchema:
-    """_serialize_response_format_schema produces a Pydantic JSON Schema dict."""
+    """_serialize_response_format_schema produces a litellm-compatible dict."""
 
     @pytest.mark.unit
     def test_returns_none_for_none(self):
@@ -1187,29 +1172,21 @@ class TestSerializeResponseFormatSchema:
         assert eval_._serialize_response_format_schema(None) is None
 
     @pytest.mark.unit
-    def test_literal_field_produces_enum_in_schema(self):
-        eval_ = ModelEval(
-            config=CLASSIFY_CONFIG,
-            data=[{"content": "T", "label": lbl} for lbl in ["yes", "no"]],
+    def test_returns_litellm_format(self):
+        DynModel = create_model(
+            "ResponseModel",
+            __config__=ConfigDict(extra="forbid"),
+            label=(str, Field(description="label")),
         )
-        rf = eval_._create_response_validator()
-        assert rf is not None
-        schema = eval_._serialize_response_format_schema(rf)
-        assert isinstance(schema, dict)
-        assert schema["title"] == "ResponseModel"
-        enum_values = schema["properties"]["label"]["enum"]
-        assert set(enum_values) == {"no", "yes"}
-
-    @pytest.mark.unit
-    def test_non_literal_field_produces_type_string(self):
-        from pydantic import create_model, Field
-
-        DynModel = create_model("DynModel", name=(str, Field(description="Name")))
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
-        schema = eval_._serialize_response_format_schema(DynModel)
-        assert isinstance(schema, dict)
-        assert schema["title"] == "DynModel"
-        assert schema["properties"]["name"]["type"] == "string"
+        result = eval_._serialize_response_format_schema(DynModel)
+        assert isinstance(result, dict)
+        assert result["type"] == "json_schema"
+        assert result["json_schema"]["name"] == "ResponseModel"
+        assert result["json_schema"]["strict"] is True
+        inner_schema = result["json_schema"]["schema"]
+        assert inner_schema["properties"]["label"]["type"] == "string"
+        assert inner_schema.get("additionalProperties") is False
 
 
 # ===========================================================================
@@ -1218,10 +1195,10 @@ class TestSerializeResponseFormatSchema:
 
 
 class TestResponseFormatSchemaInMetadata:
-    """save_experiment_results writes response_format_schema to metadata.json."""
+    """save_experiment_results writes response_format_schema in litellm format to metadata.json."""
 
     @pytest.mark.unit
-    def test_schema_written_to_metadata(self, tmp_path):
+    def test_schema_written_to_metadata_in_litellm_format(self, tmp_path):
         cfg = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path)}
         eval_ = ModelEval(
             config=cfg,
@@ -1232,20 +1209,28 @@ class TestResponseFormatSchemaInMetadata:
         eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}"}
         eval_._model_override_prompts = {}
         eval_._response_format_schema = {
-            "title": "ResponseModel",
-            "type": "object",
-            "properties": {"label": {"enum": ["neg", "pos"], "title": "Label", "type": "string"}},
-            "required": ["label"],
+            "type": "json_schema",
+            "json_schema": {
+                "name": "ResponseModel",
+                "strict": True,
+                "schema": {
+                    "title": "ResponseModel",
+                    "type": "object",
+                    "properties": {"label": {"type": "string"}},
+                    "required": ["label"],
+                    "additionalProperties": False,
+                },
+            },
         }
 
         eval_.save_experiment_results()
 
         metadata = json.loads((tmp_path / "metadata.json").read_text())
         assert "response_format_schema" in metadata
-        schema = metadata["response_format_schema"]
-        assert isinstance(schema, dict)
-        assert schema["title"] == "ResponseModel"
-        assert set(schema["properties"]["label"]["enum"]) == {"neg", "pos"}
+        saved = metadata["response_format_schema"]
+        assert saved["type"] == "json_schema"
+        assert saved["json_schema"]["name"] == "ResponseModel"
+        assert saved["json_schema"]["strict"] is True
 
     @pytest.mark.unit
     def test_schema_null_when_explicitly_none(self, tmp_path):

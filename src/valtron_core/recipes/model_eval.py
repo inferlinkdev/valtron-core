@@ -7,10 +7,10 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import structlog
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from valtron_core.client import LLMClient
 from valtron_core.cost_utils import _parse_time_unit_to_seconds
@@ -41,27 +41,6 @@ from valtron_core.runner import EvaluationResult, EvaluationRunner
 
 from valtron_core.utilities.field_config_generator import infer_field_config
 
-
-def _pydantic_type_from_value(value: Any, field_name: str) -> Any:
-    """Recursively infer a Pydantic type annotation from a JSON value."""
-    if isinstance(value, bool):
-        return bool
-    if isinstance(value, int):
-        return int
-    if isinstance(value, float):
-        return float
-    if isinstance(value, dict):
-        nested_fields: dict[str, Any] = {
-            k: (_pydantic_type_from_value(v, k), Field(description=f"Field {k}"))
-            for k, v in value.items()
-        }
-        return create_model(field_name.capitalize(), **nested_fields)
-    if isinstance(value, list) and value and isinstance(value[0], (dict, list)):
-        item_type = _pydantic_type_from_value(value[0], field_name.rstrip("s").capitalize())
-        return list[item_type]  # type: ignore[valid-type]
-    if isinstance(value, list):
-        return list[str]  # type: ignore[valid-type]
-    return str
 
 logger = structlog.get_logger()
 
@@ -101,13 +80,15 @@ class ModelEval(BaseRecipe):
             config: Configuration dict, ModelEvalConfig, or path (str/Path) to a JSON config file.
                 Required keys: ``models``, ``prompt`` (must contain ``{content}``).
                 Optional keys: ``output_dir``, ``use_case``, ``temperature``, ``few_shot``,
-                ``field_metrics_config``, ``save_html``, ``save_pdf``.
+                ``field_metrics_config``, ``response_format_schema``, ``output_formats``.
+                ``response_format_schema`` accepts the litellm format:
+                ``{"type": "json_schema", "json_schema": {"name": ..., "strict": true, "schema": {...}}}``.
             data: List of dicts ``[{"id": ..., "content": ..., "label": ...}]``,
                 or a path to a JSON file with the same structure.
             response_format: Optional Pydantic model class for structured output validation.
                 When provided, enables extraction mode and the structured manipulations
                 (``decompose``, ``hallucination_filter``, ``multi_pass``).
-                When omitted, the recipe auto-generates validators from label data.
+                Takes priority over ``config.response_format_schema``.
         """
         if isinstance(config, (str, Path)):
             with open(config) as f:
@@ -423,26 +404,13 @@ class ModelEval(BaseRecipe):
     # Field metrics
     # -------------------------------------------------------------------------
 
-    def _resolve_response_format(self) -> "type[BaseModel] | None":
-        """Return the base response format (no per-model explanation wrapping).
-
-        Used for schema serialisation and field-metrics inference. The per-model
-        explanation variation is handled separately in ``_run_evaluations``.
-        """
-        if self.response_format is not None:
-            return self.response_format
-        return self._create_response_validator()
-
-    def _get_field_metrics_config(
-        self, resolved_rf: "type[BaseModel] | None" = None
-    ) -> FieldMetricsConfig | None:
+    def _get_field_metrics_config(self) -> FieldMetricsConfig | None:
         """Return a FieldMetricsConfig, either from explicit config or auto-inferred.
 
         If ``field_metrics_config`` was provided in the recipe config, that is
         validated and returned. Otherwise the config is inferred from label data:
-        JSON labels use the label structure directly; plain-text labels with an
-        auto-inferred response format wrap the label in the ``{"label": ...}``
-        shape that ``_create_response_validator`` produces.
+        JSON labels use the label structure directly; plain-text labels are wrapped
+        in the ``{"label": ...}`` shape used by the string-label wrapper.
         """
         if self._field_metrics_config_raw is not None:
             return FieldMetricsConfig.model_validate(self._field_metrics_config_raw)
@@ -459,13 +427,8 @@ class ModelEval(BaseRecipe):
             field_config = infer_field_config(first_label)
             return FieldMetricsConfig(config=field_config.model_dump())
         except (json.JSONDecodeError, TypeError):
-            pass
-
-        if self.response_format is None and resolved_rf is not None:
             field_config = infer_field_config(json.dumps({"label": first_label}))
             return FieldMetricsConfig(config=field_config.model_dump())
-
-        return None
 
     # -------------------------------------------------------------------------
     # Main pipeline
@@ -517,9 +480,23 @@ class ModelEval(BaseRecipe):
         logger.info("starting_model_eval_pipeline")
 
         self._preflight_check()
-        resolved_rf = self._resolve_response_format()
-        self._response_format_schema = self._serialize_response_format_schema(resolved_rf)
-        field_metrics_config = self._get_field_metrics_config(resolved_rf)
+
+        if self.response_format is not None:
+            self._response_format_schema = self._serialize_response_format_schema(self.response_format)
+        elif self.config.response_format_schema is not None:
+            self._response_format_schema = self.config.response_format_schema
+        elif self._response_format_schema is None:
+            wrapper = self._create_label_wrapper()
+            if wrapper is None:
+                raise ValueError(
+                    "A response format schema is required when labels are JSON-structured. "
+                    "Pass a Pydantic model as `response_format` to the ModelEval constructor, "
+                    "or set `response_format_schema` in the recipe config."
+                )
+            self._response_format_schema = self._serialize_response_format_schema(wrapper)
+        # else: _response_format_schema was set by load_experiment_results -- keep it.
+
+        field_metrics_config = self._get_field_metrics_config()
 
         if self.few_shot_config and self.few_shot_config.enabled:
             await self._generate_few_shot_data()
@@ -756,106 +733,45 @@ class ModelEval(BaseRecipe):
                 continue
         return False
 
-    def _create_response_validator(
-        self, include_explanation: bool = False
-    ) -> type[BaseModel] | None:
-        """Auto-generate a Pydantic validator from label data.
+    def _create_label_wrapper(self) -> type[BaseModel] | None:
+        """Return a minimal ``{"label": str}`` model for plain-string label data.
 
-        Only used in label mode (``response_format=None``).
-
-        For JSON-object labels: recursively builds nested Pydantic models matching
-        the label structure (lists of objects, nested objects, scalars).
-        For plain-text labels: builds a model with a ``Literal[...]`` enum field
-            covering every unique label value (up to 50 values); falls back to
-            ``label: str`` for larger datasets.
-        Returns ``None`` when no validator can be produced.
+        Returns ``None`` when there is no data or the first label is JSON-shaped
+        (in which case the caller should provide ``response_format_schema`` explicitly).
         """
         if not self.data:
             return None
-
         first_label = self.data[0].get("label", "")
         if isinstance(first_label, (dict, list)):
-            first_label = json.dumps(first_label)
+            return None
         try:
-            label_json = json.loads(first_label)
+            json.loads(str(first_label))
+            return None
         except (json.JSONDecodeError, TypeError):
-            # Plain-text label path
-            unique_values = sorted(
-                {str(d.get("label", "")) for d in self.data if str(d.get("label", "")) != ""}
+            return create_model(
+                "ResponseModel",
+                __config__=ConfigDict(extra="forbid"),
+                label=(str, Field(description="Predicted class label")),
             )
-            if not unique_values:
-                return None
-            field_definitions: dict[str, Any] = {}
-            if include_explanation:
-                field_definitions["explanation"] = (str, Field(description="Reasoning explanation"))
-            if len(unique_values) <= 50:
-                literal_type = Literal[tuple(unique_values)]  # type: ignore[valid-type]
-                field_definitions["label"] = (literal_type, Field(description="Predicted class label"))
-                model_name = "ResponseModelWithExplanation" if include_explanation else "ResponseModel"
-                response_model = create_model(model_name, **field_definitions)
-                logger.info(
-                    "auto_enum_validator_created",
-                    model_name=model_name,
-                    num_values=len(unique_values),
-                )
-            else:
-                field_definitions["label"] = (str, Field(description="Predicted class label"))
-                model_name = "ResponseModelWithExplanation" if include_explanation else "ResponseModel"
-                response_model = create_model(model_name, **field_definitions)
-                logger.info(
-                    "auto_str_validator_created",
-                    model_name=model_name,
-                    num_values=len(unique_values),
-                )
-            return response_model
-
-        if not isinstance(label_json, dict):
-            return None
-
-        # If explanation is requested but the prompt has no JSON schema, the
-        # ExplanationEnhancer uses a text format ("Explanation: ... Answer: ...")
-        # rather than JSON — skip the validator in that case.
-        if include_explanation and not self._has_json_schema_in_prompt(self.prompt_template):
-            logger.info(
-                "skipping_validator_for_text_explanation",
-                reason="Prompt uses text format (Explanation: ... Answer: ...) not JSON",
-            )
-            return None
-
-        field_definitions = {}
-
-        if include_explanation:
-            field_definitions["explanation"] = (
-                str,
-                Field(description="Reasoning explanation"),
-            )
-
-        for key, value in label_json.items():
-            field_definitions[key] = (
-                _pydantic_type_from_value(value, key),
-                Field(description=f"Field {key}"),
-            )
-
-        model_name = "ResponseModelWithExplanation" if include_explanation else "ResponseModel"
-        response_model = create_model(model_name, **field_definitions)
-
-        logger.info(
-            "response_validator_created",
-            model_name=model_name,
-            fields=list(field_definitions.keys()),
-        )
-        return response_model
 
     def _serialize_response_format_schema(
         self, rf: type[BaseModel] | None
     ) -> dict[str, Any] | None:
-        """Return the Pydantic JSON Schema for a model class.
+        """Return the litellm-compatible response format dict for a Pydantic model.
 
         Returns ``None`` when *rf* is ``None``.
         """
         if rf is None:
             return None
-        return rf.model_json_schema()
+        schema = rf.model_json_schema()
+        return {
+            "type": "json_schema",
+            "json_schema": {
+                "name": schema.get("title", "ResponseModel"),
+                "strict": True,
+                "schema": schema,
+            },
+        }
 
     # -------------------------------------------------------------------------
     # Response format helpers (extraction mode)
@@ -878,6 +794,7 @@ class ModelEval(BaseRecipe):
 
         return create_model(
             f"{self.response_format.__name__}WithExplanation",
+            __config__=ConfigDict(extra="forbid"),
             **field_definitions,
         )
 
@@ -1028,7 +945,7 @@ class ModelEval(BaseRecipe):
             maps model label to the list of Manipulation values that were applied.
         """
         if field_metrics_config is None:
-            field_metrics_config = self._get_field_metrics_config(self._resolve_response_format())
+            field_metrics_config = self._get_field_metrics_config()
 
         effective_models = models if models is not None else self.models
         documents, labels = self._load_documents_and_labels()
@@ -1057,21 +974,9 @@ class ModelEval(BaseRecipe):
                 else:
                     effective_rf = self.response_format
             elif self._response_format_schema is not None:
-                # Schema restored from a previous run -- wrap for litellm
-                effective_rf = {
-                    "type": "json_schema",
-                    "json_schema": {
-                        "name": self._response_format_schema.get("title", "ResponseModel"),
-                        "strict": True,
-                        "schema": self._response_format_schema,
-                    },
-                }
+                effective_rf = self._response_format_schema
             else:
-                # Label mode: auto-generate validator from label data
-                include_explanation = Manipulation.explanation in manipulations
-                effective_rf = self._create_response_validator(
-                    include_explanation=include_explanation
-                )
+                effective_rf = None
 
             logger.info(
                 "evaluating_model",
