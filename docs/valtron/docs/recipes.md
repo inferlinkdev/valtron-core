@@ -165,4 +165,4 @@ See [Evaluation Results](./evaluation-results) for the full schema of `Evaluatio
 
 - Understand the output schema: [Evaluation Results](./evaluation-results)
 - View the HTML and PDF reports: [Report Formats](./report-formats)
-- Apply prompt strategies per model: [Optimizers](../optimizers)
+- Apply prompt strategies per model: [Optimizers](./optimizers)

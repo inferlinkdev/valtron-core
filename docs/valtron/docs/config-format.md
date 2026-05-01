@@ -4,7 +4,7 @@ sidebar_position: 4
 
 # Config Format
 
-The config controls which models to run, the prompt template, evaluation options, and output settings. You can pass it as a Python dict or a path to a JSON file. See [Data Format](./data-format) for the input schema and [Field Metrics](../field-metrics) for per-field scoring on structured extraction.
+The config controls which models to run, the prompt template, evaluation options, and output settings. You can pass it as a Python dict or a path to a JSON file. See [Data Format](./data-format) for the input schema and [Field Metrics](./field-metrics) for per-field scoring on structured extraction.
 
 ## Top-level fields
 
@@ -254,5 +254,5 @@ experiment = ModelEval(config="./config.json", data="./data.json")
 ## What's next?
 
 - Run your evaluation: [Evaluation API](./recipes)
-- Apply prompt strategies per model: [Optimizers](../optimizers)
-- For field-level scoring on structured extraction: [Field Metrics](../field-metrics)
+- Apply prompt strategies per model: [Optimizers](./optimizers)
+- For field-level scoring on structured extraction: [Field Metrics](./field-metrics)

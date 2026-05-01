@@ -187,5 +187,5 @@ The JSON file must be an array at the top level.
 ## What's next?
 
 - Set up your evaluation in [Config Format](./config-format)
-- For structured extraction with field-level scoring, see [Field Metrics](../field-metrics)
+- For structured extraction with field-level scoring, see [Field Metrics](./field-metrics)
 - Run your evaluation: [Evaluation API](./recipes)

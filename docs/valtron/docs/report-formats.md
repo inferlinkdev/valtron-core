@@ -113,6 +113,6 @@ experiment.save_pdf_report("./results")
 
 ## What's next?
 
-- See working end-to-end examples: [Examples](../examples/)
-- Add a local model with no API cost: [Self-Hosted Models](../self-hosted-models)
-- Train a zero-cost local classifier: [Transformer Models](../transformer-models)
+- See working end-to-end examples: [Examples](./examples)
+- Add a local model with no API cost: [Self-Hosted Models](./self-hosted-models)
+- Train a zero-cost local classifier: [Transformer Models](./transformer-models)
