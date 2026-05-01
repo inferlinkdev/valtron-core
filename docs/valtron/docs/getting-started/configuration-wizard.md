@@ -39,7 +39,7 @@ The wizard runs entirely on your machine. No data leaves your environment.
 
 ## Step 1: Current Model
 
-![Step 1: Current Model](/img/0_wizard_current_model.png)
+![Step 1: Current Model](/img/1_wizard_current_model.png)
 
 Enter the model you are currently using for this task. The field uses autocomplete backed by the full LiteLLM model list, so you can type a partial name (e.g. `gpt`, `claude`, `gemini`) and select from the dropdown.
 
@@ -49,7 +49,7 @@ Enter the model you are currently using for this task. The field uses autocomple
 
 ## Step 2: Test Models
 
-![Step 2: Select Models](/img/1_wizard_select_models.png)
+![Step 2: Select Models](/img/2_wizard_select_models.png)
 
 The wizard automatically suggests three comparison models based on your current model: a mix of simpler (cheaper) and more capable options.
 
@@ -64,7 +64,7 @@ Use the **"Add local model (Ollama)"** or **"Add trained transformer"** help lin
 
 ## Step 3: Prompt
 
-![Step 3: Prompt](/img/2_wizard_prompt.png)
+![Step 3: Prompt](/img/3_wizard_prompt.png)
 
 Enter the prompt template you use for this task. The prompt **must contain `{content}`** as a placeholder. Each document's content is inserted there during evaluation.
 
@@ -81,11 +81,12 @@ If you enabled prompt improvement in Step 2, a notice will appear confirming tha
 
 ## Step 4: Training Data
 
-![Step 4: Training Data](/img/3_wizard_training_data.png)
+![Step 4: Training Data](/img/4_wizard_training_data.png)
 
 Provide your labeled dataset. You can enter:
 - A **URL** pointing to a JSON file (the wizard downloads it automatically)
 - A **local file path** relative to your working directory (e.g. `./examples/my_data.json`)
+- A **file upload** by clicking the browse button — files up to 500 MB are supported; for larger files, enter the local file path instead
 
 Your data must be a JSON array in this format:
 
@@ -121,7 +122,7 @@ Click **Next**. The wizard downloads (if needed) and analyzes your data before m
 
 ## Step 5: Response Format
 
-{/* ![Step 5: Response Format](/img/4_wizard_response_format.png) */}
+![Step 5: Response Format](/img/5_wizard_response_format.png)
 
 The wizard displays the Pydantic model that will be automatically generated from your label values and used to constrain the LLM's output.
 
@@ -153,7 +154,7 @@ class ResponseModel(BaseModel):
 
 ## Step 6: Field-Level Metrics
 
-{/* ![Step 6: Field-Level Metrics](/img/5_wizard_field_metrics.png) */}
+![Step 6: Field-Level Metrics](/img/6_wizard_field_metrics.png)
 
 The wizard inspects your data labels to decide what grading options are available.
 
@@ -189,7 +190,7 @@ See [Field Metrics](../field-metrics) for a full reference.
 
 ## Step 7: Review and Download
 
-{/*![Step 7: Review and Download](/img/6_wizard_review.png) */}
+![Step 7: Review and Download](/img/7_wizard_review.png)
 
 The wizard displays the generated configuration as editable JSON. You can tweak any value directly before saving.
 
