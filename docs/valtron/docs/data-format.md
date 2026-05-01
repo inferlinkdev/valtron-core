@@ -4,9 +4,11 @@ sidebar_position: 3
 
 # Data Format
 
-Valtron expects input data as a list of documents, each paired with an expected output (label). You can pass data as a Python list of dicts or as a path to a JSON file.
+This page covers input documents: how to structure your data before passing it to `ModelEval`. Once your data is ready, see [Config Format](./config-format) to configure the evaluation run.
 
-Think of this as an experiment: the more diverse and representative your examples are, the more meaningful your results will be. Aim to include a broad mix of document types and edge cases that reflect real-world variation. This collection is your **random sample**.
+Valtron expects input data as a list of documents, each paired with an expected output (label). Documents can optionally include file attachments for multimodal evaluation. You can pass data as a Python list of dicts or as a path to a JSON file.
+
+Think of this as an experiment: the closer your examples are to what you will see in production, the more meaningful your results will be. Aim to include a broad mix of document types and edge cases that reflects real-world variation.  Ideally your examples will be a "random sample" of the data you will see in production (i.e., the actual "distribution" of data).  This will improve the liklihood that the experimental results will reflect reality.
 
 ## Document schema
 
@@ -15,40 +17,101 @@ Each item in the data list has the following fields:
 | Field | Type | Required | Description |
 |---|---|---|---|
 | `id` | `string` | Yes | Unique identifier for the document |
-| `content` | `string \| object` | Yes | The text the model will evaluate, or a `{key: value}` map of prompt variables (see [Prompt variables](#prompt-variables-dict-content)) |
+| `content` | `string \| object` | Yes | Text filled into your [configured prompt](./config-format): either a single string or a `{key: value}` map for multiple placeholders |
 | `label` | `string` | Yes | The expected/ground-truth output |
 | `metadata` | `object` | No | Arbitrary key-value pairs; displayed in the report |
 | `attachments` | `array[string]` | No | URLs or local file paths appended to the prompt |
+
+### How content fills your prompt
+
+**String content** - When `content` is a string, your prompt template is expected to have a `{content}` placeholder:
 
 ```json
 [
   {
     "id": "doc-001",
-    "content": "The patient presented with acute chest pain and shortness of breath.",
-    "label": "cardiology",
-    "metadata": {
-      "source": "hospital-a",
-      "year": 2024
-    }
+    "content": "Absolutely love this product!",
+    "label": "positive"
   },
   {
     "id": "doc-002",
-    "content": "Follow-up appointment for knee replacement surgery.",
-    "label": "orthopedics"
+    "content": "Terrible experience, would not recommend.",
+    "label": "negative"
   }
 ]
 ```
+
+Example prompt:
+
+```
+Classify the sentiment of this review: {content}
+```
+
+What LLM receives as input for `doc-001`
+
+```
+Classify the sentiment of this review: Absolutely love this product!
+```
+
+**Dict content** - When `content` is a dict, your prompt is expected to have a placeholder for each key in the content object:
+
+```json
+[
+  {
+    "id": "doc-001",
+    "content": {
+      "text": "The annual rainfall in the Amazon basin exceeds 2,000 mm.",
+      "topic": "climate"
+    },
+    "label": "YES"
+  },
+  {
+    "id": "doc-002",
+    "content": {
+      "text": "The company reported record profits for Q3.",
+      "topic": "climate"
+    },
+    "label": "NO"
+  }
+]
+```
+
+Example prompt:
+
+```
+Text: {text}
+Question: Is the topic of this text '{topic}'? Respond with: YES or NO only.
+```
+
+What LLM receives as input for `doc-001`
+
+```
+"Text: The annual rainfall in the Amazon basin exceeds 2,000 mm.
+Question: Is the topic of this text 'climate'? Respond with: YES or NO only."
+```
+
+If a placeholder in the template is missing from a document's dict, a warning is logged and an empty string is substituted. Extra keys not referenced by the template are silently ignored.
+
+---
 
 ## Label format
 
 The `label` field depends on the evaluation mode:
 
 **Label/classification mode** (no `response_format` in config):
-- `label` is a plain string. It must be the exact value the model is expected to output.
-- Comparison is string equality (or custom comparator if configured)
+- `label` is a plain string matching one of the known output classes.
+- Valtron automatically generates a `Literal` enum from all unique label values in your dataset and uses it as the required output schema. This constrains the LLM to return one of the known classes exactly, reducing hallucinations and making correctness checking unambiguous.
+- If your dataset has more than 50 unique label values, Valtron falls back to `label: str` and the LLM returns free text compared against the label by string equality.
 
 ```json
 {"id": "1", "content": "...", "label": "positive"}
+```
+
+For a dataset with labels `"positive"`, `"negative"`, and `"neutral"`, the generated schema looks like:
+
+```python
+class ResponseModel(BaseModel):
+    label: Literal["negative", "neutral", "positive"]
 ```
 
 **Structured extraction mode** (with `response_format` in config):
@@ -73,42 +136,6 @@ The `label` field depends on the evaluation mode:
   "label": "{\"name\": \"Apple Inc.\", \"city\": \"Cupertino\", \"state\": \"California\"}"
 }
 ```
-
-## Prompt variables (dict content)
-
-When `content` is a `dict[str, str]`, every key becomes a named `{placeholder}` in your prompt template. This lets you pass multiple variables alongside the main document text.
-
-```json
-[
-  {
-    "id": "doc-001",
-    "content": {
-      "text": "The annual rainfall in the Amazon basin exceeds 2,000 mm.",
-      "topic": "climate"
-    },
-    "label": "YES"
-  },
-  {
-    "id": "doc-002",
-    "content": {
-      "text": "The company reported record profits for Q3.",
-      "topic": "climate"
-    },
-    "label": "NO"
-  }
-]
-```
-
-Matching prompt template:
-
-```
-Text: {text}
-Question: Is the topic of this text '{topic}'? Respond with: YES or NO only.
-```
-
-Each key in the dict is substituted for its matching `{placeholder}` in the template. If a placeholder referenced in the template is missing from a document's dict, a warning is logged and an empty string is substituted for that document.
-
-Extra keys in the dict that are not referenced by the template are silently ignored.
 
 ## Attachments
 
@@ -152,6 +179,13 @@ The JSON file must be an array at the top level.
 ## Tips
 
 - `id` values must be unique across your dataset. They are used as keys in the output files.
-- `content` is inserted at the `{content}` placeholder in your prompt template (string form), or each key is inserted at its matching `{key}` placeholder (dict form)
 - `metadata` fields appear in the detailed analysis page of the HTML report but are not passed to the model
 - There is no minimum or maximum document count, but more documents produce more reliable accuracy estimates
+
+---
+
+## What's next?
+
+- Set up your evaluation in [Config Format](./config-format)
+- For structured extraction with field-level scoring, see [Field Metrics](../field-metrics)
+- Run your evaluation: [Evaluation API](./recipes)

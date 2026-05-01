@@ -1,6 +1,6 @@
 """PDF report generation using ReportLab Platypus."""
 
-import tempfile
+import io
 import xml.sax.saxutils as _xml
 from datetime import datetime
 from pathlib import Path
@@ -158,42 +158,39 @@ class PdfReportGenerator(_ReportBase):
                          if results and results[0].metrics else 0)
         timestamp     = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-        # Charts are written to a temp dir; the context keeps them alive
-        # for the duration of doc.build() since Image() reads files at build time.
-        with tempfile.TemporaryDirectory() as tmpdir:
-            chart_paths = self._generate_charts(results, Path(tmpdir))
+        chart_buffers = self._generate_charts(results)
 
-            data: dict[str, Any] = {
-                "timestamp":          timestamp,
-                "num_models":         num_models,
-                "num_documents":      num_documents,
-                "results":            results,
-                "recommendation":     recommendation,
-                "has_field_metrics":  has_field_metrics,
-                "all_field_names":    all_field_names,
-                "prompt_optimizations":   prompt_optimizations or {},
-                "has_optimizations":  has_optimizations,
-                "model_override_prompts": model_override_prompts or {},
-                "original_prompt":    original_prompt,
-                "field_metrics_data": field_metrics_data,
-                "field_max_values":   field_max_values,
-                "performance_best":   performance_best,
-                "performance_ranks":  performance_ranks,
-                "chart_paths":        chart_paths,
-            }
+        data: dict[str, Any] = {
+            "timestamp":          timestamp,
+            "num_models":         num_models,
+            "num_documents":      num_documents,
+            "results":            results,
+            "recommendation":     recommendation,
+            "has_field_metrics":  has_field_metrics,
+            "all_field_names":    all_field_names,
+            "prompt_optimizations":   prompt_optimizations or {},
+            "has_optimizations":  has_optimizations,
+            "model_override_prompts": model_override_prompts or {},
+            "original_prompt":    original_prompt,
+            "field_metrics_data": field_metrics_data,
+            "field_max_values":   field_max_values,
+            "performance_best":   performance_best,
+            "performance_ranks":  performance_ranks,
+            "chart_paths":        chart_buffers,
+        }
 
-            story = self._build_pdf_story(data)
+        story = self._build_pdf_story(data)
 
-            pdf_path = output_dir / f"{output_path.stem}.pdf"
-            doc = SimpleDocTemplate(
-                str(pdf_path),
-                pagesize=LETTER,
-                leftMargin=0.75 * inch,
-                rightMargin=0.75 * inch,
-                topMargin=0.75 * inch,
-                bottomMargin=0.75 * inch,
-            )
-            doc.build(story)
+        pdf_path = output_dir / f"{output_path.stem}.pdf"
+        doc = SimpleDocTemplate(
+            str(pdf_path),
+            pagesize=LETTER,
+            leftMargin=0.75 * inch,
+            rightMargin=0.75 * inch,
+            topMargin=0.75 * inch,
+            bottomMargin=0.75 * inch,
+        )
+        doc.build(story)
 
         return pdf_path
 
@@ -239,10 +236,9 @@ class PdfReportGenerator(_ReportBase):
     def _generate_charts(
         self,
         results: list[EvaluationResult],
-        output_dir: Path,
-    ) -> list[Path]:
-        """Generate matplotlib bar charts and save them to output_dir."""
-        chart_paths: list[Path] = []
+    ) -> list[io.BytesIO]:
+        """Generate matplotlib bar charts and return them as in-memory buffers."""
+        chart_paths: list[io.BytesIO] = []
 
         models:     list[str]   = []
         accuracies: list[float] = []
@@ -294,10 +290,11 @@ class PdfReportGenerator(_ReportBase):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 1,
                     f'{acc:.1f}%', ha='center', va='bottom', fontsize=9, color='#333333')
         plt.tight_layout()
-        acc_path = output_dir / 'chart_accuracy.png'
-        plt.savefig(acc_path, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
+        acc_buf = io.BytesIO()
+        plt.savefig(acc_buf, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
         plt.close()
-        chart_paths.append(acc_path)
+        acc_buf.seek(0)
+        chart_paths.append(acc_buf)
 
         # Cost
         fig, ax = plt.subplots(figsize=(6, 3.5))
@@ -313,10 +310,11 @@ class PdfReportGenerator(_ReportBase):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
                     f'${cost:.4f}', ha='center', va='bottom', fontsize=9, color='#333333')
         plt.tight_layout()
-        cost_path = output_dir / 'chart_cost.png'
-        plt.savefig(cost_path, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
+        cost_buf = io.BytesIO()
+        plt.savefig(cost_buf, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
         plt.close()
-        chart_paths.append(cost_path)
+        cost_buf.seek(0)
+        chart_paths.append(cost_buf)
 
         # Time
         fig, ax = plt.subplots(figsize=(6, 3.5))
@@ -332,10 +330,11 @@ class PdfReportGenerator(_ReportBase):
             ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
                     f'{t:.2f}s', ha='center', va='bottom', fontsize=9, color='#333333')
         plt.tight_layout()
-        time_path = output_dir / 'chart_time.png'
-        plt.savefig(time_path, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
+        time_buf = io.BytesIO()
+        plt.savefig(time_buf, dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
         plt.close()
-        chart_paths.append(time_path)
+        time_buf.seek(0)
+        chart_paths.append(time_buf)
 
         return chart_paths
 
@@ -657,10 +656,7 @@ class PdfReportGenerator(_ReportBase):
         for idx, label, should_show in chart_config:
             if not should_show or idx >= len(chart_paths):
                 continue
-            path = chart_paths[idx]
-            if not path.exists():
-                continue
-            img = Image(str(path), width=5.0 * inch, height=3.0 * inch)
+            img = Image(chart_paths[idx], width=5.0 * inch, height=3.0 * inch)
             elems.append(KeepTogether([
                 Paragraph(label, _STYLES["h3"]),
                 img,

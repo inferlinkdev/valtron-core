@@ -1,16 +1,16 @@
 ---
-sidebar_position: 5
+sidebar_position: 4
 ---
 
-# Response Format
+# Evaluation Results
 
-This page covers what Valtron expects from models and how results are stored on disk.
+This page covers what `ModelEval` produces: the metrics schema, the output directory layout, and the result file structure. For the visual reports built from this data, see [Report Formats](./report-formats).
 
 ## Evaluation modes
 
 ### Label / classification mode
 
-Used when no `response_format` is passed to `ModelEval`. The model is expected to return a plain string that matches the `label` field in your data.
+Used when no `response_format` is passed to `ModelEval`. Valtron automatically infers a response format from your dataset by building a `Literal` enum of all unique label values (up to 50), constraining the model to return one of the known classes exactly. For datasets with more than 50 unique label values, Valtron falls back to `label: str` and the model returns free text compared against the label by string equality.
 
 ```python
 experiment = ModelEval(config=config, data=data)
@@ -91,9 +91,6 @@ results/
 │   └── claude-sonnet-4-6.json
 ├── evaluation_report.html
 ├── detailed_analysis.html
-├── chart_accuracy.png
-├── chart_cost.png
-├── chart_time.png
 └── evaluation_report.pdf        ← only if "pdf" in output_formats
 ```
 
@@ -106,7 +103,7 @@ Contains experiment-level information:
   "timestamp": "2024-01-15T10:30:00",
   "use_case": "sentiment classification",
   "original_prompt": "Classify the sentiment: {content}\n\nSentiment:",
-  "field_config": { ... },
+  "field_metrics_config": { "config": { ... } },
   "documents": [
     {
       "id": "1",
@@ -169,17 +166,11 @@ The `override_prompt` field is only present when the model has a per-model promp
 
 ## Loading results programmatically
 
-You can reload a saved run without re-evaluating:
+To load a saved run without re-evaluating, use `ModelEval.load_experiment_results()`. See [Evaluation API: Incremental Evaluation](./recipes#incremental-evaluation) for the full API including how to add new models to an existing run.
 
-```python
-experiment = ModelEval.load_experiment_results("./results")
+---
 
-# Access results
-for result in experiment.results:
-    print(result.model, result.metrics.accuracy, result.metrics.total_cost)
+## What's next?
 
-# Regenerate the report
-experiment.save_html_report("./results")
-```
-
-See [Recipes → Incremental Evaluation](./recipes#incremental-evaluation) for adding new models to an existing run.
+- View the HTML and PDF reports: [Report Formats](./report-formats)
+- Add new models to an existing run: [Evaluation API: Incremental Evaluation](./recipes#incremental-evaluation)

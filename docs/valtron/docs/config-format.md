@@ -4,19 +4,20 @@ sidebar_position: 4
 
 # Config Format
 
-The config controls which models to run, the prompt template, evaluation options, and output settings. You can pass it as a Python dict or a path to a JSON file.
+The config controls which models to run, the prompt template, evaluation options, and output settings. You can pass it as a Python dict or a path to a JSON file. See [Data Format](./data-format) for the input schema and [Field Metrics](../field-metrics) for per-field scoring on structured extraction.
 
 ## Top-level fields
 
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `models` | `array` | required | List of model configs (see below) |
-| `prompt` | `string` | required | Prompt template; must contain `{content}` |
+| `prompt` | `string` | required | Prompt template with placeholders. Use `{content}` for string document content, or any named key (e.g. `{text}`, `{topic}`) when `content` is a dict. See [Data Format: content placeholders](./data-format#how-content-fills-your-prompt). |
 | `output_dir` | `string` | `null` | Directory to write results to |
 | `use_case` | `string` | `"evaluation"` | Describes your task. Used in the report header and passed directly to the LLM that generates the AI recommendation (e.g. `"sentiment classification"`, `"medical entity extraction"`) |
 | `temperature` | `float` | `0.0` | Default temperature for all models (can be overridden per model) |
 | `few_shot` | `object` | `null` | Few-shot generation config (see below) |
 | `field_metrics_config` | `object` | `null` | Field-level scoring for structured extraction (see below) |
+| `response_format_schema` | `object` | `null` | Structured output schema in litellm format (see below). Lower priority than a Pydantic `response_format` passed to the constructor. |
 | `output_formats` | `array[string]` | `["html"]` | Report formats to generate. Acceptable formats include: `"html"`, `"pdf"` |
 
 ```json
@@ -29,6 +30,39 @@ The config controls which models to run, the prompt template, evaluation options
   "output_formats": ["html", "pdf"]
 }
 ```
+
+---
+
+## Response format schema
+
+`response_format_schema` accepts the litellm JSON schema format and tells the LLM to return structured output. The configuration wizard infers and populates this field automatically from your data.
+
+```json
+{
+  "response_format_schema": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "ResponseModel",
+      "strict": true,
+      "schema": {
+        "type": "object",
+        "title": "ResponseModel",
+        "properties": {
+          "label": { "type": "string", "description": "Predicted class label" }
+        },
+        "required": ["label"],
+        "additionalProperties": false
+      }
+    }
+  }
+}
+```
+
+The schema is stored under `response_format_schema` in `metadata.json` for every run, in the same format, so that results can be replayed with the exact schema that produced them.
+
+**Priority order**: a Pydantic `response_format` class passed to `ModelEval(...)` takes priority over `config.response_format_schema`, which takes priority over the schema loaded from a previous run's metadata. When none of these are provided and labels are plain strings, Valtron falls back to a minimal `{"label": str}` wrapper so the LLM returns structured JSON. When none are provided and labels are JSON-structured, Valtron raises a `ValueError` -- you must supply a schema explicitly in that case.
+
+See also: [`label` field in Data Format](./data-format#label-format).
 
 ---
 
@@ -125,20 +159,22 @@ Quick example for a schema like `{"name": str, "institutions": [{"city": str, "c
 ```json
 {
   "field_metrics_config": {
-    "type": "object",
-    "fields": {
-      "name": {
-        "type": "leaf",
-        "metric_config": {
-          "metric": "comparator",
-          "params": {"element_compare": "text_similarity", "text_similarity_threshold": 0.8}
-        }
-      },
-      "institutions": {
-        "type": "list",
-        "fields": {
-          "city": {"type": "leaf", "metric_config": {"metric": "exact"}},
-          "country": {"type": "leaf", "metric_config": {"metric": "exact"}}
+    "config": {
+      "type": "object",
+      "fields": {
+        "name": {
+          "type": "leaf",
+          "metric_config": {
+            "metric": "comparator",
+            "params": {"element_compare": "text_similarity", "text_similarity_threshold": 0.8}
+          }
+        },
+        "institutions": {
+          "type": "list",
+          "fields": {
+            "city": {"type": "leaf", "metric_config": {"metric": "exact"}},
+            "country": {"type": "leaf", "metric_config": {"metric": "exact"}}
+          }
         }
       }
     }
@@ -212,3 +248,11 @@ experiment = ModelEval(config={"models": [...], "prompt": "..."}, data=data)
 ```python
 experiment = ModelEval(config="./config.json", data="./data.json")
 ```
+
+---
+
+## What's next?
+
+- Run your evaluation: [Evaluation API](./recipes)
+- Apply prompt strategies per model: [Optimizers](../optimizers)
+- For field-level scoring on structured extraction: [Field Metrics](../field-metrics)

@@ -8,13 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class Manipulation(str, Enum):
-    few_shot             = "few_shot"
-    explanation          = "explanation"
-    prompt_repetition    = "prompt_repetition"
+    few_shot = "few_shot"
+    explanation = "explanation"
+    prompt_repetition = "prompt_repetition"
     prompt_repetition_x3 = "prompt_repetition_x3"
-    decompose            = "decompose"
+    decompose = "decompose"
     hallucination_filter = "hallucination_filter"
-    multi_pass           = "multi_pass"
+    multi_pass = "multi_pass"
 
     @property
     def requires_response_format(self) -> bool:
@@ -24,11 +24,13 @@ class Manipulation(str, Enum):
 
 # Manipulations that only work in structured-output mode (response_format required).
 # Used by ModelEval.__init__ to validate configuration at construction time.
-STRUCTURED_MANIPULATIONS: frozenset[Manipulation] = frozenset({
-    Manipulation.decompose,
-    Manipulation.hallucination_filter,
-    Manipulation.multi_pass,
-})
+STRUCTURED_MANIPULATIONS: frozenset[Manipulation] = frozenset(
+    {
+        Manipulation.decompose,
+        Manipulation.hallucination_filter,
+        Manipulation.multi_pass,
+    }
+)
 
 
 class DecomposeConfig(BaseModel):
@@ -53,8 +55,8 @@ class LLMModelConfig(BaseModel):
 
     @model_validator(mode="after")
     def model_prompt_has_placeholder(self) -> "LLMModelConfig":
-        if self.prompt is not None and "{content}" not in self.prompt:
-            raise ValueError("model prompt must contain {content} placeholder")
+        if self.prompt is not None and not re.search(r"\{\w+\}", self.prompt):
+            raise ValueError("model prompt must contain at least one {placeholder}")
         return self
 
 
@@ -127,6 +129,11 @@ class BaseRecipeConfig(BaseModel):
     few_shot: FewShotConfig | None = None
     field_metrics_config: dict[str, Any] | None = None
 
+    # Optional structured output schema in litellm format:
+    # {"type": "json_schema", "json_schema": {"name": str, "strict": bool, "schema": {...}}}
+    # Takes lower priority than a Pydantic response_format passed to the recipe constructor.
+    response_format_schema: dict[str, Any] | None = None
+
     # Saving behaviour when using run() — individual save_*() methods always work
     # regardless of this setting.
     output_formats: list[str] = ["html"]
@@ -138,7 +145,7 @@ class BaseRecipeConfig(BaseModel):
 
     @model_validator(mode="after")
     def prompt_has_placeholder(self) -> "BaseRecipeConfig":
-        if not re.search(r'\{\w+\}', self.prompt):
+        if not re.search(r"\{\w+\}", self.prompt):
             raise ValueError("prompt must contain at least one {placeholder}")
         return self
 

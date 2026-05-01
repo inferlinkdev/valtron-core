@@ -41,10 +41,10 @@ class BaseRecipe(ABC):
     _manipulations_applied: dict[str, list[Any]] | None
     _model_prompts: dict[str, str] | None
     _model_override_prompts: dict[str, str] | None
+    _response_format_schema: dict[str, Any] | None
 
     @abstractmethod
-    def _get_field_metrics_config(self) -> FieldMetricsConfig | None:
-        ...
+    def _get_field_metrics_config(self) -> FieldMetricsConfig | None: ...
 
     def _preflight_check(self) -> None:
         """Run all pre-flight checks before any evaluation work begins.
@@ -123,12 +123,7 @@ class BaseRecipe(ABC):
 
         dest = self._resolve_output_dir(output_dir)
 
-        field_config: dict[str, Any] = {}
-        for result in self.results:
-            if result.metrics and result.metrics.aggregated_field_metrics:
-                for field_name, fm in result.metrics.aggregated_field_metrics.items():
-                    if field_name not in field_config:
-                        field_config[field_name] = {"method": fm.metric, "params": fm.params or {}}
+        fmc = self._get_field_metrics_config()
 
         run_dir = save_run_dir(
             dest,
@@ -136,10 +131,11 @@ class BaseRecipe(ABC):
             self._build_save_documents(),
             use_case=self.use_case,
             original_prompt=self.prompt_template,
-            field_config=field_config or None,
+            field_config=fmc.config if fmc else None,
             model_prompts=self._model_prompts,
             prompt_manipulations=self._manipulations_applied,
             model_override_prompts=self._model_override_prompts,
+            response_format_schema=getattr(self, "_response_format_schema", None),
         )
         return run_dir
 
@@ -156,6 +152,7 @@ class BaseRecipe(ABC):
         if self.results is None:
             raise RuntimeError("Call evaluate() before save_html_report().")
         from valtron_core.models import Document
+
         documents = [
             Document(
                 id=str(d.get("id", "")),
@@ -196,6 +193,7 @@ class BaseRecipe(ABC):
         if self.results is None:
             raise RuntimeError("Call evaluate() before save_pdf_report().")
         from valtron_core.models import Document
+
         documents = [
             Document(
                 id=str(d.get("id", "")),

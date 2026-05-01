@@ -70,8 +70,8 @@ Open `./results/evaluation_report.html` in a browser. You'll see:
 
 ## What's next?
 
-- **Add prompt optimizers** — apply few-shot, chain-of-thought, or other strategies per model: [Prompt Optimizers](../optimizers)
-- **Structured extraction** — extract nested JSON with field-level scoring: [Response Format](../response-format)
-- **PDF output** — add `"output_formats": ["html", "pdf"]` to your config: [Report Formats](../report-formats)
-- **Add a model later** — load a prior run and append a new model without re-running: [Recipes → Incremental Evaluation](../recipes#incremental-evaluation)
-- **Run locally for free** — use Ollama: [Self-Hosted Models](../self-hosted-models)
+- **Add prompt optimizers**: apply few-shot, chain-of-thought, or other strategies per model: [Prompt Optimizers](../optimizers)
+- **Structured extraction**: extract nested JSON with field-level scoring: [Config Format](../config-format) and [Field Metrics](../field-metrics)
+- **PDF output**: add `"output_formats": ["html", "pdf"]` to your config: [Report Formats](../report-formats)
+- **Add a model later**: load a prior run and append a new model without re-running: [Evaluation API: Incremental Evaluation](../recipes#incremental-evaluation)
+- **Run locally for free**: use Ollama: [Self-Hosted Models](../self-hosted-models)

@@ -2,9 +2,9 @@
 sidebar_position: 9
 ---
 
-# Recipes
+# Evaluation API
 
-A recipe is a high-level orchestration class that wraps the full evaluation pipeline. The primary recipe is `ModelEval`.
+`ModelEval` is Valtron's primary API. It ties together your data, config, and models to run the full evaluation pipeline. See [Data Format](./data-format) and [Config Format](./config-format) for the inputs it expects.
 
 ## ModelEval
 
@@ -79,14 +79,14 @@ asyncio.run(run_experiment())
 
 When you call `run()`, Valtron executes these stages in order:
 
-1. **Load and validate data** — parse documents and labels, validate config
-2. **Validate manipulations** — check that structured-only manipulations have `response_format`
-3. **Generate few-shot examples** — if `few_shot.enabled` is true, generate and validate examples before evaluation starts
-4. **Prepare per-model prompts** — apply manipulations to build the final prompt for each model
-5. **Evaluate all models concurrently** — LLM calls run in parallel across models (up to `max_concurrent` per model)
-6. **Compute metrics** — accuracy, cost, latency, and field-level scores per model
-7. **Save results** — write `metadata.json` and `models/*.json` to `output_dir`
-8. **Generate reports** — write HTML and/or PDF reports to `output_dir`
+1. **Load and validate data**: parse documents and labels, validate config
+2. **Validate manipulations**: check that structured-only manipulations have `response_format`
+3. **Generate few-shot examples**: if `few_shot.enabled` is true, generate and validate examples before evaluation starts
+4. **Prepare per-model prompts**: apply manipulations to build the final prompt for each model
+5. **Evaluate all models concurrently**: LLM calls run in parallel across models (up to `max_concurrent` per model)
+6. **Compute metrics**: accuracy, cost, latency, and field-level scores per model
+7. **Save results**: write `metadata.json` and `models/*.json` to `output_dir`
+8. **Generate reports**: write HTML and/or PDF reports to `output_dir`
 
 ---
 
@@ -157,4 +157,12 @@ for result in experiment.results:
         print(prediction.document_id, prediction.predicted_value, prediction.is_correct)
 ```
 
-See [Response Format](./response-format) for the full schema of `EvaluationResult` and `EvaluationMetrics`.
+See [Evaluation Results](./evaluation-results) for the full schema of `EvaluationResult` and `EvaluationMetrics`.
+
+---
+
+## What's next?
+
+- Understand the output schema: [Evaluation Results](./evaluation-results)
+- View the HTML and PDF reports: [Report Formats](./report-formats)
+- Apply prompt strategies per model: [Optimizers](../optimizers)

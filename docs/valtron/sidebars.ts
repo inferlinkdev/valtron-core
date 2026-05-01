@@ -18,10 +18,10 @@ const sidebars: SidebarsConfig = {
       label: 'Core Reference',
       collapsible: false,
       items: [
-        'recipes',
         'data-format',
         'config-format',
-        'response-format',
+        'recipes',
+        'evaluation-results',
         'report-formats',
       ],
     },

@@ -12,6 +12,7 @@ from flask_cors import CORS
 
 app = Flask(__name__, template_folder="../templates")
 CORS(app)
+app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
 
 _all_models_cache: list[dict] | None = None
 
@@ -111,9 +112,7 @@ def api_suggest_models():
 
     suggestions = suggest_models(current_model)
 
-    return jsonify({
-        "suggestions": suggestions
-    })
+    return jsonify({"suggestions": suggestions})
 
 
 @app.route("/api/download-data", methods=["POST"])
@@ -148,12 +147,14 @@ def api_download_data():
         # Return relative path for config
         relative_path = f"examples/example_data/{filename}"
 
-        return jsonify({
-            "success": True,
-            "path": relative_path,
-            "filename": filename,
-            "num_examples": len(json_data) if isinstance(json_data, list) else 1
-        })
+        return jsonify(
+            {
+                "success": True,
+                "path": relative_path,
+                "filename": filename,
+                "num_examples": len(json_data) if isinstance(json_data, list) else 1,
+            }
+        )
 
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"Failed to download file: {str(e)}"}), 400
@@ -161,6 +162,42 @@ def api_download_data():
         return jsonify({"error": "Downloaded file is not valid JSON"}), 400
     except Exception as e:
         return jsonify({"error": f"Unexpected error: {str(e)}"}), 500
+
+
+@app.route("/api/upload-data", methods=["POST"])
+def api_upload_data() -> tuple:
+    """Accept a multipart file upload, validate it is JSON, and save to examples directory."""
+    if "file" not in request.files:
+        return jsonify({"error": "No file provided"}), 400
+
+    file = request.files["file"]
+    if not file.filename:
+        return jsonify({"error": "Empty filename"}), 400
+
+    try:
+        json_data = json.load(file)
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return jsonify({"error": "File is not valid JSON"}), 400
+
+    random_suffix = secrets.token_hex(4)
+    filename = f"training_data_{random_suffix}.json"
+
+    examples_dir = Path(__file__).parent.parent.parent / "examples" / "example_data"
+    examples_dir.mkdir(parents=True, exist_ok=True)
+
+    file_path = examples_dir / filename
+    with open(file_path, "w") as f:
+        json.dump(json_data, f, indent=2)
+
+    relative_path = f"examples/example_data/{filename}"
+    return jsonify(
+        {
+            "success": True,
+            "path": relative_path,
+            "filename": filename,
+            "num_examples": len(json_data) if isinstance(json_data, list) else 1,
+        }
+    )
 
 
 @app.route("/api/analyze-data", methods=["POST"])
@@ -188,6 +225,8 @@ def api_analyze_data():
             return jsonify({"is_json": False, "reason": "Empty or non-list data"})
 
         first_label = data_list[0].get("label", "")
+        if isinstance(first_label, (dict, list)):
+            first_label = json.dumps(first_label)
 
         try:
             label_value = json.loads(first_label)
@@ -196,21 +235,128 @@ def api_analyze_data():
             is_json = False
 
         if not is_json:
-            return jsonify({
-                "is_json": False,
-                "sample_label": first_label,
-                "num_examples": len(data_list),
-            })
+            enum_values = sorted(
+                {str(d.get("label", "")) for d in data_list if str(d.get("label", "")) != ""}
+            )
+            response_format_preview = ""
+            if enum_values:
+                if len(enum_values) <= 50:
+                    args = ", ".join(repr(v) for v in enum_values)
+                    response_format_preview = (
+                        f"class ResponseModel(BaseModel):\n    label: Literal[{args}]"
+                    )
+                else:
+                    response_format_preview = "class ResponseModel(BaseModel):\n    label: str"
+                    enum_values = []
+            label_property: dict = {"type": "string", "description": "Predicted class label"}
+            if enum_values:
+                label_property["enum"] = enum_values
+            string_label_schema: dict = {
+                "type": "object",
+                "title": "ResponseModel",
+                "properties": {"label": label_property},
+                "required": ["label"],
+                "additionalProperties": False,
+            }
+            response_format_schema = {
+                "type": "json_schema",
+                "json_schema": {"name": "ResponseModel", "strict": True, "schema": string_label_schema},
+            }
+            return jsonify(
+                {
+                    "is_json": False,
+                    "sample_label": first_label,
+                    "num_examples": len(data_list),
+                    "enum_values": enum_values,
+                    "response_format_preview": response_format_preview,
+                    "response_format_schema": response_format_schema,
+                }
+            )
 
         from valtron_core.utilities.field_config_generator import infer_field_config
+
         field_config = infer_field_config(first_label)
 
-        return jsonify({
-            "is_json": True,
-            "sample_label": first_label,
-            "num_examples": len(data_list),
-            "field_config": field_config.model_dump(),
-        })
+        def _collect_classes(
+            data: object, class_name: str, out: list[str]
+        ) -> str:
+            if isinstance(data, bool):
+                return "bool"
+            if isinstance(data, int):
+                return "int"
+            if isinstance(data, float):
+                return "float"
+            if isinstance(data, dict):
+                lines = [f"class {class_name}(BaseModel):"]
+                for k, v in data.items():
+                    field_type = _collect_classes(v, k.rstrip("s").capitalize(), out)
+                    lines.append(f"    {k}: {field_type}")
+                out.append("\n".join(lines))
+                return class_name
+            if isinstance(data, list) and data:
+                item_name = class_name.rstrip("s").capitalize()
+                item_type = _collect_classes(data[0], item_name, out)
+                return f"list[{item_type}]"
+            if isinstance(data, list):
+                return "list[str]"
+            return "str"
+
+        def _json_schema_from_value(value: object, title: str) -> dict:
+            if isinstance(value, bool):
+                return {"type": "boolean"}
+            if isinstance(value, int):
+                return {"type": "integer"}
+            if isinstance(value, float):
+                return {"type": "number"}
+            if isinstance(value, dict):
+                props = {k: _json_schema_from_value(v, k) for k, v in value.items()}
+                return {
+                    "type": "object",
+                    "title": title,
+                    "properties": props,
+                    "required": list(value.keys()),
+                    "additionalProperties": False,
+                }
+            if isinstance(value, list) and value:
+                return {"type": "array", "items": _json_schema_from_value(value[0], title)}
+            if isinstance(value, list):
+                return {"type": "array", "items": {"type": "string"}}
+            return {"type": "string"}
+
+        label_json = json.loads(first_label)
+        if isinstance(label_json, dict):
+            extra_classes: list[str] = []
+            main_lines = ["class ResponseModel(BaseModel):"]
+            for k, v in label_json.items():
+                field_type = _collect_classes(v, k.rstrip("s").capitalize(), extra_classes)
+                main_lines.append(f"    {k}: {field_type}")
+            all_parts = extra_classes + ["\n".join(main_lines)]
+            response_format_preview = "\n\n".join(all_parts)
+            json_label_schema = _json_schema_from_value(label_json, "ResponseModel")
+            json_label_schema["title"] = "ResponseModel"
+            response_format_schema = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "ResponseModel",
+                    "strict": True,
+                    "schema": json_label_schema,
+                },
+            }
+        else:
+            response_format_preview = ""
+            response_format_schema = None
+
+        return jsonify(
+            {
+                "is_json": True,
+                "sample_label": first_label,
+                "num_examples": len(data_list),
+                "field_config": field_config.model_dump(),
+                "enum_values": [],
+                "response_format_preview": response_format_preview,
+                "response_format_schema": response_format_schema,
+            }
+        )
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
@@ -231,10 +377,7 @@ def api_save_config():
     with open(config_path, "w") as f:
         json.dump(config, f, indent=2)
 
-    return jsonify({
-        "success": True,
-        "path": str(config_path)
-    })
+    return jsonify({"success": True, "path": str(config_path)})
 
 
 def start_wizard(host="0.0.0.0", port=5000):

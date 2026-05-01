@@ -111,7 +111,7 @@ class TestGenerateRecommendation:
         )
 
         # Should return error message, not raise exception
-        assert "error" in recommendation.lower() or "could not" in recommendation.lower()
+        assert recommendation is None
 
 
 class TestEncodeImage:

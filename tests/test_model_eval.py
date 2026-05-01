@@ -5,7 +5,7 @@ import pytest
 from pathlib import Path
 from datetime import datetime
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
 from valtron_core.recipes.model_eval import ModelEval
 from valtron_core.recipes.config import (
@@ -21,6 +21,7 @@ from valtron_core.models import EvaluationResult, EvaluationMetrics, PredictionR
 # Shared fixtures / helpers
 # ---------------------------------------------------------------------------
 
+
 class SampleSchema(BaseModel):
     name: str
     value: str
@@ -31,9 +32,25 @@ EXTRACT_CONFIG = {
     "prompt": "Extract: {content}",
 }
 
+_LABEL_SCHEMA = {
+    "type": "json_schema",
+    "json_schema": {
+        "name": "ResponseModel",
+        "strict": True,
+        "schema": {
+            "type": "object",
+            "title": "ResponseModel",
+            "properties": {"label": {"type": "string"}},
+            "required": ["label"],
+            "additionalProperties": False,
+        },
+    },
+}
+
 CLASSIFY_CONFIG = {
     "models": [{"name": "gpt-4o-mini"}],
     "prompt": "Classify: {content}",
+    "response_format_schema": _LABEL_SCHEMA,
 }
 
 
@@ -62,6 +79,7 @@ def _mock_result(model="gpt-4o-mini", prompt="Classify: {content}") -> Evaluatio
 # ===========================================================================
 # Initialization
 # ===========================================================================
+
 
 class TestModelEvalInit:
     """Construction and config normalisation."""
@@ -166,6 +184,7 @@ class TestModelEvalInit:
 # ModelEvalConfig validation
 # ===========================================================================
 
+
 class TestModelEvalConfig:
 
     def test_direct_construction(self):
@@ -186,51 +205,64 @@ class TestModelEvalConfig:
 
     def test_prompt_without_placeholder_raises(self):
         with pytest.raises(ValidationError, match="placeholder"):
-            ModelEvalConfig.model_validate({
-                "models": [{"name": "gpt-4o-mini"}],
-                "prompt": "No placeholder here.",
-            })
+            ModelEvalConfig.model_validate(
+                {
+                    "models": [{"name": "gpt-4o-mini"}],
+                    "prompt": "No placeholder here.",
+                }
+            )
 
     def test_unknown_key_raises(self):
         with pytest.raises(ValidationError):
-            ModelEvalConfig.model_validate({
-                "models": [{"name": "gpt-4o-mini"}],
-                "prompt": "Classify: {content}",
-                "unknown_field": "oops",
-            })
+            ModelEvalConfig.model_validate(
+                {
+                    "models": [{"name": "gpt-4o-mini"}],
+                    "prompt": "Classify: {content}",
+                    "unknown_field": "oops",
+                }
+            )
 
     def test_manipulation_strings_coerced_to_enum(self):
-        config = ModelEvalConfig.model_validate({
-            "models": [{"name": "gpt-4o-mini", "prompt_manipulation": ["few_shot"]}],
-            "prompt": "Classify: {content}",
-        })
+        config = ModelEvalConfig.model_validate(
+            {
+                "models": [{"name": "gpt-4o-mini", "prompt_manipulation": ["few_shot"]}],
+                "prompt": "Classify: {content}",
+            }
+        )
         assert config.models[0].prompt_manipulation == [Manipulation.few_shot]
 
     def test_model_prompt_override_accepted(self):
-        config = ModelEvalConfig.model_validate({
-            "models": [{"name": "gpt-4o-mini", "prompt": "Custom: {content}"}],
-            "prompt": "Base: {content}",
-        })
+        config = ModelEvalConfig.model_validate(
+            {
+                "models": [{"name": "gpt-4o-mini", "prompt": "Custom: {content}"}],
+                "prompt": "Base: {content}",
+            }
+        )
         assert config.models[0].prompt == "Custom: {content}"
 
     def test_model_prompt_override_without_placeholder_raises(self):
-        with pytest.raises(ValidationError, match="content"):
-            ModelEvalConfig.model_validate({
-                "models": [{"name": "gpt-4o-mini", "prompt": "No placeholder here."}],
-                "prompt": "Base: {content}",
-            })
+        with pytest.raises(ValidationError, match="placeholder"):
+            ModelEvalConfig.model_validate(
+                {
+                    "models": [{"name": "gpt-4o-mini", "prompt": "No placeholder here."}],
+                    "prompt": "Base: {content}",
+                }
+            )
 
     def test_model_prompt_none_by_default(self):
-        config = ModelEvalConfig.model_validate({
-            "models": [{"name": "gpt-4o-mini"}],
-            "prompt": "Base: {content}",
-        })
+        config = ModelEvalConfig.model_validate(
+            {
+                "models": [{"name": "gpt-4o-mini"}],
+                "prompt": "Base: {content}",
+            }
+        )
         assert config.models[0].prompt is None
 
 
 # ===========================================================================
 # STRUCTURED_MANIPULATIONS and requires_response_format
 # ===========================================================================
+
 
 class TestStructuredManipulations:
 
@@ -262,11 +294,17 @@ class TestStructuredManipulations:
 # Field metrics config
 # ===========================================================================
 
+
 class TestGetFieldMetricsConfig:
 
-    def test_returns_none_for_plain_text_labels(self):
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "positive"}])
-        assert eval_._get_field_metrics_config() is None
+    def test_infers_label_field_for_plain_text_labels(self):
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": lbl} for lbl in ["yes", "no"]],
+        )
+        result = eval_._get_field_metrics_config()
+        assert result is not None
+        assert "label" in result.config["fields"]
 
     def test_returns_none_for_empty_data(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[])
@@ -297,9 +335,45 @@ class TestGetFieldMetricsConfig:
         assert result.config == explicit["config"]
 
 
+class TestCreateLabelWrapper:
+
+    @pytest.mark.unit
+    def test_returns_str_label_model_for_plain_text(self):
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": lbl} for lbl in ["yes", "no"]],
+        )
+        rf = eval_._create_label_wrapper()
+        assert rf is not None
+        assert "label" in rf.model_fields
+        assert rf.model_fields["label"].annotation is str
+
+    @pytest.mark.unit
+    def test_returns_none_for_json_labels(self):
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": '{"sentiment": "positive"}'}],
+        )
+        assert eval_._create_label_wrapper() is None
+
+    @pytest.mark.unit
+    def test_returns_none_for_dict_labels(self):
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": {"sentiment": "positive"}}],
+        )
+        assert eval_._create_label_wrapper() is None
+
+    @pytest.mark.unit
+    def test_returns_none_for_empty_data(self):
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[])
+        assert eval_._create_label_wrapper() is None
+
+
 # ===========================================================================
 # Data loading
 # ===========================================================================
+
 
 class TestLoadDocumentsAndLabels:
 
@@ -321,6 +395,7 @@ class TestLoadDocumentsAndLabels:
 # ===========================================================================
 # Prompt preparation
 # ===========================================================================
+
 
 class TestPrepareModelPrompts:
 
@@ -348,7 +423,9 @@ class TestPrepareModelPrompts:
         }
         eval_ = ModelEval(config=config, data=[])
         with patch.object(
-            eval_.enhancer, "optimize", new_callable=AsyncMock,
+            eval_.enhancer,
+            "optimize",
+            new_callable=AsyncMock,
             return_value={"enhanced_prompt": "Enhanced: {content}"},
         ):
             prompts = await eval_._prepare_model_prompts()
@@ -408,7 +485,13 @@ class TestPrepareModelPrompts:
     @pytest.mark.asyncio
     async def test_manipulation_applied_on_top_of_override_prompt(self):
         config = {
-            "models": [{"name": "gpt-4o-mini", "prompt": "Override: {content}", "prompt_manipulation": ["prompt_repetition"]}],
+            "models": [
+                {
+                    "name": "gpt-4o-mini",
+                    "prompt": "Override: {content}",
+                    "prompt_manipulation": ["prompt_repetition"],
+                }
+            ],
             "prompt": "Base: {content}",
         }
         eval_ = ModelEval(config=config, data=[])
@@ -418,40 +501,34 @@ class TestPrepareModelPrompts:
 
 
 # ===========================================================================
-# Response validator (label mode)
+# Label wrapper (string-label fallback)
 # ===========================================================================
 
-class TestCreateResponseValidator:
 
-    def test_json_labels_produce_validator(self):
+class TestCreateLabelWrapperBehavior:
+
+    def test_plain_text_labels_create_label_str_model(self):
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "positive"}])
+        wrapper = eval_._create_label_wrapper()
+        assert wrapper is not None
+        assert "label" in wrapper.model_fields
+        assert wrapper.model_fields["label"].annotation is str
+
+    def test_json_labels_return_none(self):
         config = {
             "models": [{"name": "gpt-4o-mini"}],
             "prompt": 'Output JSON: {"name": "", "age": 0}. {content}',
         }
-        eval_ = ModelEval(config=config, data=[{"content": "T", "label": '{"name": "J", "age": 30}'}])
-        validator = eval_._create_response_validator()
-        assert validator is not None
-        assert "name" in validator.model_fields
-        assert "age" in validator.model_fields
-
-    def test_plain_text_labels_return_none(self):
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "positive"}])
-        assert eval_._create_response_validator() is None
-
-    def test_explanation_with_json_schema_in_prompt_adds_field(self):
-        config = {
-            "models": [{"name": "gpt-4o-mini"}],
-            "prompt": 'Extract: {"name": ""} from {content}',
-        }
-        eval_ = ModelEval(config=config, data=[{"content": "T", "label": '{"name": "J"}'}])
-        validator = eval_._create_response_validator(include_explanation=True)
-        assert validator is not None
-        assert "explanation" in validator.model_fields
+        eval_ = ModelEval(
+            config=config, data=[{"content": "T", "label": '{"name": "J", "age": 30}'}]
+        )
+        assert eval_._create_label_wrapper() is None
 
 
 # ===========================================================================
 # Transformer evaluation (label mode)
 # ===========================================================================
+
 
 class TestEvaluateTransformer:
 
@@ -466,7 +543,7 @@ class TestEvaluateTransformer:
         eval_ = ModelEval(config=config, data=data)
         docs, _ = eval_._load_documents_and_labels()
 
-        with patch("valtron_core.recipes.model_eval.TransformerModelWrapper") as MockW:
+        with patch("valtron_core.transformer_wrapper.TransformerModelWrapper") as MockW:
             mock_w = Mock()
             mock_w.predict = Mock(return_value='{"sentiment": "positive"}')
             MockW.return_value = mock_w
@@ -481,6 +558,7 @@ class TestEvaluateTransformer:
 # Run evaluations
 # ===========================================================================
 
+
 class TestRunEvaluations:
 
     @pytest.mark.asyncio
@@ -489,7 +567,9 @@ class TestRunEvaluations:
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
         model_prompts = {"gpt-4o-mini": "Classify: {content}"}
 
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+        ):
             results, manipulations = await eval_._run_evaluations(model_prompts)
 
         assert len(results) == 1
@@ -502,7 +582,12 @@ class TestRunEvaluations:
         eval_ = ModelEval(config=config, data=data, response_format=SampleSchema)
         model_prompts = {"gpt-4o-mini": "Extract: {content}"}
 
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result("gpt-4o-mini", "Extract: {content}")):
+        with patch.object(
+            eval_.runner,
+            "evaluate",
+            new_callable=AsyncMock,
+            return_value=_mock_result("gpt-4o-mini", "Extract: {content}"),
+        ):
             results, manipulations = await eval_._run_evaluations(model_prompts)
 
         assert len(results) == 1
@@ -513,13 +598,19 @@ class TestRunEvaluations:
 # Save / run integration
 # ===========================================================================
 
+
 class TestSaveExperimentResults:
 
     def test_save_creates_expected_files(self, tmp_path):
         config = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path), "use_case": "test"}
         eval_ = ModelEval(config=config, data=[{"content": "T", "label": "pos"}])
 
-        mock_r = EvaluationResult(run_id="r", model="gpt-4o-mini", prompt_template="Classify: {content}", status="completed")
+        mock_r = EvaluationResult(
+            run_id="r",
+            model="gpt-4o-mini",
+            prompt_template="Classify: {content}",
+            status="completed",
+        )
         mock_r.predictions = []
         eval_.results = [mock_r]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
@@ -539,7 +630,12 @@ class TestSaveExperimentResults:
         config = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path)}
         eval_ = ModelEval(config=config, data=[{"content": "T", "label": "pos"}])
 
-        mock_r = EvaluationResult(run_id="r", model="gpt-4o-mini", prompt_template="Override: {content}", status="completed")
+        mock_r = EvaluationResult(
+            run_id="r",
+            model="gpt-4o-mini",
+            prompt_template="Override: {content}",
+            status="completed",
+        )
         mock_r.predictions = []
         eval_.results = [mock_r]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
@@ -556,7 +652,12 @@ class TestSaveExperimentResults:
         config = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path)}
         eval_ = ModelEval(config=config, data=[{"content": "T", "label": "pos"}])
 
-        mock_r = EvaluationResult(run_id="r", model="gpt-4o-mini", prompt_template="Classify: {content}", status="completed")
+        mock_r = EvaluationResult(
+            run_id="r",
+            model="gpt-4o-mini",
+            prompt_template="Classify: {content}",
+            status="completed",
+        )
         mock_r.predictions = []
         eval_.results = [mock_r]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
@@ -583,7 +684,9 @@ class TestSaveHtmlReportFromMemory:
         eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}"}
         eval_._model_override_prompts = None
 
-        with patch.object(eval_.runner, "generate_report", return_value=tmp_path / "evaluation_report.html") as mock_gen:
+        with patch.object(
+            eval_.runner, "generate_report", return_value=tmp_path / "evaluation_report.html"
+        ) as mock_gen:
             report_path = eval_.save_html_report()
 
         mock_gen.assert_called_once()
@@ -606,8 +709,12 @@ class TestRun:
         config = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path)}
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
 
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
-            with patch.object(eval_.runner, "generate_report", return_value=tmp_path / "report.html"):
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+        ):
+            with patch.object(
+                eval_.runner, "generate_report", return_value=tmp_path / "report.html"
+            ):
                 report_path = await eval_.arun()
 
         assert report_path == tmp_path / "report.html"
@@ -623,14 +730,23 @@ class TestRun:
 
         with patch("valtron_core.recipes.model_eval.FewShotTrainingDataGenerator") as MockGen:
             mock_gen = Mock()
-            mock_gen.generate_and_validate_examples = AsyncMock(return_value={
-                "examples": [{"document": "D", "label": "pos", "consensus": "correct"}],
-                "costs": {"total_cost": 0.01},
-            })
+            mock_gen.generate_and_validate_examples = AsyncMock(
+                return_value={
+                    "examples": [{"document": "D", "label": "pos", "consensus": "correct"}],
+                    "costs": {"total_cost": 0.01},
+                }
+            )
             MockGen.return_value = mock_gen
 
-            with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
-                with patch.object(eval_.runner, "generate_report", new_callable=AsyncMock, return_value=tmp_path / "r.html"):
+            with patch.object(
+                eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+            ):
+                with patch.object(
+                    eval_.runner,
+                    "generate_report",
+                    new_callable=AsyncMock,
+                    return_value=tmp_path / "r.html",
+                ):
                     await eval_.arun()
 
         assert len(eval_.few_shot_examples) > 0
@@ -640,11 +756,17 @@ class TestRun:
         config = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path), "output_formats": ["pdf"]}
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
 
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
-            with patch.object(eval_.runner, "generate_report", return_value=tmp_path / "report.html") as mock_report:
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+        ):
+            with patch.object(
+                eval_.runner, "generate_report", return_value=tmp_path / "report.html"
+            ) as mock_report:
                 report_path = await eval_.arun()
 
-        mock_report.assert_called_once_with(**{**mock_report.call_args.kwargs, "output_formats": ["pdf"]})
+        mock_report.assert_called_once_with(
+            **{**mock_report.call_args.kwargs, "output_formats": ["pdf"]}
+        )
         assert report_path != tmp_path / "report.html"
 
     @pytest.mark.asyncio
@@ -652,8 +774,12 @@ class TestRun:
         config = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path), "output_formats": ["html", "pdf"]}
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
 
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
-            with patch.object(eval_.runner, "generate_report", return_value=tmp_path / "report.html") as mock_report:
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+        ):
+            with patch.object(
+                eval_.runner, "generate_report", return_value=tmp_path / "report.html"
+            ) as mock_report:
                 report_path = await eval_.arun()
 
         assert mock_report.call_count == 2
@@ -666,6 +792,7 @@ class TestRun:
 # ===========================================================================
 # add_models
 # ===========================================================================
+
 
 class TestAddModels:
 
@@ -690,12 +817,16 @@ class TestAddModels:
     def test_add_duplicate_within_batch_raises(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
         with pytest.raises(ValueError, match="Duplicate label"):
-            eval_.add_models([{"name": "gpt-4o", "label": "new"}, {"name": "gpt-4o-2", "label": "new"}])
+            eval_.add_models(
+                [{"name": "gpt-4o", "label": "new"}, {"name": "gpt-4o-2", "label": "new"}]
+            )
 
     def test_add_structured_manip_without_response_format_raises(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
         with pytest.raises(ValueError, match="response_format"):
-            eval_.add_models([{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}])
+            eval_.add_models(
+                [{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}]
+            )
 
     def test_add_updates_config_models(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
@@ -708,6 +839,7 @@ class TestAddModels:
 # load_experiment_results
 # ===========================================================================
 
+
 def _write_mock_run_dir(tmp_path, override_prompt=None):
     """Helper: write a minimal run directory and return its path."""
     run_dir = tmp_path / "run"
@@ -719,6 +851,7 @@ def _write_mock_run_dir(tmp_path, override_prompt=None):
         "use_case": "test classification",
         "original_prompt": "Classify: {content}",
         "field_config": None,
+        "response_format_schema": _LABEL_SCHEMA,
         "documents": [
             {"id": "d1", "content": "Hello", "label": "positive"},
             {"id": "d2", "content": "Bye", "label": "negative"},
@@ -738,16 +871,35 @@ def _write_mock_run_dir(tmp_path, override_prompt=None):
         "override_prompt": override_prompt,
         "llm_config": {"model": "gpt-4o-mini", "temperature": 0.0},
         "metrics": {
-            "total_documents": 2, "correct_predictions": 2, "accuracy": 1.0,
-            "average_example_score": 1.0, "total_cost": 0.001, "total_time": 2.0,
-            "average_cost_per_document": 0.0005, "average_time_per_document": 1.0,
+            "total_documents": 2,
+            "correct_predictions": 2,
+            "accuracy": 1.0,
+            "average_example_score": 1.0,
+            "total_cost": 0.001,
+            "total_time": 2.0,
+            "average_cost_per_document": 0.0005,
+            "average_time_per_document": 1.0,
             "model": "gpt-4o-mini",
         },
         "predictions": [
-            {"document_id": "d1", "predicted_value": "positive", "original_cost": 0.0005,
-             "cost": 0.0005, "response_time": 1.0, "is_correct": True, "example_score": 1.0},
-            {"document_id": "d2", "predicted_value": "negative", "original_cost": 0.0005,
-             "cost": 0.0005, "response_time": 1.0, "is_correct": True, "example_score": 1.0},
+            {
+                "document_id": "d1",
+                "predicted_value": "positive",
+                "original_cost": 0.0005,
+                "cost": 0.0005,
+                "response_time": 1.0,
+                "is_correct": True,
+                "example_score": 1.0,
+            },
+            {
+                "document_id": "d2",
+                "predicted_value": "negative",
+                "original_cost": 0.0005,
+                "cost": 0.0005,
+                "response_time": 1.0,
+                "is_correct": True,
+                "example_score": 1.0,
+            },
         ],
     }
     with open(models_dir / "gpt-4o-mini.json", "w") as f:
@@ -792,8 +944,10 @@ class TestLoadExperimentResults:
         run_dir = tmp_path / "run"
         (run_dir / "models").mkdir(parents=True)
         metadata = {
-            "use_case": "test", "original_prompt": "Classify: {content}",
-            "field_config": None, "documents": [],
+            "use_case": "test",
+            "original_prompt": "Classify: {content}",
+            "field_config": None,
+            "documents": [],
         }
         with open(run_dir / "metadata.json", "w") as f:
             json.dump(metadata, f)
@@ -814,7 +968,9 @@ class TestLoadExperimentResults:
         loaded.add_models([{"name": "gpt-4o", "label": "gpt-4o-new"}])
 
         new_result = _mock_result("gpt-4o-new", "Classify: {content}")
-        with patch.object(loaded.runner, "evaluate", new_callable=AsyncMock, return_value=new_result) as mock_eval:
+        with patch.object(
+            loaded.runner, "evaluate", new_callable=AsyncMock, return_value=new_result
+        ) as mock_eval:
             await loaded.aevaluate()
 
         assert mock_eval.call_count == 1
@@ -827,6 +983,7 @@ class TestLoadExperimentResults:
 # ===========================================================================
 # Incremental evaluation (aevaluate skips already-evaluated models)
 # ===========================================================================
+
 
 class TestDictContent:
     """Tests for dict-based prompt variable content."""
@@ -842,6 +999,7 @@ class TestDictContent:
             "models": [{"name": "gpt-4o-mini"}],
             "prompt": "Text: {text} Is the topic '{topic}'? YES or NO only.",
             "output_dir": str(tmp_path),
+            "response_format_schema": _LABEL_SCHEMA,
         }
         data = [
             {
@@ -882,16 +1040,22 @@ class TestIncrementalEvaluation:
         config = {
             "models": [{"name": "gpt-4o-mini"}, {"name": "gpt-4o", "label": "gpt-4o-new"}],
             "prompt": "Classify: {content}",
+            "response_format_schema": _LABEL_SCHEMA,
         }
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
 
         # Pre-populate results for the first model only
         eval_.results = [_mock_result("gpt-4o-mini")]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
-        eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}", "gpt-4o-new": "Classify: {content}"}
+        eval_._model_prompts = {
+            "gpt-4o-mini": "Classify: {content}",
+            "gpt-4o-new": "Classify: {content}",
+        }
 
         new_result = _mock_result("gpt-4o-new")
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=new_result) as mock_eval:
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=new_result
+        ) as mock_eval:
             await eval_.aevaluate()
 
         assert mock_eval.call_count == 1
@@ -902,16 +1066,186 @@ class TestIncrementalEvaluation:
         config = {
             "models": [{"name": "gpt-4o-mini"}, {"name": "gpt-4o", "label": "gpt-4o-new"}],
             "prompt": "Classify: {content}",
+            "response_format_schema": _LABEL_SCHEMA,
         }
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
         eval_.results = [_mock_result("gpt-4o-mini")]
         eval_._manipulations_applied = {"gpt-4o-mini": []}
-        eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}", "gpt-4o-new": "Classify: {content}"}
+        eval_._model_prompts = {
+            "gpt-4o-mini": "Classify: {content}",
+            "gpt-4o-new": "Classify: {content}",
+        }
 
         new_result = _mock_result("gpt-4o-new")
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=new_result):
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=new_result
+        ):
             await eval_.aevaluate()
 
         assert {r.model for r in eval_.results} == {"gpt-4o-mini", "gpt-4o-new"}
         assert "gpt-4o-mini" in eval_._manipulations_applied
-        assert "gpt-4o-new" in eval_._manipulations_applied
+
+
+# ===========================================================================
+# aevaluate schema resolution priority
+# ===========================================================================
+
+
+class TestAevaluateSchemaPriority:
+    """Schema resolution priority: constructor > config > loaded metadata > label wrapper."""
+
+    @pytest.mark.unit
+    async def test_constructor_response_format_takes_priority(self):
+        class MySchema(BaseModel):
+            field: str
+
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": "pos"}],
+            response_format=MySchema,
+        )
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+            await eval_.aevaluate()
+        assert eval_._response_format_schema is not None
+        assert eval_._response_format_schema["type"] == "json_schema"
+        assert eval_._response_format_schema["json_schema"]["name"] == "MySchema"
+
+    @pytest.mark.unit
+    async def test_config_response_format_schema_used_when_no_constructor_format(self):
+        schema = {
+            "type": "json_schema",
+            "json_schema": {"name": "MyModel", "strict": True, "schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
+        }
+        cfg = {**CLASSIFY_CONFIG, "response_format_schema": schema}
+        eval_ = ModelEval(config=cfg, data=[{"content": "T", "label": "pos"}])
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+            await eval_.aevaluate()
+        assert eval_._response_format_schema == schema
+
+    @pytest.mark.unit
+    async def test_loaded_schema_preserved_when_no_other_source(self):
+        loaded_schema = {
+            "type": "json_schema",
+            "json_schema": {"name": "Loaded", "strict": True, "schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
+        }
+        cfg_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
+        eval_ = ModelEval(config=cfg_no_schema, data=[{"content": "T", "label": "pos"}])
+        eval_._response_format_schema = loaded_schema
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+            await eval_.aevaluate()
+        assert eval_._response_format_schema == loaded_schema
+
+    @pytest.mark.unit
+    async def test_string_labels_auto_wrap_when_no_schema(self):
+        cfg_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
+        eval_ = ModelEval(
+            config=cfg_no_schema,
+            data=[{"content": "T", "label": "pos"}],
+        )
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+            await eval_.aevaluate()
+        assert eval_._response_format_schema is not None
+        assert eval_._response_format_schema["json_schema"]["name"] == "ResponseModel"
+
+    @pytest.mark.unit
+    async def test_missing_schema_raises_value_error_for_json_labels(self):
+        cfg_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
+        eval_ = ModelEval(
+            config=cfg_no_schema,
+            data=[{"content": "T", "label": {"field": "value"}}],
+        )
+        with pytest.raises(ValueError, match="response format schema is required"):
+            await eval_.aevaluate()
+
+
+# ===========================================================================
+# Response format schema serialization
+# ===========================================================================
+
+
+class TestSerializeResponseFormatSchema:
+    """_serialize_response_format_schema produces a litellm-compatible dict."""
+
+    @pytest.mark.unit
+    def test_returns_none_for_none(self):
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
+        assert eval_._serialize_response_format_schema(None) is None
+
+    @pytest.mark.unit
+    def test_returns_litellm_format(self):
+        DynModel = create_model(
+            "ResponseModel",
+            __config__=ConfigDict(extra="forbid"),
+            label=(str, Field(description="label")),
+        )
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
+        result = eval_._serialize_response_format_schema(DynModel)
+        assert isinstance(result, dict)
+        assert result["type"] == "json_schema"
+        assert result["json_schema"]["name"] == "ResponseModel"
+        assert result["json_schema"]["strict"] is True
+        inner_schema = result["json_schema"]["schema"]
+        assert inner_schema["properties"]["label"]["type"] == "string"
+        assert inner_schema.get("additionalProperties") is False
+
+
+# ===========================================================================
+# metadata.json includes response_format_schema
+# ===========================================================================
+
+
+class TestResponseFormatSchemaInMetadata:
+    """save_experiment_results writes response_format_schema in litellm format to metadata.json."""
+
+    @pytest.mark.unit
+    def test_schema_written_to_metadata_in_litellm_format(self, tmp_path):
+        cfg = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path)}
+        eval_ = ModelEval(
+            config=cfg,
+            data=[{"content": "T", "label": lbl} for lbl in ["pos", "neg"]],
+        )
+        eval_.results = [_mock_result()]
+        eval_._manipulations_applied = {"gpt-4o-mini": []}
+        eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}"}
+        eval_._model_override_prompts = {}
+        eval_._response_format_schema = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "ResponseModel",
+                "strict": True,
+                "schema": {
+                    "title": "ResponseModel",
+                    "type": "object",
+                    "properties": {"label": {"type": "string"}},
+                    "required": ["label"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+
+        eval_.save_experiment_results()
+
+        metadata = json.loads((tmp_path / "metadata.json").read_text())
+        assert "response_format_schema" in metadata
+        saved = metadata["response_format_schema"]
+        assert saved["type"] == "json_schema"
+        assert saved["json_schema"]["name"] == "ResponseModel"
+        assert saved["json_schema"]["strict"] is True
+
+    @pytest.mark.unit
+    def test_schema_null_when_explicitly_none(self, tmp_path):
+        cfg = {**CLASSIFY_CONFIG, "output_dir": str(tmp_path)}
+        eval_ = ModelEval(
+            config=cfg,
+            data=[{"content": "T", "label": "pos"}],
+        )
+        eval_.results = [_mock_result()]
+        eval_._manipulations_applied = {"gpt-4o-mini": []}
+        eval_._model_prompts = {"gpt-4o-mini": "Classify: {content}"}
+        eval_._model_override_prompts = {}
+        eval_._response_format_schema = None
+
+        eval_.save_experiment_results()
+
+        metadata = json.loads((tmp_path / "metadata.json").read_text())
+        assert metadata["response_format_schema"] is None

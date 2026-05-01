@@ -1,6 +1,7 @@
 """Evaluation engine for LLM prompt testing."""
 
 import asyncio
+import json
 import re
 import time
 import uuid
@@ -385,9 +386,22 @@ class PromptEvaluator:
                         custom_metrics=field_metrics_config.custom_metrics,
                         custom_aggs=field_metrics_config.custom_aggs,
                     )
+                    expected_for_eval = label.value
+                    try:
+                        json.loads(label.value)
+                    except (json.JSONDecodeError, ValueError):
+                        cfg = (
+                            field_metrics_config.config
+                            if isinstance(field_metrics_config.config, dict)
+                            else {}
+                        )
+                        fields = cfg.get("fields") or {}
+                        if cfg.get("type") == "object" and len(fields) == 1:
+                            field_name = next(iter(fields))
+                            expected_for_eval = json.dumps({field_name: label.value})
                     result = evaluator.evaluate(
                         field_metrics_config.config,
-                        label.value,
+                        expected_for_eval,
                         predicted_value,
                     )
 

@@ -371,8 +371,9 @@
         <div class="progress-step" data-step="2">Test Models</div>
         <div class="progress-step" data-step="3">Prompt</div>
         <div class="progress-step" data-step="4">Training Data</div>
-        <div class="progress-step" data-step="5">Field Metrics</div>
-        <div class="progress-step" data-step="6">Review</div>
+        <div class="progress-step" data-step="5">Response Format</div>
+        <div class="progress-step" data-step="6">Field Metrics</div>
+        <div class="progress-step" data-step="7">Review</div>
     </div>
 
     <div class="content">
@@ -425,10 +426,17 @@
         <!-- ── Step 3: Prompt ─────────────────────────────────────────────── -->
         <div class="step" data-step="3">
             <h2>Enter your prompt template</h2>
-            <p class="step-description">Your prompt must include the <code>{content}</code> placeholder where each test document will be inserted.</p>
+            <p class="step-description">Your prompt must include at least one placeholder. Use <code>{content}</code> for plain-text documents, or use named keys like <code>{text}</code>, <code>{topic}</code> when your data's <code>content</code> field is a JSON object with those keys.</p>
             <div class="form-group">
                 <label for="prompt-template">Prompt Template</label>
                 <textarea id="prompt-template" placeholder="Example:&#10;&#10;Determine if two geographic locations are the same or in close proximity (within 10 miles). Respond with yes or no in JSON format like {&quot;response&quot;:&quot;yes&quot;} or {&quot;response&quot;:&quot;no&quot;}.&#10;&#10;Document: {content}"></textarea>
+                <div id="prompt-error" style="display:none; margin-top:10px;" class="alert alert-warning">
+                    Type your prompt in the box above. It must contain at least one <code>{placeholder}</code> where your document content will be inserted.<br><br>
+                    Example:<br>
+                    <code style="display:block; margin-top:6px; white-space:pre-wrap;">Classify the sentiment of the following text. Respond with POSITIVE or NEGATIVE only.
+
+{content}</code>
+                </div>
             </div>
             <div class="alert alert-warning" id="few-shot-alert" style="display:none">
                 📚 Few-shot learning is enabled. We'll configure training data on the next step.
@@ -445,8 +453,13 @@
             <p class="step-description">Upload or link to your labeled dataset. This will be used for evaluation and few-shot learning.</p>
             <div class="form-group">
                 <label for="data-url">Data URL or Path</label>
-                <input type="url" id="data-url" placeholder="https://example.com/data.json or ./examples/my_data.json" />
-                <p class="step-description" style="margin-top:8px">
+                <div style="display:flex;gap:8px;align-items:center">
+                    <input type="text" id="data-url" placeholder="https://example.com/data.json or ./examples/my_data.json" style="flex:1" />
+                    <button type="button" class="btn btn-secondary" style="white-space:nowrap;flex-shrink:0" onclick="document.getElementById('file-picker').click()">Browse...</button>
+                </div>
+                <input type="file" id="file-picker" accept=".json" style="display:none" onchange="handleFilePick(this)" />
+                <div id="upload-status" style="margin-top:6px;font-size:0.85em;color:#8b949e;min-height:1.2em">Browse supports files up to 500 MB. For larger files, enter the path directly.</div>
+                <p class="step-description" style="margin-top:4px">
                     <a href="#" class="help-link" onclick="showModal('format-modal');return false">📋 View required data format</a>
                 </p>
             </div>
@@ -467,19 +480,33 @@
             </div>
         </div>
 
-        <!-- ── Step 5: Field Metrics ──────────────────────────────────────── -->
+        <!-- ── Step 5: Response Format ───────────────────────────────────── -->
         <div class="step" data-step="5">
+            <h2>Response Format</h2>
+            <p class="step-description">This is the Pydantic model inferred from your data. It is a best-effort inference — for plain-text labels with up to 50 unique values a <code>Literal</code> enum is generated; for JSON labels the structure is recursively inferred from your first example. If you need a more precise schema, pass your own Pydantic model as <code>response_format</code> when constructing <code>ModelEval</code>. See <a href="https://valtron.ai/docs/evaluation-results#structured-extraction-mode" target="_blank" style="color:#58a6ff">Structured extraction mode</a> for details.</p>
+            <p class="step-description" style="color:#8b949e;font-size:.9em">This schema will be saved to your config file and used for structured output.</p>
+            <div id="rf-count-badge" style="margin-bottom:12px;font-size:.9em;color:#8b949e"></div>
+            <pre id="rf-preview" style="background:#161b22;color:#e6edf3;padding:1rem;border-radius:6px;overflow:auto;font-size:.85em;border:1px solid #30363d"></pre>
+            <ul id="rf-enum-list" style="margin-top:12px;padding-left:1.4rem;color:#e6edf3;font-size:.9em"></ul>
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+                <button class="btn btn-primary" onclick="nextStep()">Next →</button>
+            </div>
+        </div>
+
+        <!-- ── Step 6: Field Metrics ──────────────────────────────────────── -->
+        <div class="step" data-step="6">
             <h2>Field-Level Metrics</h2>
             <p class="step-description" id="fm-description"></p>
 
-            <!-- Plain-text labels: no field metrics available -->
+            <!-- No usable labels detected -->
             <div id="no-json-section" style="display:none">
                 <div class="alert alert-info">
-                    Your training data labels are plain text — field-level grading is only available for JSON-structured labels.
+                    Could not detect label values in your training data. Field-level grading requires either JSON-structured labels or plain-text enum labels.
                 </div>
             </div>
 
-            <!-- JSON labels detected -->
+            <!-- JSON labels or plain-text enum labels detected -->
             <div id="json-detected-section" style="display:none">
                 <div class="fm-question">
                     <p>Configure per-field grading to get detailed insights on which fields each model gets right or wrong?</p>
@@ -531,8 +558,8 @@
             </div>
         </div>
 
-        <!-- ── Step 6: Review ─────────────────────────────────────────────── -->
-        <div class="step" data-step="6">
+        <!-- ── Step 7: Review ─────────────────────────────────────────────── -->
+        <div class="step" data-step="7">
             <h2>Review &amp; Download Configuration</h2>
             <p class="step-description">Your configuration is ready! You can edit it below or download it directly.</p>
             <div class="alert alert-success">✅ Configuration generated successfully! Save this file to use with the recipe.</div>
@@ -597,19 +624,31 @@ ollama pull mistral</pre></li>
     <div class="modal-content">
         <button class="modal-close" onclick="closeModal('format-modal')">&times;</button>
         <h3>Required Data Format</h3>
-        <p>Your training data must be a JSON array with this structure:</p>
+        <p>Your training data must be a JSON array. The <code>content</code> field can be a plain string or a JSON object for prompt variables:</p>
+        <p><strong>Plain text content</strong> — use <code>{content}</code> in your prompt:</p>
         <pre>[
   {
     "id": "example-1",
     "content": "Your document text here...",
-    "label": "{\"response\": \"yes\"}",
-    "metadata": {}  // Optional
+    "label": "yes"
   }
 ]</pre>
+        <p><strong>Dict content (prompt variables)</strong> — use <code>{key}</code> placeholders in your prompt:</p>
+        <pre>[
+  {
+    "id": "example-1",
+    "content": {
+      "text": "The Amazon basin receives over 2,000 mm of rain.",
+      "topic": "climate"
+    },
+    "label": "yes"
+  }
+]</pre>
+        <p>With dict content, each key becomes a <code>{key}</code> placeholder — e.g. <code>Text: {text}\nTopic: {topic}</code>.</p>
         <p><strong>Required fields:</strong></p>
         <ul>
-            <li><code>content</code>: The text to classify</li>
-            <li><code>label</code>: The correct answer (as JSON string)</li>
+            <li><code>content</code>: The text to classify (string or object)</li>
+            <li><code>label</code>: The correct answer</li>
         </ul>
     </div>
 </div>
@@ -765,8 +804,10 @@ function nextStep() {
 
     if (currentStep === 3) {
         const p = document.getElementById('prompt-template').value.trim();
-        if (!p) { alert('Please enter a prompt template'); return; }
-        if (!p.includes('{content}')) { alert('Prompt must include {content} placeholder'); return; }
+        const promptErr = document.getElementById('prompt-error');
+        if (!p) { promptErr.style.display = 'block'; return; }
+        promptErr.style.display = 'none';
+        if (!/\{\w+\}/.test(p)) { alert('Prompt must include at least one {placeholder}, e.g. {content}'); return; }
         config.prompt = p;
         if (config.few_shot.enabled) document.getElementById('few-shot-config-section').style.display = 'block';
     }
@@ -776,7 +817,9 @@ function nextStep() {
     updateStepDisplay(currentStep + 1);
 }
 
-function prevStep() { updateStepDisplay(currentStep - 1); }
+function prevStep() {
+    updateStepDisplay(currentStep - 1);
+}
 
 function updateStepDisplay(step) {
     document.querySelectorAll('.step').forEach(s => s.classList.remove('active'));
@@ -787,6 +830,35 @@ function updateStepDisplay(step) {
         else if (i + 1 === step) s.classList.add('active');
     });
     currentStep = step;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Step 4: file picker upload
+   ════════════════════════════════════════════════════════════════ */
+async function handleFilePick(input) {
+    const file = input.files[0];
+    if (!file) return;
+    const status = document.getElementById('upload-status');
+    status.textContent = `Uploading ${file.name}…`;
+    status.style.color = '#8b949e';
+    const form = new FormData();
+    form.append('file', file);
+    try {
+        const resp = await fetch('/api/upload-data', { method: 'POST', body: form });
+        const result = await resp.json();
+        if (!resp.ok) {
+            status.textContent = 'Upload failed: ' + result.error;
+            status.style.color = '#f85149';
+            return;
+        }
+        document.getElementById('data-url').value = result.path;
+        status.textContent = `Uploaded — ${result.num_examples} examples`;
+        status.style.color = '#3fb950';
+    } catch (e) {
+        status.textContent = 'Upload error: ' + e.message;
+        status.style.color = '#f85149';
+    }
+    input.value = '';
 }
 
 /* ════════════════════════════════════════════════════════════════
@@ -830,6 +902,7 @@ async function analyzeData() {
         if (!resp.ok) { alert('Error analyzing data: ' + result.error); return; }
 
         analysisResult = result;
+        populateRfStep(result);
         populateFmStep(result);
         updateStepDisplay(5);
     } catch (e) {
@@ -840,14 +913,27 @@ async function analyzeData() {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   Step 5: populate field metrics UI
+   Step 5: populate response format preview
+   ════════════════════════════════════════════════════════════════ */
+function populateRfStep(result) {
+    const preview = result.response_format_preview || '';
+    const values = result.enum_values || [];
+    document.getElementById('rf-preview').textContent = preview;
+    document.getElementById('rf-count-badge').textContent =
+        values.length ? `${values.length} unique label value${values.length !== 1 ? 's' : ''} detected` : '';
+    const ul = document.getElementById('rf-enum-list');
+    ul.innerHTML = values.map(v => `<li>${v}</li>`).join('');
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Step 6: populate field metrics UI
    ════════════════════════════════════════════════════════════════ */
 function populateFmStep(result) {
     const desc = document.getElementById('fm-description');
     document.getElementById('no-json-section').style.display    = 'none';
     document.getElementById('json-detected-section').style.display = 'none';
 
-    if (!result.is_json) {
+    if (!result.is_json && !result.enum_values?.length) {
         document.getElementById('no-json-section').style.display = 'block';
         desc.textContent = result.num_examples
             ? `Detected ${result.num_examples} examples. Labels are plain text.`
@@ -856,16 +942,23 @@ function populateFmStep(result) {
     }
 
     document.getElementById('json-detected-section').style.display = 'block';
-    desc.textContent = `Detected ${result.num_examples} examples. Labels are JSON — configure how each field is graded.`;
 
     // Reset radio to "No" and hide editor
     document.querySelectorAll('input[name="use-fm"]').forEach(r => { r.checked = r.value === 'no'; });
     document.getElementById('fm-editor').classList.remove('visible');
 
-    // Build the tree (so it's ready when the user picks Yes)
-    const labelValue = JSON.parse(result.sample_label);
-    const fieldConfig = result.field_config;   // raw from server (nulls present)
-    buildTree(document.getElementById('fm-tree'), fieldConfig, labelValue);
+    if (result.is_json) {
+        desc.textContent = `Detected ${result.num_examples} examples. Labels are JSON — configure how each field is graded.`;
+        const labelValue = JSON.parse(result.sample_label);
+        buildTree(document.getElementById('fm-tree'), result.field_config, labelValue);
+    } else {
+        desc.textContent = `Detected ${result.num_examples} examples. Labels are plain text — configure how the label field is graded.`;
+        const syntheticConfig = {
+            type: 'object',
+            fields: { label: { type: 'leaf', metric_config: { metric: 'exact' }, weight: 1.0, optional: false } }
+        };
+        buildTree(document.getElementById('fm-tree'), syntheticConfig, { label: result.sample_label });
+    }
 }
 
 function onFmChoice(radio) {
@@ -1134,21 +1227,26 @@ function readRow(rowEl) {
 }
 
 /* ════════════════════════════════════════════════════════════════
-   Step 5 → Step 6: build final config
+   Step 6 → Step 7: build final config
    ════════════════════════════════════════════════════════════════ */
 function generateConfig() {
     const useYes = document.querySelector('input[name="use-fm"]:checked')?.value === 'yes';
-    if (useYes && analysisResult && analysisResult.is_json) {
+    if (useYes && analysisResult) {
         config.field_metrics_config = { config: readTree() };
     } else {
         delete config.field_metrics_config;
+    }
+    if (analysisResult && analysisResult.response_format_schema) {
+        config.response_format_schema = analysisResult.response_format_schema;
+    } else {
+        delete config.response_format_schema;
     }
     const outputConfig = { ...config };
     if (outputConfig.few_shot && !outputConfig.few_shot.enabled) {
         delete outputConfig.few_shot;
     }
     document.getElementById('final-config').value = JSON.stringify(outputConfig, null, 2);
-    updateStepDisplay(6);
+    updateStepDisplay(7);
 }
 
 /* ════════════════════════════════════════════════════════════════
