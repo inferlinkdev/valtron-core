@@ -275,12 +275,14 @@ class ModelEval(BaseRecipe):
     @staticmethod
     def _config_and_data_from_metadata(
         metadata_path: Path,
-    ) -> "tuple[dict[str, Any], list[dict[str, Any]]]":
-        """Read metadata.json and return ``(config_dict, data)``.
+    ) -> "tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]":
+        """Read metadata.json and return ``(config_dict, data, response_format_schema)``.
 
         ``config_dict`` contains the keys needed to construct a ``ModelEvalConfig``
         (minus ``models``, which the caller fills in).  ``data`` is the raw
         document list ``[{"id": ..., "content": ..., "label": ...}]``.
+        ``response_format_schema`` is the Pydantic JSON Schema stored from the
+        original run, or ``None`` if absent.
         """
         with open(metadata_path) as f:
             meta = json.load(f)
@@ -294,7 +296,7 @@ class ModelEval(BaseRecipe):
             config_dict["field_metrics_config"] = meta["field_metrics_config"]
 
         data: list[dict[str, Any]] = meta.get("documents", [])
-        return config_dict, data
+        return config_dict, data, meta.get("response_format_schema")
 
     # -------------------------------------------------------------------------
     # Load from disk
@@ -328,7 +330,7 @@ class ModelEval(BaseRecipe):
                 "Pass the directory written by save_experiment_results()."
             )
 
-        config_dict, data = cls._config_and_data_from_metadata(metadata_path)
+        config_dict, data, response_format_schema = cls._config_and_data_from_metadata(metadata_path)
 
         model_files = sorted((dir_path / "models").glob("*.json"))
         if not model_files:
@@ -347,6 +349,8 @@ class ModelEval(BaseRecipe):
         ]
 
         instance = cls(config=config_dict, data=data)
+        if response_format_schema:
+            instance._response_format_schema = response_format_schema
 
         label_map = {str(d.get("id", "")): str(d.get("label", "")) for d in data}
 
@@ -1052,6 +1056,16 @@ class ModelEval(BaseRecipe):
                     effective_rf = self._create_explanation_model()
                 else:
                     effective_rf = self.response_format
+            elif self._response_format_schema is not None:
+                # Schema restored from a previous run -- wrap for litellm
+                effective_rf = {
+                    "type": "json_schema",
+                    "json_schema": {
+                        "name": self._response_format_schema.get("title", "ResponseModel"),
+                        "strict": True,
+                        "schema": self._response_format_schema,
+                    },
+                }
             else:
                 # Label mode: auto-generate validator from label data
                 include_explanation = Manipulation.explanation in manipulations

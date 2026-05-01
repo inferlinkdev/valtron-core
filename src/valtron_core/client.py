@@ -69,7 +69,7 @@ class LLMClient:
         temperature: float = 0.7,
         max_tokens: int | None = None,
         stream: bool = False,
-        response_format: type[BaseModel] | None = None,
+        response_format: "type[BaseModel] | dict | None" = None,
         **kwargs: Any,
     ) -> ModelResponse | AsyncIterator[ModelResponse]:
         """
