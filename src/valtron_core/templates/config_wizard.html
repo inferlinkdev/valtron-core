@@ -483,7 +483,7 @@
         <!-- ── Step 5: Response Format ───────────────────────────────────── -->
         <div class="step" data-step="5">
             <h2>Response Format</h2>
-            <p class="step-description">The response format is inferred automatically from your JSON data. For plain-text labels with up to 50 unique values, a <code>Literal</code> enum constrains model output to the known classes. For more than 50 unique values, the field falls back to <code>str</code> and the model returns free text.</p>
+            <p class="step-description">This is the Pydantic model inferred from your data. It is a best-effort inference — for plain-text labels with up to 50 unique values a <code>Literal</code> enum is generated; for JSON labels the structure is recursively inferred from your first example. If you need a more precise schema, pass your own Pydantic model as <code>response_format</code> when constructing <code>ModelEval</code>. See <a href="https://valtron.ai/docs/evaluation-results#structured-extraction-mode" target="_blank" style="color:#58a6ff">Structured extraction mode</a> for details.</p>
             <div id="rf-count-badge" style="margin-bottom:12px;font-size:.9em;color:#8b949e"></div>
             <pre id="rf-preview" style="background:#161b22;color:#e6edf3;padding:1rem;border-radius:6px;overflow:auto;font-size:.85em;border:1px solid #30363d"></pre>
             <ul id="rf-enum-list" style="margin-top:12px;padding-left:1.4rem;color:#e6edf3;font-size:.9em"></ul>

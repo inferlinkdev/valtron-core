@@ -124,7 +124,7 @@ Click **Next**. The wizard downloads (if needed) and analyzes your data before m
 
 ![Step 5: Response Format](/img/5_wizard_response_format.png)
 
-The wizard displays the Pydantic model that will be automatically generated from your label values and used to constrain the LLM's output.
+The wizard displays the Pydantic model that will be automatically inferred from your label values and used to constrain the LLM's output. This is a best-effort inference from your data — if you need a more precise schema (custom field types, optional fields, nested validation), pass your own Pydantic model directly as `response_format` when constructing `ModelEval`. See [Structured extraction mode](https://valtron.ai/docs/evaluation-results#structured-extraction-mode) for details.
 
 **Plain-text labels (up to 50 unique values)** — a `Literal` enum is generated covering every unique value in your dataset:
 
@@ -142,12 +142,16 @@ class ResponseModel(BaseModel):
     label: str
 ```
 
-**JSON-structured labels** — a typed model is generated with one field per key in your label objects, using the type inferred from the first example:
+**JSON-structured labels** — a typed model is recursively generated from the structure of your first label example:
 
 ```python
+class Institution(BaseModel):
+    name: str
+    city: str
+    country: str
+
 class ResponseModel(BaseModel):
-    sentiment: str
-    score: float
+    institutions: list[Institution]
 ```
 
 ---
