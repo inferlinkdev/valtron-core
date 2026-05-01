@@ -41,6 +41,28 @@ from valtron_core.runner import EvaluationResult, EvaluationRunner
 
 from valtron_core.utilities.field_config_generator import infer_field_config
 
+
+def _pydantic_type_from_value(value: Any, field_name: str) -> Any:
+    """Recursively infer a Pydantic type annotation from a JSON value."""
+    if isinstance(value, bool):
+        return bool
+    if isinstance(value, int):
+        return int
+    if isinstance(value, float):
+        return float
+    if isinstance(value, dict):
+        nested_fields: dict[str, Any] = {
+            k: (_pydantic_type_from_value(v, k), Field(description=f"Field {k}"))
+            for k, v in value.items()
+        }
+        return create_model(field_name.capitalize(), **nested_fields)
+    if isinstance(value, list) and value and isinstance(value[0], (dict, list)):
+        item_type = _pydantic_type_from_value(value[0], field_name.rstrip("s").capitalize())
+        return list[item_type]  # type: ignore[valid-type]
+    if isinstance(value, list):
+        return list[str]  # type: ignore[valid-type]
+    return str
+
 logger = structlog.get_logger()
 
 
@@ -737,7 +759,8 @@ class ModelEval(BaseRecipe):
 
         Only used in label mode (``response_format=None``).
 
-        For JSON-object labels: builds a Pydantic model with one field per key.
+        For JSON-object labels: recursively builds nested Pydantic models matching
+        the label structure (lists of objects, nested objects, scalars).
         For plain-text labels: builds a model with a ``Literal[...]`` enum field
             covering every unique label value (up to 50 values); falls back to
             ``label: str`` for larger datasets.
@@ -795,25 +818,19 @@ class ModelEval(BaseRecipe):
             )
             return None
 
-        from pydantic import Field as PydanticField
-
         field_definitions = {}
 
         if include_explanation:
             field_definitions["explanation"] = (
                 str,
-                PydanticField(description="Reasoning explanation"),
+                Field(description="Reasoning explanation"),
             )
 
         for key, value in label_json.items():
-            if isinstance(value, bool):
-                field_definitions[key] = (bool, PydanticField(description=f"Field {key}"))
-            elif isinstance(value, int):
-                field_definitions[key] = (int, PydanticField(description=f"Field {key}"))
-            elif isinstance(value, float):
-                field_definitions[key] = (float, PydanticField(description=f"Field {key}"))
-            else:
-                field_definitions[key] = (str, PydanticField(description=f"Field {key}"))
+            field_definitions[key] = (
+                _pydantic_type_from_value(value, key),
+                Field(description=f"Field {key}"),
+            )
 
         model_name = "ResponseModelWithExplanation" if include_explanation else "ResponseModel"
         response_model = create_model(model_name, **field_definitions)

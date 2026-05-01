@@ -262,21 +262,39 @@ def api_analyze_data():
 
         field_config = infer_field_config(first_label)
 
-        def _type_name(v: object) -> str:
-            if isinstance(v, bool):
+        def _collect_classes(
+            data: object, class_name: str, out: list[str]
+        ) -> str:
+            if isinstance(data, bool):
                 return "bool"
-            if isinstance(v, int):
+            if isinstance(data, int):
                 return "int"
-            if isinstance(v, float):
+            if isinstance(data, float):
                 return "float"
+            if isinstance(data, dict):
+                lines = [f"class {class_name}(BaseModel):"]
+                for k, v in data.items():
+                    field_type = _collect_classes(v, k.rstrip("s").capitalize(), out)
+                    lines.append(f"    {k}: {field_type}")
+                out.append("\n".join(lines))
+                return class_name
+            if isinstance(data, list) and data:
+                item_name = class_name.rstrip("s").capitalize()
+                item_type = _collect_classes(data[0], item_name, out)
+                return f"list[{item_type}]"
+            if isinstance(data, list):
+                return "list[str]"
             return "str"
 
         label_json = json.loads(first_label)
         if isinstance(label_json, dict):
-            field_lines = "\n".join(
-                f"    {k}: {_type_name(v)}" for k, v in label_json.items()
-            )
-            response_format_preview = f"class ResponseModel(BaseModel):\n{field_lines}"
+            extra_classes: list[str] = []
+            main_lines = ["class ResponseModel(BaseModel):"]
+            for k, v in label_json.items():
+                field_type = _collect_classes(v, k.rstrip("s").capitalize(), extra_classes)
+                main_lines.append(f"    {k}: {field_type}")
+            all_parts = extra_classes + ["\n".join(main_lines)]
+            response_format_preview = "\n\n".join(all_parts)
         else:
             response_format_preview = ""
 
