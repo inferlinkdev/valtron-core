@@ -9,6 +9,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+import litellm
 import structlog
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
@@ -128,6 +129,7 @@ class ModelEval(BaseRecipe):
         self._model_prompts: dict[str, str] | None = None
         self._model_override_prompts: dict[str, str] | None = None
         self._response_format_schema: dict[str, Any] | None = None
+        self._auto_wrap_string_labels: bool = False
 
         logger.info(
             "model_eval_initialized",
@@ -143,6 +145,135 @@ class ModelEval(BaseRecipe):
 
     def _preflight_check(self) -> None:
         super()._preflight_check()
+        self._check_model_param_support()
+        self._validate_labels_against_schema()
+
+    def _effective_dict_schema(self) -> "dict[str, Any] | None":
+        """Return the resolved dict-format schema regardless of how it was configured.
+
+        Checks config.response_format_schema first (set on fresh runs), then falls
+        back to _response_format_schema (pre-set on reloaded instances).
+        """
+        return self.config.response_format_schema or self._response_format_schema
+
+    def _check_model_param_support(self) -> None:
+        from valtron_core.recipes.config import LLMModelConfig
+
+        wants_response_format = self.response_format is not None or self._effective_dict_schema() is not None
+
+        if wants_response_format and self.data:
+            all_plain_string_labels = all(
+                not isinstance(item.get("label"), (dict, list)) for item in self.data
+            )
+            if all_plain_string_labels:
+                if self._is_single_label_field_schema():
+                    self._auto_wrap_string_labels = True
+                else:
+                    logger.warning(
+                        "plain_string_labels_with_response_format",
+                        action="scoring_may_be_incorrect",
+                        detail="response_format is set but labels are plain strings -- "
+                        "model outputs will be JSON but expected values will not match",
+                    )
+
+        for mc in self.models:
+            if not isinstance(mc, LLMModelConfig):
+                continue
+            try:
+                kwargs: dict[str, Any] = {"model": mc.name}
+                provider = mc.params.get("custom_llm_provider")
+                if provider:
+                    kwargs["custom_llm_provider"] = provider
+                supported = litellm.get_supported_openai_params(**kwargs) or []
+            except Exception:
+                continue
+
+            if "temperature" not in supported:
+                logger.warning(
+                    "temperature_not_supported",
+                    model=mc.name,
+                    action="temperature_will_be_dropped",
+                )
+            if wants_response_format and "response_format" not in supported:
+                logger.warning(
+                    "response_format_not_supported",
+                    model=mc.name,
+                    action="structured_output_will_be_skipped",
+                )
+
+    def _is_single_label_field_schema(self) -> bool:
+        """Return True if the response schema has exactly one field named 'label' (str or Enum)."""
+        import enum
+
+        if self.response_format is not None:
+            fields = self.response_format.model_fields
+            if len(fields) != 1 or "label" not in fields:
+                return False
+            annotation = fields["label"].annotation
+            return annotation is str or (
+                isinstance(annotation, type) and issubclass(annotation, enum.Enum)
+            )
+
+        effective_dict_schema = self._effective_dict_schema()
+        if effective_dict_schema is not None:
+            try:
+                props = effective_dict_schema["json_schema"]["schema"]["properties"]
+                if set(props.keys()) != {"label"}:
+                    return False
+                label_prop = props["label"]
+                return label_prop.get("type") == "string" or "enum" in label_prop
+            except (KeyError, TypeError):
+                return False
+
+        return False
+
+    def _validate_labels_against_schema(self) -> None:
+        """Validate each label against the response schema, raising if any fail.
+
+        Handles both Pydantic response_format (via model_validate_json) and
+        response_format_schema dicts (via jsonschema). Auto-wrap is applied before
+        validation so plain string labels destined for wrapping are checked in their
+        final form. Plain string labels without auto-wrap are skipped -- they are not
+        JSON-structured and are already covered by the warning in _check_model_param_support.
+        """
+        import jsonschema
+
+        effective_dict_schema = self._effective_dict_schema()
+        if self.response_format is None and effective_dict_schema is None:
+            return
+
+        json_schema: dict[str, Any] | None = None
+        if self.response_format is None:
+            try:
+                json_schema = effective_dict_schema["json_schema"]["schema"]  # type: ignore[index]
+            except (KeyError, TypeError):
+                return
+
+        errors: list[str] = []
+        for idx, item in enumerate(self.data):
+            record_id = item.get("id", f"index {idx}")
+            label_raw = item.get("label", "")
+
+            if isinstance(label_raw, (dict, list)):
+                label_obj: Any = label_raw
+            elif self._auto_wrap_string_labels:
+                label_obj = {"label": str(label_raw)}
+            else:
+                continue
+
+            try:
+                if self.response_format is not None:
+                    self.response_format.model_validate_json(json.dumps(label_obj))
+                elif json_schema is not None:
+                    jsonschema.validate(instance=label_obj, schema=json_schema)
+            except Exception as exc:
+                errors.append(f"  record {record_id!r}: label={label_raw!r} -- {exc}")
+
+        if errors:
+            raise ValueError(
+                f"Labels failed schema validation ({len(errors)} record(s)):\n"
+                + "\n".join(errors)
+            )
 
     # -------------------------------------------------------------------------
     # Model management
@@ -161,8 +292,8 @@ class ModelEval(BaseRecipe):
             models: List of model config dicts or ``ModelConfig`` objects.
 
         Raises:
-            ValueError: Duplicate label, structured manipulation without
-                ``response_format``, or transformer model with ``response_format``.
+            ValueError: Duplicate label or structured manipulation without
+                ``response_format``.
         """
         from valtron_core.recipes.config import LLMModelConfig, TransformerModelConfig
 
@@ -200,14 +331,6 @@ class ModelEval(BaseRecipe):
                 f"Model(s) {bad_models} use structured manipulation(s) {bad_manips}, "
                 "which require response_format to be provided."
             )
-
-        if self.response_format is not None:
-            transformer_models = [mc.label for mc in normalized if mc.type == "transformer"]
-            if transformer_models:
-                raise ValueError(
-                    f"Transformer model(s) {transformer_models} cannot be used when "
-                    "response_format is provided."
-                )
 
         self.models.extend(normalized)
         self.config.models.extend(normalized)
@@ -485,16 +608,6 @@ class ModelEval(BaseRecipe):
             self._response_format_schema = self._serialize_response_format_schema(self.response_format)
         elif self.config.response_format_schema is not None:
             self._response_format_schema = self.config.response_format_schema
-        elif self._response_format_schema is None:
-            wrapper = self._create_label_wrapper()
-            if wrapper is None:
-                raise ValueError(
-                    "A response format schema is required when labels are JSON-structured. "
-                    "Pass a Pydantic model as `response_format` to the ModelEval constructor, "
-                    "or set `response_format_schema` in the recipe config."
-                )
-            self._response_format_schema = self._serialize_response_format_schema(wrapper)
-        # else: _response_format_schema was set by load_experiment_results -- keep it.
 
         field_metrics_config = self._get_field_metrics_config()
 
@@ -600,9 +713,12 @@ class ModelEval(BaseRecipe):
         for idx, item in enumerate(self.data):
             doc_id = str(item.get("id", f"doc_{idx}"))
             label_raw = item.get("label", "")
-            label_value = (
-                json.dumps(label_raw) if isinstance(label_raw, (dict, list)) else str(label_raw)
-            )
+            if isinstance(label_raw, (dict, list)):
+                label_value = json.dumps(label_raw)
+            elif self._auto_wrap_string_labels:
+                label_value = json.dumps({"label": str(label_raw)})
+            else:
+                label_value = str(label_raw)
             documents.append(
                 Document(
                     id=doc_id,
@@ -733,27 +849,6 @@ class ModelEval(BaseRecipe):
                 continue
         return False
 
-    def _create_label_wrapper(self) -> type[BaseModel] | None:
-        """Return a minimal ``{"label": str}`` model for plain-string label data.
-
-        Returns ``None`` when there is no data or the first label is JSON-shaped
-        (in which case the caller should provide ``response_format_schema`` explicitly).
-        """
-        if not self.data:
-            return None
-        first_label = self.data[0].get("label", "")
-        if isinstance(first_label, (dict, list)):
-            return None
-        try:
-            json.loads(str(first_label))
-            return None
-        except (json.JSONDecodeError, TypeError):
-            return create_model(
-                "ResponseModel",
-                __config__=ConfigDict(extra="forbid"),
-                label=(str, Field(description="Predicted class label")),
-            )
-
     def _serialize_response_format_schema(
         self, rf: type[BaseModel] | None
     ) -> dict[str, Any] | None:
@@ -839,9 +934,12 @@ class ModelEval(BaseRecipe):
         for idx, item in enumerate(self.data):
             doc_id = str(item.get("id", f"doc_{idx}"))
             label_raw = item.get("label", "")
-            label_map[doc_id] = (
-                json.dumps(label_raw) if isinstance(label_raw, (dict, list)) else str(label_raw)
-            )
+            if isinstance(label_raw, (dict, list)):
+                label_map[doc_id] = json.dumps(label_raw)
+            elif self._auto_wrap_string_labels:
+                label_map[doc_id] = json.dumps({"label": str(label_raw)})
+            else:
+                label_map[doc_id] = str(label_raw)
 
         run_id = str(uuid.uuid4())
         result = EvaluationResult(
@@ -869,6 +967,9 @@ class ModelEval(BaseRecipe):
             pred_start = time.time()
             prediction = transformer.predict(doc.content)
             pred_time = time.time() - pred_start
+
+            if self._auto_wrap_string_labels:
+                prediction = json.dumps({"label": prediction})
 
             if json_evaluator is not None:
                 cfg = field_metrics_config.config  # type: ignore[union-attr]

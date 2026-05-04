@@ -98,26 +98,18 @@ If a placeholder in the template is missing from a document's dict, a warning is
 
 The `label` field depends on the evaluation mode:
 
-**Label/classification mode** (no `response_format` in config):
-- `label` is a plain string matching one of the known output classes.
-- Valtron automatically generates a `Literal` enum from all unique label values in your dataset and uses it as the required output schema. This constrains the LLM to return one of the known classes exactly, reducing hallucinations and making correctness checking unambiguous.
-- If your dataset has more than 50 unique label values, Valtron falls back to `label: str` and the LLM returns free text compared against the label by string equality.
+**Label/classification mode** (no `response_format` or `response_format_schema` configured):
+- `label` is a plain string. The LLM returns free text compared against the label by string equality.
+- No schema constraint is applied unless you supply one.
 
 ```json
 {"id": "1", "content": "...", "label": "positive"}
 ```
 
-For a dataset with labels `"positive"`, `"negative"`, and `"neutral"`, the generated schema looks like:
-
-```python
-class ResponseModel(BaseModel):
-    label: Literal["negative", "neutral", "positive"]
-```
-
-**Structured extraction mode** (with `response_format` in config):
-- `label` can be either a **JSON object** or a **JSON string**. Both are accepted.
-- Must match the shape of the Pydantic model passed as `response_format`
-- If a dict/list is provided, it is serialized to a JSON string internally
+**Structured extraction mode** (when `response_format` or `response_format_schema` is configured):
+- `label` can be a **JSON object**, a **JSON string**, or a **plain string** (see auto-wrap below).
+- Must match the shape of the configured schema.
+- If a dict/list is provided, it is serialized to a JSON string internally.
 
 ```json
 // As a JSON object (preferred, more readable)
@@ -136,6 +128,10 @@ class ResponseModel(BaseModel):
   "label": "{\"name\": \"Apple Inc.\", \"city\": \"Cupertino\", \"state\": \"California\"}"
 }
 ```
+
+**Auto-wrap for single-label schemas**: if your schema has exactly one field named `label` (type `string` or an enum) and all your data labels are plain strings, Valtron automatically wraps each label as `{"label": value}` at preflight time. No data changes are required -- plain string labels like `"positive"` work directly with a `{"label": str}` schema.
+
+**Preflight validation**: when a schema is configured, all JSON-structured labels (and auto-wrapped labels) are validated against the schema before evaluation starts. Records that fail validation are reported by `id` in a `ValueError`.
 
 ## Attachments
 
@@ -188,4 +184,4 @@ The JSON file must be an array at the top level.
 
 - Set up your evaluation in [Config Format](./config-format)
 - For structured extraction with field-level scoring, see [Field Metrics](./field-metrics)
-- Run your evaluation: [Evaluation API](./recipes)
+- Run your evaluation: [Evaluation API](./evaluation-api)

@@ -97,8 +97,7 @@ class PdfReportGenerator(_ReportBase):
         Returns:
             Path to the generated PDF.
         """
-        output_path = Path(output_path)
-        output_dir = output_path.parent
+        output_dir = Path(output_path)
         output_dir.mkdir(parents=True, exist_ok=True)
 
         results = sorted(

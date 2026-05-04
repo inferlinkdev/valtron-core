@@ -60,7 +60,9 @@ The config controls which models to run, the prompt template, evaluation options
 
 The schema is stored under `response_format_schema` in `metadata.json` for every run, in the same format, so that results can be replayed with the exact schema that produced them.
 
-**Priority order**: a Pydantic `response_format` class passed to `ModelEval(...)` takes priority over `config.response_format_schema`, which takes priority over the schema loaded from a previous run's metadata. When none of these are provided and labels are plain strings, Valtron falls back to a minimal `{"label": str}` wrapper so the LLM returns structured JSON. When none are provided and labels are JSON-structured, Valtron raises a `ValueError` -- you must supply a schema explicitly in that case.
+**Priority order**: a Pydantic `response_format` class passed to `ModelEval(...)` takes priority over `config.response_format_schema`, which takes priority over the schema loaded from a previous run's metadata.
+
+When no schema is configured, labels are compared as-is (plain text against plain text). When a schema is configured, Valtron runs preflight checks before evaluation starts -- see [Data Format: Label format](./data-format#label-format) for the auto-wrap and validation behavior.
 
 See also: [`label` field in Data Format](./data-format#label-format).
 
@@ -253,6 +255,6 @@ experiment = ModelEval(config="./config.json", data="./data.json")
 
 ## What's next?
 
-- Run your evaluation: [Evaluation API](./recipes)
+- Run your evaluation: [Evaluation API](./evaluation-api)
 - Apply prompt strategies per model: [Optimizers](./optimizers)
 - For field-level scoring on structured extraction: [Field Metrics](./field-metrics)

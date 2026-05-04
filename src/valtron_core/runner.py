@@ -748,7 +748,7 @@ class EvaluationRunner:
             console.print("[cyan]Generating HTML report...[/cyan]")
             report_path, recommendation = report_generator.generate_html_report(
                 results=results,
-                output_path=output_dir / "evaluation_report.html",
+                output_path=output_dir,
                 use_case=use_case,
                 include_recommendation=include_recommendation,
                 prompt_optimizations=prompt_optimizations,
@@ -764,7 +764,7 @@ class EvaluationRunner:
             console.print("[cyan]Generating PDF report...[/cyan]")
             pdf_path = report_generator.generate_pdf_report(
                 results=results,
-                output_path=output_dir / "evaluation_report",
+                output_path=output_dir,
                 recommendation=recommendation,
                 original_prompt=original_prompt,
                 prompt_optimizations=prompt_optimizations,

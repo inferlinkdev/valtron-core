@@ -3,12 +3,13 @@
 import base64
 from datetime import datetime
 from pathlib import Path
+import shutil
 from typing import Any
 
 from valtron_core.attachments import _MAGIC, detect_mime_hint
 from valtron_core.client import LLMClient
 from valtron_core.models import EvaluationResult
-from valtron_core.reports._base import _ReportBase, _jinja_env
+from valtron_core.reports._base import TEMPLATES_DIR, _ReportBase, _jinja_env
 
 
 class HtmlReportGenerator(_ReportBase):
@@ -313,6 +314,10 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
         """Load Jinja2 HTML template for detailed analysis page."""
         return _jinja_env.get_template("detailed_analysis.jinja2.html")
 
+    def _fetch_favicon(self):
+        """Load HTML favicon for html report."""
+        return Path(TEMPLATES_DIR / "favicon.svg")
+
     def generate_html_report(
         self,
         results: list[EvaluationResult],
@@ -332,7 +337,7 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
         Returns:
             Tuple of (Path to generated report, recommendation text or None)
         """
-        output_path = Path(output_path)
+        output_path = Path(output_path) / "html_report"
 
         results = sorted(
             results,
@@ -404,10 +409,12 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
             field_config_json=field_config_json,
         )
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_text(html_content, encoding="utf-8")
+        output_path.mkdir(parents=True, exist_ok=True)
 
-        analysis_path = output_path.parent / "detailed_analysis.html"
+        evaluation_report = output_path / "evaluation_report.html"
+        evaluation_report.write_text(html_content, encoding="utf-8")
+
+        analysis_path = output_path / "detailed_analysis.html"
         analysis_template = self._create_detailed_analysis_template()
         analysis_content = analysis_template.render(
             documents_data=documents_data,
@@ -415,4 +422,7 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
         )
         analysis_path.write_text(analysis_content, encoding="utf-8")
 
-        return output_path, recommendation
+        favicon_destination = output_path / "favicon.svg"
+        shutil.copy(self._fetch_favicon(), favicon_destination)
+
+        return evaluation_report, recommendation

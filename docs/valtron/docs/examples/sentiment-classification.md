@@ -74,6 +74,6 @@ for result in experiment.results:
 
 ## What's next
 
-- Add a third model or a per-model prompt override. See [Recipes](../recipes).
+- Add a third model or a per-model prompt override. See [Recipes](../evaluation-api).
 - Load these results later and extend them. See [Incremental Evaluation](./incremental-evaluation).
 - Add few-shot examples to improve accuracy. See [Optimizers](../optimizers).

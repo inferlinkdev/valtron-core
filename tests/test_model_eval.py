@@ -160,13 +160,13 @@ class TestModelEvalInit:
         eval_ = ModelEval(config=config, data=[], response_format=SampleSchema)
         assert eval_.response_format is SampleSchema
 
-    def test_transformer_with_response_format_raises(self):
+    def test_transformer_with_response_format_allowed(self):
         config = {
             "models": [{"label": "my-transformer", "type": "transformer", "model_path": "./dummy"}],
             "prompt": "Extract: {content}",
         }
-        with pytest.raises(ValueError, match="Transformer"):
-            ModelEval(config=config, data=[], response_format=SampleSchema)
+        exp = ModelEval(config=config, data=[], response_format=SampleSchema)
+        assert any(mc.type == "transformer" for mc in exp.models)
 
     def test_prompt_missing_placeholder_raises(self):
         with pytest.raises(ValidationError, match="placeholder"):
@@ -335,41 +335,6 @@ class TestGetFieldMetricsConfig:
         assert result.config == explicit["config"]
 
 
-class TestCreateLabelWrapper:
-
-    @pytest.mark.unit
-    def test_returns_str_label_model_for_plain_text(self):
-        eval_ = ModelEval(
-            config=CLASSIFY_CONFIG,
-            data=[{"content": "T", "label": lbl} for lbl in ["yes", "no"]],
-        )
-        rf = eval_._create_label_wrapper()
-        assert rf is not None
-        assert "label" in rf.model_fields
-        assert rf.model_fields["label"].annotation is str
-
-    @pytest.mark.unit
-    def test_returns_none_for_json_labels(self):
-        eval_ = ModelEval(
-            config=CLASSIFY_CONFIG,
-            data=[{"content": "T", "label": '{"sentiment": "positive"}'}],
-        )
-        assert eval_._create_label_wrapper() is None
-
-    @pytest.mark.unit
-    def test_returns_none_for_dict_labels(self):
-        eval_ = ModelEval(
-            config=CLASSIFY_CONFIG,
-            data=[{"content": "T", "label": {"sentiment": "positive"}}],
-        )
-        assert eval_._create_label_wrapper() is None
-
-    @pytest.mark.unit
-    def test_returns_none_for_empty_data(self):
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[])
-        assert eval_._create_label_wrapper() is None
-
-
 # ===========================================================================
 # Data loading
 # ===========================================================================
@@ -503,26 +468,6 @@ class TestPrepareModelPrompts:
 # ===========================================================================
 # Label wrapper (string-label fallback)
 # ===========================================================================
-
-
-class TestCreateLabelWrapperBehavior:
-
-    def test_plain_text_labels_create_label_str_model(self):
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "positive"}])
-        wrapper = eval_._create_label_wrapper()
-        assert wrapper is not None
-        assert "label" in wrapper.model_fields
-        assert wrapper.model_fields["label"].annotation is str
-
-    def test_json_labels_return_none(self):
-        config = {
-            "models": [{"name": "gpt-4o-mini"}],
-            "prompt": 'Output JSON: {"name": "", "age": 0}. {content}',
-        }
-        eval_ = ModelEval(
-            config=config, data=[{"content": "T", "label": '{"name": "J", "age": 30}'}]
-        )
-        assert eval_._create_label_wrapper() is None
 
 
 # ===========================================================================
@@ -1136,7 +1081,7 @@ class TestAevaluateSchemaPriority:
         assert eval_._response_format_schema == loaded_schema
 
     @pytest.mark.unit
-    async def test_string_labels_auto_wrap_when_no_schema(self):
+    async def test_string_labels_no_schema_when_no_format_provided(self):
         cfg_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
         eval_ = ModelEval(
             config=cfg_no_schema,
@@ -1144,18 +1089,229 @@ class TestAevaluateSchemaPriority:
         )
         with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
             await eval_.aevaluate()
-        assert eval_._response_format_schema is not None
-        assert eval_._response_format_schema["json_schema"]["name"] == "ResponseModel"
+        assert eval_._response_format_schema is None
 
     @pytest.mark.unit
-    async def test_missing_schema_raises_value_error_for_json_labels(self):
+    async def test_json_labels_no_schema_runs_without_error(self):
         cfg_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
         eval_ = ModelEval(
             config=cfg_no_schema,
             data=[{"content": "T", "label": {"field": "value"}}],
         )
-        with pytest.raises(ValueError, match="response format schema is required"):
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
             await eval_.aevaluate()
+        assert eval_._response_format_schema is None
+
+
+# ===========================================================================
+# Auto-wrap string labels
+# ===========================================================================
+
+
+class TestIsSingleLabelFieldSchema:
+    """_is_single_label_field_schema detects single-field label schemas."""
+
+    @pytest.mark.unit
+    def test_pydantic_single_str_label_field(self):
+        class LabelModel(BaseModel):
+            label: str
+
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": "yes"}],
+            response_format=LabelModel,
+        )
+        assert eval_._is_single_label_field_schema() is True
+
+    @pytest.mark.unit
+    def test_pydantic_single_enum_label_field(self):
+        import enum
+
+        class Sentiment(str, enum.Enum):
+            pos = "positive"
+            neg = "negative"
+
+        class LabelModel(BaseModel):
+            label: Sentiment
+
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": "positive"}],
+            response_format=LabelModel,
+        )
+        assert eval_._is_single_label_field_schema() is True
+
+    @pytest.mark.unit
+    def test_pydantic_multi_field_returns_false(self):
+        class MultiModel(BaseModel):
+            label: str
+            confidence: float
+
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": "yes"}],
+            response_format=MultiModel,
+        )
+        assert eval_._is_single_label_field_schema() is False
+
+    @pytest.mark.unit
+    def test_pydantic_wrong_field_name_returns_false(self):
+        class WrongField(BaseModel):
+            sentiment: str
+
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": "yes"}],
+            response_format=WrongField,
+        )
+        assert eval_._is_single_label_field_schema() is False
+
+    @pytest.mark.unit
+    def test_dict_schema_single_string_label(self):
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": "yes"}],
+        )
+        assert eval_._is_single_label_field_schema() is True
+
+    @pytest.mark.unit
+    def test_dict_schema_enum_label(self):
+        schema = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "LabelModel",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {"label": {"type": "string", "enum": ["yes", "no"]}},
+                    "required": ["label"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        eval_ = ModelEval(
+            config={**CLASSIFY_CONFIG, "response_format_schema": schema},
+            data=[{"content": "T", "label": "yes"}],
+        )
+        assert eval_._is_single_label_field_schema() is True
+
+    @pytest.mark.unit
+    def test_dict_schema_multi_field_returns_false(self):
+        schema = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "MultiModel",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {"label": {"type": "string"}, "score": {"type": "number"}},
+                    "required": ["label", "score"],
+                    "additionalProperties": False,
+                },
+            },
+        }
+        eval_ = ModelEval(
+            config={**CLASSIFY_CONFIG, "response_format_schema": schema},
+            data=[{"content": "T", "label": "yes"}],
+        )
+        assert eval_._is_single_label_field_schema() is False
+
+    @pytest.mark.unit
+    def test_no_response_format_returns_false(self):
+        eval_ = ModelEval(
+            config={**CLASSIFY_CONFIG, "response_format_schema": None},
+            data=[{"content": "T", "label": "yes"}],
+        )
+        assert eval_._is_single_label_field_schema() is False
+
+
+class TestAutoWrapStringLabels:
+    """Auto-wrap behaviour for plain string labels with a single-label-field schema."""
+
+    @pytest.mark.unit
+    def test_flag_set_and_labels_wrapped_for_str_schema(self):
+        class LabelModel(BaseModel):
+            label: str
+
+        eval_ = ModelEval(
+            config={**CLASSIFY_CONFIG, "response_format_schema": None},
+            data=[{"content": "T", "label": "yes"}, {"content": "U", "label": "no"}],
+            response_format=LabelModel,
+        )
+        eval_._preflight_check()
+        assert eval_._auto_wrap_string_labels is True
+        _, labels = eval_._load_documents_and_labels()
+        assert labels[0].value == json.dumps({"label": "yes"})
+        assert labels[1].value == json.dumps({"label": "no"})
+
+    @pytest.mark.unit
+    def test_flag_set_for_dict_schema(self):
+        eval_ = ModelEval(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": "yes"}],
+        )
+        eval_._preflight_check()
+        assert eval_._auto_wrap_string_labels is True
+        _, labels = eval_._load_documents_and_labels()
+        assert labels[0].value == json.dumps({"label": "yes"})
+
+    @pytest.mark.unit
+    def test_no_wrap_when_multi_field_schema(self):
+        class MultiModel(BaseModel):
+            label: str
+            confidence: float
+
+        eval_ = ModelEval(
+            config={**CLASSIFY_CONFIG, "response_format_schema": None},
+            data=[{"content": "T", "label": "yes"}],
+            response_format=MultiModel,
+        )
+        eval_._preflight_check()
+        assert eval_._auto_wrap_string_labels is False
+        _, labels = eval_._load_documents_and_labels()
+        assert labels[0].value == "yes"
+
+    @pytest.mark.unit
+    def test_no_wrap_when_mixed_labels(self):
+        class LabelModel(BaseModel):
+            label: str
+
+        eval_ = ModelEval(
+            config={**CLASSIFY_CONFIG, "response_format_schema": None},
+            data=[
+                {"content": "T", "label": "yes"},
+                {"content": "U", "label": {"label": "no"}},
+            ],
+            response_format=LabelModel,
+        )
+        eval_._preflight_check()
+        assert eval_._auto_wrap_string_labels is False
+
+    @pytest.mark.unit
+    def test_no_wrap_when_no_response_format(self):
+        eval_ = ModelEval(
+            config={**CLASSIFY_CONFIG, "response_format_schema": None},
+            data=[{"content": "T", "label": "yes"}],
+        )
+        eval_._preflight_check()
+        assert eval_._auto_wrap_string_labels is False
+        _, labels = eval_._load_documents_and_labels()
+        assert labels[0].value == "yes"
+
+    @pytest.mark.unit
+    def test_dict_labels_never_wrapped(self):
+        class LabelModel(BaseModel):
+            label: str
+
+        eval_ = ModelEval(
+            config={**CLASSIFY_CONFIG, "response_format_schema": None},
+            data=[{"content": "T", "label": {"label": "yes"}}],
+            response_format=LabelModel,
+        )
+        eval_._preflight_check()
+        assert eval_._auto_wrap_string_labels is False
+        _, labels = eval_._load_documents_and_labels()
+        assert labels[0].value == json.dumps({"label": "yes"})
 
 
 # ===========================================================================

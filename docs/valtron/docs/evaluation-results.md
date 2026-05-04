@@ -10,7 +10,7 @@ This page covers what `ModelEval` produces: the metrics schema, the output direc
 
 ### Label / classification mode
 
-Used when no `response_format` is passed to `ModelEval`. Valtron automatically infers a response format from your dataset by building a `Literal` enum of all unique label values (up to 50), constraining the model to return one of the known classes exactly. For datasets with more than 50 unique label values, Valtron falls back to `label: str` and the model returns free text compared against the label by string equality.
+Used when no `response_format` or `response_format_schema` is configured. The model returns free text compared against the `label` by string equality.
 
 ```python
 experiment = ModelEval(config=config, data=data)
@@ -22,7 +22,9 @@ experiment = ModelEval(config=config, data=data)
 
 ### Structured extraction mode
 
-Used when a Pydantic `BaseModel` is passed as `response_format`. The model returns structured JSON matching the schema, which is then compared field-by-field against the `label` (also a JSON string).
+Used when a Pydantic `BaseModel` is passed as `response_format`, or when `response_format_schema` is set in config. The model returns structured JSON matching the schema, which is then compared against the `label`.
+
+The [configuration wizard](./getting-started/configuration-wizard) is the easiest way to get into structured mode for classification tasks: it infers a `Literal` enum from your label values, writes it as `response_format_schema` in the generated config, and because that schema has a single `label` field, plain string labels in your data are automatically wrapped as `{"label": value}` at preflight time. No data changes needed.
 
 ```python
 from pydantic import BaseModel
@@ -39,6 +41,8 @@ experiment = ModelEval(config=config, data=data, response_format=ExtractionResul
 ```
 
 Structured mode enables the `decompose`, `hallucination_filter`, and `multi_pass` optimizers, and unlocks field-level metrics (precision/recall/F1 per field).
+
+Transformer models can coexist with LLMs in structured mode. When the schema has exactly one `label` field and all data labels are plain strings, transformer predictions are wrapped as `{"label": prediction}` before scoring so results are consistent with LLM output.
 
 ---
 
@@ -148,12 +152,11 @@ One file per model. Contains the full evaluation result:
     {
       "document_id": "1",
       "predicted_value": "positive",
-      "expected_value": "positive",
+      "original_cost": 0.000041,
+      "cost": 0.000041,
+      "response_time": 1.1,
       "is_correct": true,
       "example_score": 1.0,
-      "response_time": 1.1,
-      "cost": 0.000041,
-      "model": "gpt-4o",
       "field_metrics": null
     }
   ]
@@ -162,15 +165,17 @@ One file per model. Contains the full evaluation result:
 
 The `override_prompt` field is only present when the model has a per-model prompt override configured.
 
+In structured extraction mode (with `response_format` or `response_format_schema` configured), `predicted_value` is a JSON string matching the schema, e.g. `"{\"label\": \"positive\"}"` or `"{\"name\": \"Apple Inc.\", \"city\": \"Cupertino\"}"`. For transformer models in a mixed experiment where auto-wrap applies, predictions are wrapped to the same JSON shape before scoring and storage.
+
 ---
 
 ## Loading results programmatically
 
-To load a saved run without re-evaluating, use `ModelEval.load_experiment_results()`. See [Evaluation API: Incremental Evaluation](./recipes#incremental-evaluation) for the full API including how to add new models to an existing run.
+To load a saved run without re-evaluating, use `ModelEval.load_experiment_results()`. See [Evaluation API: Incremental Evaluation](./evaluation-api#incremental-evaluation) for the full API including how to add new models to an existing run.
 
 ---
 
 ## What's next?
 
 - View the HTML and PDF reports: [Report Formats](./report-formats)
-- Add new models to an existing run: [Evaluation API: Incremental Evaluation](./recipes#incremental-evaluation)
+- Add new models to an existing run: [Evaluation API: Incremental Evaluation](./evaluation-api#incremental-evaluation)

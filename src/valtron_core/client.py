@@ -129,10 +129,37 @@ class LLMClient:
         else:
             completion_args["model"] = model
 
+        # Drop params that the model doesn't support
+        try:
+            param_check_kwargs: dict[str, Any] = {"model": model_name}
+            if isinstance(model, dict) and "custom_llm_provider" in model:
+                param_check_kwargs["custom_llm_provider"] = model["custom_llm_provider"]
+            supported_params = litellm.get_supported_openai_params(**param_check_kwargs) or []
+
+            if "temperature" not in supported_params:
+                logger.warning(
+                    "temperature_not_supported",
+                    model=model_name,
+                    action="dropping_temperature",
+                )
+                completion_args.pop("temperature", None)
+
+            if response_format is not None and not litellm.supports_response_schema(**param_check_kwargs) and not litellm.get_supported_openai_params(**param_check_kwargs):
+                logger.warning(
+                    "response_format_not_supported",
+                    model=model_name,
+                    action="dropping_response_format",
+                )
+                completion_args["response_format"] = None
+        except Exception:
+            pass  # unknown model; proceed and let litellm.drop_params handle it
+
         max_retries = self.config.optimization.max_retries
         retry_delay = self.config.optimization.retry_delay
 
-        for attempt in range(max_retries + 1):
+        _temperature_dropped = False
+        attempt = 0
+        while attempt <= max_retries:
             if attempt > 0:
                 wait = retry_delay * (2 ** (attempt - 1))
                 logger.warning("llm_retry", model=model_name, attempt=attempt, wait=wait)
@@ -141,10 +168,25 @@ class LLMClient:
                 response = await acompletion(**completion_args)
                 break
             except Exception as e:
+                if (
+                    not _temperature_dropped
+                    and isinstance(e, litellm.BadRequestError)
+                    and "temperature" in str(e)
+                    and "temperature" in completion_args
+                ):
+                    logger.warning(
+                        "temperature_rejected",
+                        model=model_name,
+                        action="dropping_temperature_and_retrying",
+                    )
+                    completion_args.pop("temperature")
+                    _temperature_dropped = True
+                    continue  # retry immediately, don't count against max_retries
                 if attempt == max_retries:
                     logger.error("llm_error", model=model_name, error=str(e))
                     raise
                 logger.warning("llm_attempt_failed", model=model_name, attempt=attempt, error=str(e))
+                attempt += 1
 
         if not stream:
             try:

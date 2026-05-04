@@ -20,7 +20,7 @@ const sidebars: SidebarsConfig = {
       items: [
         'data-format',
         'config-format',
-        'recipes',
+        'evaluation-api',
         'evaluation-results',
         'report-formats',
       ],

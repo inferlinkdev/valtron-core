@@ -48,6 +48,7 @@ datasets = {version = "^2.18.0", optional = true}
 accelerate = {version = ">=0.26.0", optional = true}
 nltk = "^3.9.2"
 reportlab = "4.4.10"
+jsonschema = "^4.26.0"
 
 [tool.poetry.extras]
 transformers = ["torch", "transformers", "scikit-learn", "datasets", "accelerate"]

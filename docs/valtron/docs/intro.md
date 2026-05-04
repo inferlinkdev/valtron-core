@@ -42,7 +42,7 @@ evaluation_report.html  ·  models/*.json  ·  metadata.json
 - Understand inputs: [Data Format](./data-format) and [Config Format](./config-format)
 - Understand outputs: [Evaluation Results](./evaluation-results) and [Report Formats](./report-formats)
 - Improve accuracy: [Prompt Optimizers](./optimizers)
-- Run evaluations: [Evaluation API](./recipes)
+- Run evaluations: [Evaluation API](./evaluation-api)
 - Zero-cost inference: [Transformer Models](./transformer-models)
 - Run models locally: [Self-Hosted Models](./self-hosted-models)
 - See working code: [Examples](./examples/)
