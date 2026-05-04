@@ -69,6 +69,11 @@ h1, h2, h3, h4, h5, h6 {
   font-size: 1.05rem;
 }
 
+.navbar__title::after {
+  content: '_';
+  color: var(--ifm-color-primary);
+}
+
 [data-theme='dark'] .navbar__title {
   color: #f8fafc;
 }

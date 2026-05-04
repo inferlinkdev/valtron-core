@@ -61,4 +61,4 @@ After the second `run()`, the HTML report at `output_dir` is rewritten to includ
 ## What's next
 
 - Run the [Sentiment Classification](./sentiment-classification) example first, then load those results here instead of running the initial evaluation inline.
-- Use `save_pdf_report()` after loading to produce a PDF without re-evaluating. See [Recipes](../recipes#saving-results-and-reports-manually).
+- Use `save_pdf_report()` after loading to produce a PDF without re-evaluating. See [Recipes](../evaluation-api#saving-results-and-reports-manually).

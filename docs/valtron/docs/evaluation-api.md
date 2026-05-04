@@ -80,7 +80,11 @@ asyncio.run(run_experiment())
 When you call `run()`, Valtron executes these stages in order:
 
 1. **Load and validate data**: parse documents and labels, validate config
-2. **Validate manipulations**: check that structured-only manipulations have `response_format`
+2. **Preflight checks**:
+   - Validate that structured-only manipulations have `response_format`
+   - Warn when a model does not support `temperature` or `response_format` (those params are dropped at call time rather than erroring)
+   - Detect auto-wrap: if a schema is configured with exactly one `label` field and all data labels are plain strings, labels are automatically wrapped as `{"label": value}` before scoring
+   - Validate all JSON-structured labels (and auto-wrapped labels) against the schema; raises `ValueError` with failing record ids if any mismatch
 3. **Generate few-shot examples**: if `few_shot.enabled` is true, generate and validate examples before evaluation starts
 4. **Prepare per-model prompts**: apply manipulations to build the final prompt for each model
 5. **Evaluate all models concurrently**: LLM calls run in parallel across models (up to `max_concurrent` per model)
