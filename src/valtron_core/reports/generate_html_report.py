@@ -425,4 +425,4 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
         favicon_destination = output_path / "favicon.svg"
         shutil.copy(self._fetch_favicon(), favicon_destination)
 
-        return output_path, recommendation
+        return evaluation_report, recommendation
