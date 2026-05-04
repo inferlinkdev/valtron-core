@@ -217,55 +217,10 @@ class TestPromptEvaluator:
 
 
 class TestEvaluateSinglePlainTextWrapping:
-    """evaluate_single correctly scores plain-text labels against JSON responses.
+    """evaluate_single scores plain-text labels directly without JSON wrapping.
 
-    When field_metrics_config has a single-field object root and label.value is
-    plain text, the expected value is wrapped as {"<field>": label.value} before
-    being passed to JsonEvaluator.
+    String label values are compared as-is against the predicted value.
     """
-
-    @pytest.mark.asyncio
-    @pytest.mark.unit
-    async def test_plain_text_label_scores_correctly_with_field_metrics(
-        self,
-        mock_env_vars: dict[str, str],
-        mock_model_response: ModelResponse,
-    ) -> None:
-        from valtron_core.models import FieldMetricsConfig
-
-        evaluator = PromptEvaluator()
-        doc = Document(id="1", content="Is this positive?")
-        label = Label(document_id="1", value="yes")
-
-        mock_model_response.choices[0].message.content = '{"label": "yes"}'
-
-        fm_config = FieldMetricsConfig(
-            config={
-                "type": "object",
-                "weight": 1.0,
-                "metric_config": {"propagation": "weighted_avg"},
-                "fields": {
-                    "label": {
-                        "type": "leaf",
-                        "weight": 1.0,
-                        "optional": False,
-                        "metric_config": {"metric": "exact", "propagation": "weighted_avg"},
-                    }
-                },
-            }
-        )
-
-        with patch("valtron_core.client.acompletion", new=AsyncMock(return_value=mock_model_response)):
-            result = await evaluator.evaluate_single(
-                document=doc,
-                label=label,
-                prompt_template="Classify: {content}",
-                model="gpt-4o-mini",
-                field_metrics_config=fm_config,
-            )
-
-        assert result.is_correct is True
-        assert result.example_score == 1.0
 
     @pytest.mark.asyncio
     @pytest.mark.unit

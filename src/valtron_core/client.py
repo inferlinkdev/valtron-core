@@ -129,6 +129,31 @@ class LLMClient:
         else:
             completion_args["model"] = model
 
+        # Drop params that the model doesn't support
+        try:
+            param_check_kwargs: dict[str, Any] = {"model": model_name}
+            if isinstance(model, dict) and "custom_llm_provider" in model:
+                param_check_kwargs["custom_llm_provider"] = model["custom_llm_provider"]
+            supported_params = litellm.get_supported_openai_params(**param_check_kwargs) or []
+
+            if "temperature" not in supported_params:
+                logger.warning(
+                    "temperature_not_supported",
+                    model=model_name,
+                    action="dropping_temperature",
+                )
+                completion_args.pop("temperature", None)
+
+            if response_format is not None and not litellm.supports_response_schema(**param_check_kwargs):
+                logger.warning(
+                    "response_format_not_supported",
+                    model=model_name,
+                    action="dropping_response_format",
+                )
+                completion_args["response_format"] = None
+        except Exception:
+            pass  # unknown model; proceed and let litellm.drop_params handle it
+
         max_retries = self.config.optimization.max_retries
         retry_delay = self.config.optimization.retry_delay
 

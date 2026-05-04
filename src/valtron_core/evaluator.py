@@ -387,18 +387,6 @@ class PromptEvaluator:
                         custom_aggs=field_metrics_config.custom_aggs,
                     )
                     expected_for_eval = label.value
-                    try:
-                        json.loads(label.value)
-                    except (json.JSONDecodeError, ValueError):
-                        cfg = (
-                            field_metrics_config.config
-                            if isinstance(field_metrics_config.config, dict)
-                            else {}
-                        )
-                        fields = cfg.get("fields") or {}
-                        if cfg.get("type") == "object" and len(fields) == 1:
-                            field_name = next(iter(fields))
-                            expected_for_eval = json.dumps({field_name: label.value})
                     result = evaluator.evaluate(
                         field_metrics_config.config,
                         expected_for_eval,
