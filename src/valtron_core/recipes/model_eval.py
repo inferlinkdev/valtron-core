@@ -148,12 +148,18 @@ class ModelEval(BaseRecipe):
         self._check_model_param_support()
         self._validate_labels_against_schema()
 
+    def _effective_dict_schema(self) -> "dict[str, Any] | None":
+        """Return the resolved dict-format schema regardless of how it was configured.
+
+        Checks config.response_format_schema first (set on fresh runs), then falls
+        back to _response_format_schema (pre-set on reloaded instances).
+        """
+        return self.config.response_format_schema or self._response_format_schema
+
     def _check_model_param_support(self) -> None:
         from valtron_core.recipes.config import LLMModelConfig
 
-        wants_response_format = (
-            self.response_format is not None or self.config.response_format_schema is not None
-        )
+        wants_response_format = self.response_format is not None or self._effective_dict_schema() is not None
 
         if wants_response_format and self.data:
             all_plain_string_labels = all(
@@ -208,9 +214,10 @@ class ModelEval(BaseRecipe):
                 isinstance(annotation, type) and issubclass(annotation, enum.Enum)
             )
 
-        if self.config.response_format_schema is not None:
+        effective_dict_schema = self._effective_dict_schema()
+        if effective_dict_schema is not None:
             try:
-                props = self.config.response_format_schema["json_schema"]["schema"]["properties"]
+                props = effective_dict_schema["json_schema"]["schema"]["properties"]
                 if set(props.keys()) != {"label"}:
                     return False
                 label_prop = props["label"]
@@ -231,13 +238,14 @@ class ModelEval(BaseRecipe):
         """
         import jsonschema
 
-        if self.response_format is None and self.config.response_format_schema is None:
+        effective_dict_schema = self._effective_dict_schema()
+        if self.response_format is None and effective_dict_schema is None:
             return
 
         json_schema: dict[str, Any] | None = None
-        if self.response_format is None and self.config.response_format_schema is not None:
+        if self.response_format is None:
             try:
-                json_schema = self.config.response_format_schema["json_schema"]["schema"]
+                json_schema = effective_dict_schema["json_schema"]["schema"]  # type: ignore[index]
             except (KeyError, TypeError):
                 return
 
@@ -284,8 +292,8 @@ class ModelEval(BaseRecipe):
             models: List of model config dicts or ``ModelConfig`` objects.
 
         Raises:
-            ValueError: Duplicate label, structured manipulation without
-                ``response_format``, or transformer model with ``response_format``.
+            ValueError: Duplicate label or structured manipulation without
+                ``response_format``.
         """
         from valtron_core.recipes.config import LLMModelConfig, TransformerModelConfig
 
@@ -323,14 +331,6 @@ class ModelEval(BaseRecipe):
                 f"Model(s) {bad_models} use structured manipulation(s) {bad_manips}, "
                 "which require response_format to be provided."
             )
-
-        if self.response_format is not None:
-            transformer_models = [mc.label for mc in normalized if mc.type == "transformer"]
-            if transformer_models:
-                raise ValueError(
-                    f"Transformer model(s) {transformer_models} cannot be used when "
-                    "response_format is provided."
-                )
 
         self.models.extend(normalized)
         self.config.models.extend(normalized)
@@ -934,9 +934,12 @@ class ModelEval(BaseRecipe):
         for idx, item in enumerate(self.data):
             doc_id = str(item.get("id", f"doc_{idx}"))
             label_raw = item.get("label", "")
-            label_map[doc_id] = (
-                json.dumps(label_raw) if isinstance(label_raw, (dict, list)) else str(label_raw)
-            )
+            if isinstance(label_raw, (dict, list)):
+                label_map[doc_id] = json.dumps(label_raw)
+            elif self._auto_wrap_string_labels:
+                label_map[doc_id] = json.dumps({"label": str(label_raw)})
+            else:
+                label_map[doc_id] = str(label_raw)
 
         run_id = str(uuid.uuid4())
         result = EvaluationResult(
@@ -964,6 +967,9 @@ class ModelEval(BaseRecipe):
             pred_start = time.time()
             prediction = transformer.predict(doc.content)
             pred_time = time.time() - pred_start
+
+            if self._auto_wrap_string_labels:
+                prediction = json.dumps({"label": prediction})
 
             if json_evaluator is not None:
                 cfg = field_metrics_config.config  # type: ignore[union-attr]

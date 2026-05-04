@@ -160,13 +160,13 @@ class TestModelEvalInit:
         eval_ = ModelEval(config=config, data=[], response_format=SampleSchema)
         assert eval_.response_format is SampleSchema
 
-    def test_transformer_with_response_format_raises(self):
+    def test_transformer_with_response_format_allowed(self):
         config = {
             "models": [{"label": "my-transformer", "type": "transformer", "model_path": "./dummy"}],
             "prompt": "Extract: {content}",
         }
-        with pytest.raises(ValueError, match="Transformer"):
-            ModelEval(config=config, data=[], response_format=SampleSchema)
+        exp = ModelEval(config=config, data=[], response_format=SampleSchema)
+        assert any(mc.type == "transformer" for mc in exp.models)
 
     def test_prompt_missing_placeholder_raises(self):
         with pytest.raises(ValidationError, match="placeholder"):
