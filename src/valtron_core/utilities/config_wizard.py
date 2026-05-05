@@ -60,17 +60,18 @@ def get_all_models() -> list[dict]:
 
 
 def search_models(query: str, exclude: str = "", limit: int = 20) -> list[dict]:
-    """Return up to `limit` models matching `query`, excluding `exclude`."""
+    """Return up to `limit` models matching `query`, excluding comma-separated names in `exclude`."""
     query = query.strip().lower()
+    excluded = {e.strip() for e in exclude.split(",") if e.strip()}
     if not query:
         results = []
         for name in _POPULAR_MODELS:
-            if name != exclude:
+            if name not in excluded:
                 results.append(_build_model_entry(name))
         return results[:limit]
 
     all_models = get_all_models()
-    matches = [m for m in all_models if query in m["name"].lower() and m["name"] != exclude]
+    matches = [m for m in all_models if query in m["name"].lower() and m["name"] not in excluded]
     return matches[:limit]
 
 

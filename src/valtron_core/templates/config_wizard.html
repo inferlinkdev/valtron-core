@@ -405,6 +405,7 @@
                     <input type="text" id="add-model-input" placeholder="Search and add a model…" autocomplete="off" />
                     <div class="autocomplete-dropdown" id="add-model-dropdown"></div>
                 </div>
+                <p id="duplicate-model-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;">That model is already in the list.</p>
             </div>
             <div class="form-group">
                 <label>
@@ -749,7 +750,13 @@ function renderTestModelChips() {
 }
 
 function addTestModel(model) {
-    if (selectedTestModels.some(m => m.name === model.name)) return;
+    const errEl = document.getElementById('duplicate-model-error');
+    if (selectedTestModels.some(m => m.name === model.name)) {
+        errEl.style.display = 'block';
+        setTimeout(() => { errEl.style.display = 'none'; }, 3000);
+        return;
+    }
+    errEl.style.display = 'none';
     selectedTestModels.push({
         name: model.name, type: 'llm',
         is_simple:       model.is_simple       || false,
@@ -774,7 +781,11 @@ createAutocomplete({
     inputEl:    document.getElementById('add-model-input'),
     dropdownEl: document.getElementById('add-model-dropdown'),
     onSelect:   addTestModel,
-    excludeFn:  () => document.getElementById('current-model').value.trim(),
+    excludeFn:  () => {
+        const current = document.getElementById('current-model').value.trim();
+        const selected = selectedTestModels.map(m => m.name);
+        return [current, ...selected].filter(Boolean).join(',');
+    },
 });
 
 /* ════════════════════════════════════════════════════════════════
