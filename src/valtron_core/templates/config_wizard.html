@@ -458,7 +458,10 @@
                     <button type="button" class="btn btn-secondary" style="white-space:nowrap;flex-shrink:0" onclick="document.getElementById('file-picker').click()">Browse...</button>
                 </div>
                 <input type="file" id="file-picker" accept=".json" style="display:none" onchange="handleFilePick(this)" />
-                <div id="upload-status" style="margin-top:6px;font-size:0.85em;color:#8b949e;min-height:1.2em">Browse supports files up to 500 MB. For larger files, enter the path directly.</div>
+                <div id="upload-status" style="margin-top:6px;font-size:0.85em;color:#8b949e;min-height:1.2em">Browse supports files up to 1 GB. For larger files, enter the path directly.</div>
+                <p class="step-description" style="margin-top:2px;font-size:0.82em;color:#8b949e">
+                    Relative paths resolve from: <code id="cwd-display">...</code>
+                </p>
                 <p class="step-description" style="margin-top:4px">
                     <a href="#" class="help-link" onclick="showModal('format-modal');return false">📋 View required data format</a>
                 </p>
@@ -838,6 +841,12 @@ function updateStepDisplay(step) {
 async function handleFilePick(input) {
     const file = input.files[0];
     if (!file) return;
+    const ONE_GB = 1024 * 1024 * 1024;
+    if (file.size > ONE_GB) {
+        alert(`"${file.name}" is ${(file.size / ONE_GB).toFixed(2)} GB, which exceeds the 1 GB limit. Enter the file path directly instead.`);
+        input.value = '';
+        return;
+    }
     const status = document.getElementById('upload-status');
     status.textContent = `Uploading ${file.name}…`;
     status.style.color = '#8b949e';
@@ -1284,6 +1293,11 @@ document.addEventListener('keydown', e => {
 function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+fetch('/api/cwd').then(r => r.json()).then(d => {
+    const el = document.getElementById('cwd-display');
+    if (el) el.textContent = d.cwd;
+}).catch(() => {});
 </script>
 </body>
 </html>

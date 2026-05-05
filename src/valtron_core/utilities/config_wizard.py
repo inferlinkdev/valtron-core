@@ -14,7 +14,7 @@ from flask_cors import CORS
 
 app = Flask(__name__, template_folder="../templates")
 CORS(app)
-app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
+app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1 GB
 
 _all_models_cache: list[dict] | None = None
 
@@ -366,6 +366,12 @@ def api_analyze_data():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cwd", methods=["GET"])
+def api_cwd() -> tuple:
+    """Return the server's current working directory."""
+    return jsonify({"cwd": str(Path.cwd())})
 
 
 @app.route("/api/save-config", methods=["POST"])
