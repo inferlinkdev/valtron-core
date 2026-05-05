@@ -6,6 +6,8 @@ from pathlib import Path
 
 import litellm
 from litellm.utils import supports_pdf_input
+
+litellm.suppress_debug_info = True
 import requests
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
@@ -35,11 +37,15 @@ _POPULAR_MODELS = [
 
 
 def _build_model_entry(name: str) -> dict:
-    return {
-        "name": name,
-        "supports_vision": litellm.supports_vision(name),
-        "supports_pdf": supports_pdf_input(name),
-    }
+    try:
+        vision = litellm.supports_vision(name)
+    except Exception:
+        vision = False
+    try:
+        pdf = supports_pdf_input(name)
+    except Exception:
+        pdf = False
+    return {"name": name, "supports_vision": vision, "supports_pdf": pdf}
 
 
 def get_all_models() -> list[dict]:
