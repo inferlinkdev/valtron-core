@@ -663,6 +663,7 @@ ollama pull mistral</pre></li>
    ════════════════════════════════════════════════════════════════ */
 let currentStep = 1;
 let analysisResult = null;
+let uploadedData = null;
 
 let config = {
     models: [],
@@ -871,7 +872,8 @@ async function handleFilePick(input) {
             status.style.color = '#f85149';
             return;
         }
-        document.getElementById('data-url').value = result.path;
+        uploadedData = result.data;
+        document.getElementById('data-url').value = file.name;
         status.textContent = `Uploaded — ${result.num_examples} examples`;
         status.style.color = '#3fb950';
     } catch (e) {
@@ -902,21 +904,26 @@ async function analyzeData() {
     btn.disabled = true; btn.textContent = 'Analyzing…';
 
     try {
-        let dataPath = dataUrl;
+        let analyzeBody;
 
-        if (dataUrl.startsWith('http')) {
+        if (uploadedData !== null) {
+            analyzeBody = { data: uploadedData };
+            uploadedData = null;
+        } else if (dataUrl.startsWith('http')) {
             const dlResp = await fetch('/api/download-data', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: dataUrl })
             });
             const dlResult = await dlResp.json();
             if (!dlResp.ok) { alert('Error downloading data: ' + dlResult.error); return; }
-            dataPath = dlResult.path;
+            analyzeBody = { data: dlResult.data };
+        } else {
+            analyzeBody = { data_path: dataUrl };
         }
 
         const resp = await fetch('/api/analyze-data', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data_path: dataPath })
+            body: JSON.stringify(analyzeBody)
         });
         const result = await resp.json();
         if (!resp.ok) { alert('Error analyzing data: ' + result.error); return; }

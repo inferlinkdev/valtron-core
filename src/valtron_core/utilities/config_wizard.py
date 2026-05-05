@@ -1,7 +1,6 @@
 """Configuration wizard web UI for creating recipe configs."""
 
 import json
-import secrets
 from pathlib import Path
 
 import litellm
@@ -124,7 +123,7 @@ def api_suggest_models():
 
 @app.route("/api/download-data", methods=["POST"])
 def api_download_data():
-    """Download training data from URL and save to examples directory."""
+    """Download training data from URL and return it in memory."""
     data = request.json
     url = data.get("url", "")
 
@@ -132,37 +131,16 @@ def api_download_data():
         return jsonify({"error": "No URL provided"}), 400
 
     try:
-        # Download the file
         response = requests.get(url, timeout=30)
         response.raise_for_status()
-
-        # Validate it's JSON
         json_data = response.json()
-
-        # Generate random filename
-        random_suffix = secrets.token_hex(4)
-        filename = f"training_data_{random_suffix}.json"
-
-        # Save to examples directory
-        examples_dir = Path(__file__).parent.parent.parent / "examples" / "example_data"
-        examples_dir.mkdir(parents=True, exist_ok=True)
-
-        file_path = examples_dir / filename
-        with open(file_path, "w") as f:
-            json.dump(json_data, f, indent=2)
-
-        # Return relative path for config
-        relative_path = f"examples/example_data/{filename}"
-
         return jsonify(
             {
                 "success": True,
-                "path": relative_path,
-                "filename": filename,
+                "data": json_data,
                 "num_examples": len(json_data) if isinstance(json_data, list) else 1,
             }
         )
-
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"Failed to download file: {str(e)}"}), 400
     except json.JSONDecodeError:
@@ -173,7 +151,7 @@ def api_download_data():
 
 @app.route("/api/upload-data", methods=["POST"])
 def api_upload_data() -> tuple:
-    """Accept a multipart file upload, validate it is JSON, and save to examples directory."""
+    """Accept a multipart file upload, validate it is JSON, and return it in memory."""
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -186,22 +164,10 @@ def api_upload_data() -> tuple:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return jsonify({"error": "File is not valid JSON"}), 400
 
-    random_suffix = secrets.token_hex(4)
-    filename = f"training_data_{random_suffix}.json"
-
-    examples_dir = Path(__file__).parent.parent.parent / "examples" / "example_data"
-    examples_dir.mkdir(parents=True, exist_ok=True)
-
-    file_path = examples_dir / filename
-    with open(file_path, "w") as f:
-        json.dump(json_data, f, indent=2)
-
-    relative_path = f"examples/example_data/{filename}"
     return jsonify(
         {
             "success": True,
-            "path": relative_path,
-            "filename": filename,
+            "data": json_data,
             "num_examples": len(json_data) if isinstance(json_data, list) else 1,
         }
     )
@@ -210,23 +176,24 @@ def api_upload_data() -> tuple:
 @app.route("/api/analyze-data", methods=["POST"])
 def api_analyze_data():
     """Analyze training data to detect JSON labels and infer field metrics config."""
-    data = request.json
-    data_path = data.get("data_path", "")
-
-    if not data_path:
-        return jsonify({"error": "No data path provided"}), 400
-
-    path = Path(data_path)
-    if not path.is_absolute():
-        project_root = Path(__file__).parent.parent.parent
-        path = project_root / data_path
-
-    if not path.exists():
-        return jsonify({"error": f"File not found: {data_path}"}), 404
+    payload = request.json
+    inline_data = payload.get("data")
+    data_path = payload.get("data_path", "")
 
     try:
-        with open(path) as f:
-            data_list = json.load(f)
+        if inline_data is not None:
+            data_list = inline_data
+        elif data_path:
+            path = Path(data_path)
+            if not path.is_absolute():
+                project_root = Path(__file__).parent.parent.parent
+                path = project_root / data_path
+            if not path.exists():
+                return jsonify({"error": f"File not found: {data_path}"}), 404
+            with open(path) as f:
+                data_list = json.load(f)
+        else:
+            return jsonify({"error": "No data or data path provided"}), 400
 
         if not isinstance(data_list, list) or not data_list:
             return jsonify({"is_json": False, "reason": "Empty or non-list data"})
