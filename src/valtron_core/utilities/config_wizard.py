@@ -186,8 +186,7 @@ def api_analyze_data():
         elif data_path:
             path = Path(data_path)
             if not path.is_absolute():
-                project_root = Path(__file__).parent.parent.parent
-                path = project_root / data_path
+                path = Path.cwd() / data_path
             if not path.exists():
                 return jsonify({"error": f"File not found: {data_path}"}), 404
             with open(path) as f:
