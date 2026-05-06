@@ -314,10 +314,21 @@ class ModelEval(BaseRecipe):
         seen_in_batch: set[str] = set()
         for mc in normalized:
             label = mc.label or mc.name
+            label_source = f"label={mc.label!r}" if mc.label else f"name={mc.name!r} (label inferred from name)"
             if label in existing_labels:
-                raise ValueError(f"Model label {label!r} already exists in this experiment.")
+                raise ValueError(
+                    f"Duplicate model label {label!r} in config ({label_source}). "
+                    "Each model entry must have a unique label. "
+                    "You can use the same model twice by giving one entry a distinct label "
+                    "(e.g. label='gpt-5-mini-v2')."
+                )
             if label in seen_in_batch:
-                raise ValueError(f"Duplicate label {label!r} in provided models list.")
+                raise ValueError(
+                    f"Duplicate model label {label!r} in config ({label_source}). "
+                    "Each model entry must have a unique label. "
+                    "You can use the same model twice by giving one entry a distinct label "
+                    "(e.g. label='gpt-5-mini-v2')."
+                )
             seen_in_batch.add(label)
 
         structured_requested = [
