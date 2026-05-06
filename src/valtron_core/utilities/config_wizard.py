@@ -8,7 +8,7 @@ from litellm.utils import supports_pdf_input
 
 litellm.suppress_debug_info = True
 import requests
-from flask import Flask, jsonify, render_template, request
+from flask import Flask, jsonify, render_template, request, send_from_directory
 from flask_cors import CORS
 
 app = Flask(__name__, template_folder="../templates")
@@ -93,6 +93,13 @@ def suggest_models(current_model: str) -> list[dict]:
         result.append(entry)
 
     return result[:3]
+
+
+@app.route("/favicon.svg")
+def favicon() -> object:
+    """Serve the Valtron favicon."""
+    template_dir = Path(__file__).parent.parent / "templates"
+    return send_from_directory(template_dir, "favicon.svg", mimetype="image/svg+xml")
 
 
 @app.route("/")

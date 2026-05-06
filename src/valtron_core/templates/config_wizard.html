@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>evaltron_core Configuration Wizard</title>
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+    <title>Valtron Config Wizard</title>
     <style>
         {% include 'common.css' %}
 
@@ -732,6 +733,7 @@ function createAutocomplete({ inputEl, dropdownEl, onSelect, excludeFn, clearOnS
    Step 2: selected test models
    ════════════════════════════════════════════════════════════════ */
 let selectedTestModels = [];
+let lastSuggestedForModel = '';
 
 function renderTestModelChips() {
     const c = document.getElementById('selected-model-chips');
@@ -797,13 +799,16 @@ function nextStep() {
         const m = document.getElementById('current-model').value.trim();
         if (!m) { alert('Please enter your current model'); return; }
         config.models = [{ name: m, type: 'llm', prompt_manipulation: [], params: {} }];
-        fetch('/api/suggest-models', {
-            method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ current_model: m })
-        }).then(r => r.json()).then(data => {
-            selectedTestModels = [];
-            data.suggestions.forEach(model => addTestModel(model));
-        });
+        if (m !== lastSuggestedForModel) {
+            lastSuggestedForModel = m;
+            fetch('/api/suggest-models', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ current_model: m })
+            }).then(r => r.json()).then(data => {
+                selectedTestModels = [];
+                data.suggestions.forEach(model => addTestModel(model));
+            });
+        }
     }
 
     if (currentStep === 2) {
@@ -909,7 +914,6 @@ async function analyzeData() {
 
         if (uploadedData !== null) {
             analyzeBody = { data: uploadedData };
-            uploadedData = null;
         } else if (dataUrl.startsWith('http')) {
             const dlResp = await fetch('/api/download-data', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1317,6 +1321,8 @@ fetch('/api/cwd').then(r => r.json()).then(d => {
     const el = document.getElementById('cwd-display');
     if (el) el.textContent = d.cwd;
 }).catch(() => {});
+
+document.getElementById('data-url').addEventListener('input', () => { uploadedData = null; });
 </script>
 </body>
 </html>
