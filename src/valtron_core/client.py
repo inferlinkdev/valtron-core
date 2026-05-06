@@ -104,14 +104,6 @@ class LLMClient:
         # Extract model name for logging
         model_name = model if isinstance(model, str) else model.get("model", "unknown")
 
-        logger.info(
-            "llm_request",
-            model=model_name,
-            message_count=len(messages),
-            temperature=temperature,
-            stream=stream,
-        )
-
         # Prepare completion arguments
         completion_args: dict[str, Any] = {
             "messages": messages,
@@ -192,7 +184,6 @@ class LLMClient:
             try:
                 cost = completion_cost(completion_response=response)
                 self._total_cost += cost
-                logger.info("llm_response", model=model_name, cost=cost, total_cost=self._total_cost)
             except Exception as e:
                 logger.warning("cost_tracking_failed", model=model_name, error=str(e))
 
@@ -224,13 +215,6 @@ class LLMClient:
         self._call_count += 1
 
         try:
-            logger.info(
-                "llm_request_sync",
-                model=model,
-                message_count=len(messages),
-                temperature=temperature,
-            )
-
             response = completion(
                 model=model,
                 messages=messages,
@@ -244,7 +228,6 @@ class LLMClient:
             try:
                 cost = completion_cost(completion_response=response)
                 self._total_cost += cost
-                logger.info("llm_response_sync", model=model, cost=cost, total_cost=self._total_cost)
             except Exception as e:
                 logger.warning("cost_tracking_failed_sync", model=model, error=str(e))
 

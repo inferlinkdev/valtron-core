@@ -404,16 +404,6 @@ class PromptEvaluator:
                         error=str(e),
                     )
 
-            logger.info(
-                "evaluation_single",
-                document_id=document.id,
-                predicted=predicted_value,
-                expected=label.value,
-                correct=is_correct,
-                time=response_time,
-                cost=cost,
-            )
-
             return PredictionResult(
                 document_id=document.id,
                 predicted_value=predicted_value,
@@ -460,6 +450,7 @@ class PromptEvaluator:
         field_metrics_config: FieldMetricsConfig | None = None,
         post_extraction_filter: Callable | None = None,
         multi_pass: int = 1,
+        on_document_complete: Callable[["PredictionResult"], None] | None = None,
     ) -> EvaluationResult:
         """
         Evaluate all documents against their labels.
@@ -503,13 +494,6 @@ class PromptEvaluator:
         # Preflight: verify model supports all attachment types before running anything
         self._preflight_attachment_check(eval_input.documents, model_name)
 
-        logger.info(
-            "evaluation_started",
-            run_id=run_id,
-            total_documents=len(eval_input.documents),
-            model=model_name,
-        )
-
         try:
             # Use semaphore to limit concurrent requests
             semaphore = asyncio.Semaphore(max_concurrent)
@@ -519,7 +503,7 @@ class PromptEvaluator:
                     return None
 
                 async with semaphore:
-                    return await self.evaluate_single(
+                    pred = await self.evaluate_single(
                         document=doc,
                         label=label_map[doc.id],
                         prompt_template=eval_input.prompt_template,
@@ -531,6 +515,9 @@ class PromptEvaluator:
                         post_extraction_filter=post_extraction_filter,
                         multi_pass=multi_pass,
                     )
+                    if pred is not None and on_document_complete is not None:
+                        on_document_complete(pred)
+                    return pred
 
             # Evaluate all documents concurrently
             predictions = await asyncio.gather(
@@ -561,14 +548,6 @@ class PromptEvaluator:
             result.compute_metrics()
             result.completed_at = datetime.now()
             result.status = "completed"
-
-            logger.info(
-                "evaluation_completed",
-                run_id=run_id,
-                accuracy=result.metrics.accuracy if result.metrics else 0,
-                total_cost=result.metrics.total_cost if result.metrics else 0,
-                total_time=result.metrics.total_time if result.metrics else 0,
-            )
 
         except Exception as e:
             result.status = "failed"

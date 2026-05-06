@@ -566,8 +566,8 @@ class TestGenerateReport:
 class TestPrintMethods:
     """Tests for the print helper methods."""
 
-    def test_print_result_no_metrics(self, mock_llm_client, capsys):
-        """Test printing result with no metrics."""
+    def test_print_summary_table_no_metrics(self, mock_llm_client):
+        """Test printing summary table when result has no metrics."""
         runner = EvaluationRunner(client=mock_llm_client)
 
         result = EvaluationResult(
@@ -580,10 +580,10 @@ class TestPrintMethods:
         )
 
         # Should not raise
-        runner._print_result(result)
+        runner._print_summary_table([result])
 
-    def test_print_result_with_metrics(self, mock_llm_client):
-        """Test printing result with metrics."""
+    def test_print_summary_table_with_metrics(self, mock_llm_client):
+        """Test printing summary table with a single model result."""
         runner = EvaluationRunner(client=mock_llm_client)
 
         result = EvaluationResult(
@@ -606,18 +606,18 @@ class TestPrintMethods:
         )
 
         # Should not raise
-        runner._print_result(result)
+        runner._print_summary_table([result])
 
-    def test_print_comparison(self, mock_llm_client, sample_evaluation_results):
-        """Test printing comparison results."""
+    def test_print_summary_table_multi_model(self, mock_llm_client, sample_evaluation_results):
+        """Test printing summary table with multiple models."""
         runner = EvaluationRunner(client=mock_llm_client)
 
         # Should not raise
-        runner._print_comparison(sample_evaluation_results)
+        runner._print_summary_table(sample_evaluation_results)
 
-    def test_print_comparison_with_field_metrics(self, mock_llm_client, sample_evaluation_results):
-        """Test printing comparison with field metrics."""
+    def test_print_summary_table_with_field_metrics(self, mock_llm_client, sample_evaluation_results):
+        """Test printing summary table with field metrics enabled."""
         runner = EvaluationRunner(client=mock_llm_client)
 
         # Should not raise
-        runner._print_comparison(sample_evaluation_results, show_field_metrics=True)
+        runner._print_summary_table(sample_evaluation_results, show_field_metrics=True)
