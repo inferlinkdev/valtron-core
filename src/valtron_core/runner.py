@@ -590,9 +590,9 @@ class EvaluationRunner:
                 best_cost = min(valid, key=lambda r: r.metrics.total_cost)  # type: ignore[union-attr]
                 best_speed = min(valid, key=lambda r: r.metrics.total_time)  # type: ignore[union-attr]
                 console.print("\n[bold]Best Models:[/bold]")
-                console.print(f"  Accuracy: {best_accuracy.model}")
-                console.print(f"  Cost:     {best_cost.model}")
-                console.print(f"  Speed:    {best_speed.model}")
+                console.print(f"  Accuracy: {escape(best_accuracy.model)}")
+                console.print(f"  Cost:     {escape(best_cost.model)}")
+                console.print(f"  Speed:    {escape(best_speed.model)}")
 
         if show_field_metrics:
             self._print_field_metrics_comparison(results)

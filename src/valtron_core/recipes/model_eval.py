@@ -647,7 +647,6 @@ class ModelEval(BaseRecipe):
                 self.results = new_results
                 self._manipulations_applied = new_manipulations
 
-        logger.info("model_eval_complete", num_models=len(self.results or []))
 
     async def arun(self, output_dir: "str | Path | None" = None) -> Path:
         """Run the complete pipeline and save outputs according to config flags (async).
@@ -1104,13 +1103,6 @@ class ModelEval(BaseRecipe):
             else:
                 effective_rf = None
 
-            logger.info(
-                "evaluating_model",
-                model=model_label,
-                manipulations=[m.value if hasattr(m, "value") else m for m in manipulations],
-                using_validator=effective_rf is not None,
-                using_field_metrics=field_metrics_config is not None,
-            )
 
             updated_prompt = None
 
