@@ -38,6 +38,8 @@ from valtron_core.recipes.config import (
     ModelEvalConfig,
     STRUCTURED_MANIPULATIONS,
 )
+from tqdm import tqdm
+
 from valtron_core.runner import EvaluationResult, EvaluationRunner
 
 from valtron_core.utilities.field_config_generator import infer_field_config
@@ -312,10 +314,21 @@ class ModelEval(BaseRecipe):
         seen_in_batch: set[str] = set()
         for mc in normalized:
             label = mc.label or mc.name
+            label_source = f"label={mc.label!r}" if mc.label else f"name={mc.name!r} (label inferred from name)"
             if label in existing_labels:
-                raise ValueError(f"Model label {label!r} already exists in this experiment.")
+                raise ValueError(
+                    f"Duplicate model label {label!r} in config ({label_source}). "
+                    "Each model entry must have a unique label. "
+                    "You can use the same model twice by giving one entry a distinct label "
+                    "(e.g. label='gpt-5-mini-v2')."
+                )
             if label in seen_in_batch:
-                raise ValueError(f"Duplicate label {label!r} in provided models list.")
+                raise ValueError(
+                    f"Duplicate model label {label!r} in config ({label_source}). "
+                    "Each model entry must have a unique label. "
+                    "You can use the same model twice by giving one entry a distinct label "
+                    "(e.g. label='gpt-5-mini-v2')."
+                )
             seen_in_batch.add(label)
 
         structured_requested = [
@@ -634,7 +647,6 @@ class ModelEval(BaseRecipe):
                 self.results = new_results
                 self._manipulations_applied = new_manipulations
 
-        logger.info("model_eval_complete", num_models=len(self.results or []))
 
     async def arun(self, output_dir: "str | Path | None" = None) -> Path:
         """Run the complete pipeline and save outputs according to config flags (async).
@@ -902,6 +914,7 @@ class ModelEval(BaseRecipe):
         model_config: Any,
         documents: list[Document],
         field_metrics_config: FieldMetricsConfig | None,
+        on_document_complete: "Any | None" = None,
     ) -> EvaluationResult:
         """Evaluate a local transformer model.
 
@@ -999,6 +1012,8 @@ class ModelEval(BaseRecipe):
                 metadata={"content": doc.content},
             )
             result.add_prediction(pred_result)
+            if on_document_complete is not None:
+                on_document_complete(pred_result)
 
         if model_config.cost_rate is not None:
             unit_seconds = _parse_time_unit_to_seconds(model_config.cost_rate_time_unit)
@@ -1051,6 +1066,15 @@ class ModelEval(BaseRecipe):
         effective_models = models if models is not None else self.models
         documents, labels = self._load_documents_and_labels()
 
+        total_docs = len(documents) * len(effective_models)
+        running_cost: list[float] = [0.0]
+        shared_bar = tqdm(total=total_docs, unit="doc", desc="Evaluating")
+
+        def _on_doc(pred: PredictionResult) -> None:
+            running_cost[0] += pred.cost
+            shared_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
+            shared_bar.update(1)
+
         async def _evaluate_single_model(
             index: int, model_config: Any
         ) -> tuple[int, Any, str, list, str | None]:
@@ -1061,7 +1085,7 @@ class ModelEval(BaseRecipe):
             # --- Transformer branch (label mode only; guarded at __init__) ---
             if model_config.type == "transformer":
                 result = await self._evaluate_transformer(
-                    model_config, documents, field_metrics_config
+                    model_config, documents, field_metrics_config, on_document_complete=_on_doc
                 )
                 return index, result, model_label, [], None
 
@@ -1079,13 +1103,6 @@ class ModelEval(BaseRecipe):
             else:
                 effective_rf = None
 
-            logger.info(
-                "evaluating_model",
-                model=model_label,
-                manipulations=[m.value if hasattr(m, "value") else m for m in manipulations],
-                using_validator=effective_rf is not None,
-                using_field_metrics=field_metrics_config is not None,
-            )
 
             updated_prompt = None
 
@@ -1129,6 +1146,8 @@ class ModelEval(BaseRecipe):
                     field_metrics_config=field_metrics_config,
                     post_extraction_filter=post_extraction_filter,
                     multi_pass=multi_pass,
+                    _tqdm_bar=shared_bar,
+                    _on_document_complete=_on_doc,
                 )
 
             # Propagate label to result objects when it differs from the model name
@@ -1144,6 +1163,7 @@ class ModelEval(BaseRecipe):
         indexed_results = await asyncio.gather(
             *[_evaluate_single_model(i, mc) for i, mc in enumerate(effective_models)]
         )
+        shared_bar.close()
 
         results = []
         manipulations_applied: dict[str, list[Any]] = {}
@@ -1154,6 +1174,10 @@ class ModelEval(BaseRecipe):
             manipulations_applied[model_label] = manipulations
             if updated_prompt is not None:
                 model_prompts[model_label] = updated_prompt
+
+        self.runner._print_summary_table(
+            results, show_field_metrics=field_metrics_config is not None
+        )
 
         return results, manipulations_applied
 

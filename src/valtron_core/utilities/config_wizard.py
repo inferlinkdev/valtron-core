@@ -1,18 +1,19 @@
 """Configuration wizard web UI for creating recipe configs."""
 
 import json
-import secrets
 from pathlib import Path
 
 import litellm
 from litellm.utils import supports_pdf_input
+
+litellm.suppress_debug_info = True
 import requests
 from flask import Flask, jsonify, render_template, request
 from flask_cors import CORS
 
 app = Flask(__name__, template_folder="../templates")
 CORS(app)
-app.config["MAX_CONTENT_LENGTH"] = 500 * 1024 * 1024  # 500 MB
+app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1 GB
 
 _all_models_cache: list[dict] | None = None
 
@@ -35,11 +36,15 @@ _POPULAR_MODELS = [
 
 
 def _build_model_entry(name: str) -> dict:
-    return {
-        "name": name,
-        "supports_vision": litellm.supports_vision(name),
-        "supports_pdf": supports_pdf_input(name),
-    }
+    try:
+        vision = litellm.supports_vision(name)
+    except Exception:
+        vision = False
+    try:
+        pdf = supports_pdf_input(name)
+    except Exception:
+        pdf = False
+    return {"name": name, "supports_vision": vision, "supports_pdf": pdf}
 
 
 def get_all_models() -> list[dict]:
@@ -54,17 +59,18 @@ def get_all_models() -> list[dict]:
 
 
 def search_models(query: str, exclude: str = "", limit: int = 20) -> list[dict]:
-    """Return up to `limit` models matching `query`, excluding `exclude`."""
+    """Return up to `limit` models matching `query`, excluding comma-separated names in `exclude`."""
     query = query.strip().lower()
+    excluded = {e.strip() for e in exclude.split(",") if e.strip()}
     if not query:
         results = []
         for name in _POPULAR_MODELS:
-            if name != exclude:
+            if name not in excluded:
                 results.append(_build_model_entry(name))
         return results[:limit]
 
     all_models = get_all_models()
-    matches = [m for m in all_models if query in m["name"].lower() and m["name"] != exclude]
+    matches = [m for m in all_models if query in m["name"].lower() and m["name"] not in excluded]
     return matches[:limit]
 
 
@@ -117,7 +123,7 @@ def api_suggest_models():
 
 @app.route("/api/download-data", methods=["POST"])
 def api_download_data():
-    """Download training data from URL and save to examples directory."""
+    """Download training data from URL and return it in memory."""
     data = request.json
     url = data.get("url", "")
 
@@ -125,37 +131,16 @@ def api_download_data():
         return jsonify({"error": "No URL provided"}), 400
 
     try:
-        # Download the file
         response = requests.get(url, timeout=30)
         response.raise_for_status()
-
-        # Validate it's JSON
         json_data = response.json()
-
-        # Generate random filename
-        random_suffix = secrets.token_hex(4)
-        filename = f"training_data_{random_suffix}.json"
-
-        # Save to examples directory
-        examples_dir = Path(__file__).parent.parent.parent / "examples" / "example_data"
-        examples_dir.mkdir(parents=True, exist_ok=True)
-
-        file_path = examples_dir / filename
-        with open(file_path, "w") as f:
-            json.dump(json_data, f, indent=2)
-
-        # Return relative path for config
-        relative_path = f"examples/example_data/{filename}"
-
         return jsonify(
             {
                 "success": True,
-                "path": relative_path,
-                "filename": filename,
+                "data": json_data,
                 "num_examples": len(json_data) if isinstance(json_data, list) else 1,
             }
         )
-
     except requests.exceptions.RequestException as e:
         return jsonify({"error": f"Failed to download file: {str(e)}"}), 400
     except json.JSONDecodeError:
@@ -166,7 +151,7 @@ def api_download_data():
 
 @app.route("/api/upload-data", methods=["POST"])
 def api_upload_data() -> tuple:
-    """Accept a multipart file upload, validate it is JSON, and save to examples directory."""
+    """Accept a multipart file upload, validate it is JSON, and return it in memory."""
     if "file" not in request.files:
         return jsonify({"error": "No file provided"}), 400
 
@@ -179,22 +164,10 @@ def api_upload_data() -> tuple:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return jsonify({"error": "File is not valid JSON"}), 400
 
-    random_suffix = secrets.token_hex(4)
-    filename = f"training_data_{random_suffix}.json"
-
-    examples_dir = Path(__file__).parent.parent.parent / "examples" / "example_data"
-    examples_dir.mkdir(parents=True, exist_ok=True)
-
-    file_path = examples_dir / filename
-    with open(file_path, "w") as f:
-        json.dump(json_data, f, indent=2)
-
-    relative_path = f"examples/example_data/{filename}"
     return jsonify(
         {
             "success": True,
-            "path": relative_path,
-            "filename": filename,
+            "data": json_data,
             "num_examples": len(json_data) if isinstance(json_data, list) else 1,
         }
     )
@@ -203,23 +176,24 @@ def api_upload_data() -> tuple:
 @app.route("/api/analyze-data", methods=["POST"])
 def api_analyze_data():
     """Analyze training data to detect JSON labels and infer field metrics config."""
-    data = request.json
-    data_path = data.get("data_path", "")
-
-    if not data_path:
-        return jsonify({"error": "No data path provided"}), 400
-
-    path = Path(data_path)
-    if not path.is_absolute():
-        project_root = Path(__file__).parent.parent.parent
-        path = project_root / data_path
-
-    if not path.exists():
-        return jsonify({"error": f"File not found: {data_path}"}), 404
+    payload = request.json
+    inline_data = payload.get("data")
+    data_path = payload.get("data_path", "")
 
     try:
-        with open(path) as f:
-            data_list = json.load(f)
+        if inline_data is not None:
+            data_list = inline_data
+        elif data_path:
+            path = Path(data_path)
+            if not path.is_absolute():
+                project_root = Path(__file__).parent.parent.parent
+                path = project_root / data_path
+            if not path.exists():
+                return jsonify({"error": f"File not found: {data_path}"}), 404
+            with open(path) as f:
+                data_list = json.load(f)
+        else:
+            return jsonify({"error": "No data or data path provided"}), 400
 
         if not isinstance(data_list, list) or not data_list:
             return jsonify({"is_json": False, "reason": "Empty or non-list data"})
@@ -360,6 +334,12 @@ def api_analyze_data():
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/cwd", methods=["GET"])
+def api_cwd() -> tuple:
+    """Return the server's current working directory."""
+    return jsonify({"cwd": str(Path.cwd())})
 
 
 @app.route("/api/save-config", methods=["POST"])

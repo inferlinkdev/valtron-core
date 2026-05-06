@@ -405,6 +405,7 @@
                     <input type="text" id="add-model-input" placeholder="Search and add a model…" autocomplete="off" />
                     <div class="autocomplete-dropdown" id="add-model-dropdown"></div>
                 </div>
+                <p id="duplicate-model-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;">That model is already in the list.</p>
             </div>
             <div class="form-group">
                 <label>
@@ -458,7 +459,10 @@
                     <button type="button" class="btn btn-secondary" style="white-space:nowrap;flex-shrink:0" onclick="document.getElementById('file-picker').click()">Browse...</button>
                 </div>
                 <input type="file" id="file-picker" accept=".json" style="display:none" onchange="handleFilePick(this)" />
-                <div id="upload-status" style="margin-top:6px;font-size:0.85em;color:#8b949e;min-height:1.2em">Browse supports files up to 500 MB. For larger files, enter the path directly.</div>
+                <div id="upload-status" style="margin-top:6px;font-size:0.85em;color:#8b949e;min-height:1.2em">Browse supports files up to 1 GB. For larger files, enter the path directly.</div>
+                <p class="step-description" style="margin-top:2px;font-size:0.82em;color:#8b949e">
+                    Relative paths resolve from: <code id="cwd-display">...</code>
+                </p>
                 <p class="step-description" style="margin-top:4px">
                     <a href="#" class="help-link" onclick="showModal('format-modal');return false">📋 View required data format</a>
                 </p>
@@ -562,9 +566,9 @@
         <div class="step" data-step="7">
             <h2>Review &amp; Download Configuration</h2>
             <p class="step-description">Your configuration is ready! You can edit it below or download it directly.</p>
-            <div class="alert alert-success">✅ Configuration generated successfully! Save this file to use with the recipe.</div>
+            <div class="alert alert-success">✅ Configuration generated successfully! Save this JSON file and pass it to your recipe, for example: <code>ModelEval(config="./config.json", data=data)</code></div>
             <div class="form-group">
-                <label>Generated Configuration (Editable)</label>
+                <label>Generated Configuration JSON (Editable)</label>
                 <textarea id="final-config" style="min-height:400px"></textarea>
             </div>
             <div class="button-group">
@@ -659,6 +663,7 @@ ollama pull mistral</pre></li>
    ════════════════════════════════════════════════════════════════ */
 let currentStep = 1;
 let analysisResult = null;
+let uploadedData = null;
 
 let config = {
     models: [],
@@ -746,7 +751,13 @@ function renderTestModelChips() {
 }
 
 function addTestModel(model) {
-    if (selectedTestModels.some(m => m.name === model.name)) return;
+    const errEl = document.getElementById('duplicate-model-error');
+    if (selectedTestModels.some(m => m.name === model.name)) {
+        errEl.style.display = 'block';
+        setTimeout(() => { errEl.style.display = 'none'; }, 3000);
+        return;
+    }
+    errEl.style.display = 'none';
     selectedTestModels.push({
         name: model.name, type: 'llm',
         is_simple:       model.is_simple       || false,
@@ -771,7 +782,11 @@ createAutocomplete({
     inputEl:    document.getElementById('add-model-input'),
     dropdownEl: document.getElementById('add-model-dropdown'),
     onSelect:   addTestModel,
-    excludeFn:  () => document.getElementById('current-model').value.trim(),
+    excludeFn:  () => {
+        const current = document.getElementById('current-model').value.trim();
+        const selected = selectedTestModels.map(m => m.name);
+        return [current, ...selected].filter(Boolean).join(',');
+    },
 });
 
 /* ════════════════════════════════════════════════════════════════
@@ -838,6 +853,12 @@ function updateStepDisplay(step) {
 async function handleFilePick(input) {
     const file = input.files[0];
     if (!file) return;
+    const ONE_GB = 1024 * 1024 * 1024;
+    if (file.size > ONE_GB) {
+        alert(`"${file.name}" is ${(file.size / ONE_GB).toFixed(2)} GB, which exceeds the 1 GB limit. Enter the file path directly instead.`);
+        input.value = '';
+        return;
+    }
     const status = document.getElementById('upload-status');
     status.textContent = `Uploading ${file.name}…`;
     status.style.color = '#8b949e';
@@ -851,7 +872,8 @@ async function handleFilePick(input) {
             status.style.color = '#f85149';
             return;
         }
-        document.getElementById('data-url').value = result.path;
+        uploadedData = result.data;
+        document.getElementById('data-url').value = file.name;
         status.textContent = `Uploaded — ${result.num_examples} examples`;
         status.style.color = '#3fb950';
     } catch (e) {
@@ -882,21 +904,26 @@ async function analyzeData() {
     btn.disabled = true; btn.textContent = 'Analyzing…';
 
     try {
-        let dataPath = dataUrl;
+        let analyzeBody;
 
-        if (dataUrl.startsWith('http')) {
+        if (uploadedData !== null) {
+            analyzeBody = { data: uploadedData };
+            uploadedData = null;
+        } else if (dataUrl.startsWith('http')) {
             const dlResp = await fetch('/api/download-data', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ url: dataUrl })
             });
             const dlResult = await dlResp.json();
             if (!dlResp.ok) { alert('Error downloading data: ' + dlResult.error); return; }
-            dataPath = dlResult.path;
+            analyzeBody = { data: dlResult.data };
+        } else {
+            analyzeBody = { data_path: dataUrl };
         }
 
         const resp = await fetch('/api/analyze-data', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ data_path: dataPath })
+            body: JSON.stringify(analyzeBody)
         });
         const result = await resp.json();
         if (!resp.ok) { alert('Error analyzing data: ' + result.error); return; }
@@ -1284,6 +1311,11 @@ document.addEventListener('keydown', e => {
 function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+fetch('/api/cwd').then(r => r.json()).then(d => {
+    const el = document.getElementById('cwd-display');
+    if (el) el.textContent = d.cwd;
+}).catch(() => {});
 </script>
 </body>
 </html>

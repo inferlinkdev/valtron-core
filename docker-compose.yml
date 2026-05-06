@@ -27,7 +27,7 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - ./configs:/app/configs
+      - ./src:/app/src
     working_dir: /app
     command: python -m valtron_core.utilities.config_wizard
 

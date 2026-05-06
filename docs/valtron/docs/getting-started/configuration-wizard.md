@@ -86,7 +86,7 @@ If you enabled prompt improvement in Step 2, a notice will appear confirming tha
 Provide your labeled dataset. You can enter:
 - A **URL** pointing to a JSON file (the wizard downloads it automatically)
 - A **local file path** relative to your working directory (e.g. `./examples/my_data.json`)
-- A **file upload** by clicking the browse button — files up to 500 MB are supported; for larger files, enter the local file path instead
+- A **file upload** by clicking the browse button. Files up to 1 GB are supported; for larger files, enter the local file path instead
 
 Your data must be a JSON array in this format:
 

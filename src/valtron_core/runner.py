@@ -10,6 +10,7 @@ from litellm import BaseModel
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
+from tqdm import tqdm
 
 from valtron_core.client import LLMClient
 from valtron_core.evaluator import PromptEvaluator
@@ -376,6 +377,8 @@ class EvaluationRunner:
         multi_pass: int = 1,
         max_concurrent: int = 5,
         save_results_dir: str | Path | None = None,
+        _tqdm_bar: "tqdm | None" = None,
+        _on_document_complete: "Callable | None" = None,
     ) -> EvaluationResult:
         """
         Run a single-model evaluation on already-loaded documents and labels.
@@ -406,7 +409,19 @@ class EvaluationRunner:
         max_tok = model.get("max_tokens") if isinstance(model, dict) else None
         model_name = model if isinstance(model, str) else model.get("model", "unknown")
 
-        console.print(f"\n[bold blue]Running evaluation with {model_name}...[/bold blue]")
+        _own_bar = _tqdm_bar is None
+        if _own_bar:
+            _tqdm_bar = tqdm(total=len(documents), unit="doc", desc=model_name)
+
+        running_cost = [0.0]
+
+        def _on_doc(pred: PredictionResult) -> None:
+            running_cost[0] += pred.cost
+            if _tqdm_bar is not None:
+                _tqdm_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
+                _tqdm_bar.update(1)
+            if _on_document_complete is not None:
+                _on_document_complete(pred)
 
         eval_input = EvaluationInput(
             documents=documents,
@@ -424,6 +439,7 @@ class EvaluationRunner:
             field_metrics_config=field_metrics_config,
             post_extraction_filter=post_extraction_filter,
             multi_pass=multi_pass,
+            on_document_complete=_on_doc,
         )
 
         if field_metrics_config is not None:
@@ -437,7 +453,10 @@ class EvaluationRunner:
                 result, save_results_dir, doc_content_map, doc_label_map, doc_attachments_map
             )
 
-        self._print_result(result)
+        if _own_bar and _tqdm_bar is not None:
+            _tqdm_bar.close()
+            self._print_summary_table([result])
+
         return result
 
     async def evaluate_from_file(
@@ -491,8 +510,14 @@ class EvaluationRunner:
 
         self._preflight_check(field_metrics_config, len(documents), len(models_list))
 
-        if len(models_list) > 1:
-            console.print(f"\n[bold blue]Evaluating {len(models_list)} models...[/bold blue]")
+        total_docs = len(documents) * len(models_list)
+        running_cost: list[float] = [0.0]
+        shared_bar = tqdm(total=total_docs, unit="doc", desc="Evaluating")
+
+        def _on_doc(pred: PredictionResult) -> None:
+            running_cost[0] += pred.cost
+            shared_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
+            shared_bar.update(1)
 
         semaphore = asyncio.Semaphore(max_concurrent_models) if max_concurrent_models else None
 
@@ -511,6 +536,8 @@ class EvaluationRunner:
                     multi_pass=multi_pass,
                     max_concurrent=max_concurrent,
                     save_results_dir=save_results_dir,
+                    _tqdm_bar=shared_bar,
+                    _on_document_complete=_on_doc,
                 )
 
             if semaphore:
@@ -521,78 +548,52 @@ class EvaluationRunner:
             return index, result
 
         indexed = await asyncio.gather(*[_eval_one(i, m) for i, m in enumerate(models_list)])
+        shared_bar.close()
         results = [r for _, r in sorted(indexed, key=lambda x: x[0])]
 
-        if len(models_list) > 1:
-            self._print_comparison(results, show_field_metrics=field_metrics_config is not None)
+        self._print_summary_table(results, show_field_metrics=field_metrics_config is not None)
 
         return results
 
-    def _print_result(self, result: EvaluationResult) -> None:
-        """Print evaluation result."""
-        if not result.metrics:
-            console.print("[red]No metrics available[/red]")
-            return
-
-        console.print(f"\n[bold green]Evaluation Complete![/bold green]")
-        console.print(f"Run ID: {result.run_id}")
-        console.print(f"Model: {result.model}")
-        console.print(f"Status: {result.status}")
-
-        table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("Metric", style="cyan")
-        table.add_column("Value", style="yellow")
-
-        table.add_row("Total Documents", str(result.metrics.total_documents))
-        table.add_row("Correct Predictions", str(result.metrics.correct_predictions))
-        table.add_row("Accuracy", f"{result.metrics.accuracy:.2%}")
-        table.add_row("Total Cost", f"${result.metrics.total_cost:.6f}")
-        table.add_row("Total Time", f"{result.metrics.total_time:.2f}s")
-        table.add_row("Avg Time/Doc", f"{result.metrics.average_time_per_document:.2f}s")
-        table.add_row("Avg Cost/Doc", f"${result.metrics.average_cost_per_document:.6f}")
-
-        console.print(table)
-
-    def _print_comparison(
+    def _print_summary_table(
         self, results: list[EvaluationResult], show_field_metrics: bool = False
     ) -> None:
-        """Print model comparison results."""
-        console.print(f"\n[bold green]Model Comparison Complete![/bold green]")
-
+        """Print a unified summary table for one or more model results."""
         table = Table(show_header=True, header_style="bold magenta")
         table.add_column("Model", style="cyan")
+        table.add_column("Total Documents", style="yellow")
+        table.add_column("Correct Predictions", style="yellow")
         table.add_column("Accuracy", style="yellow")
         table.add_column("Total Cost", style="green")
-        table.add_column("Total Time", style="blue")
-        table.add_column("Avg Cost/Doc", style="green")
         table.add_column("Avg Time/Doc", style="blue")
+        table.add_column("Avg Cost/Doc", style="green")
 
         for result in results:
             if not result.metrics:
                 continue
-
             table.add_row(
                 result.model,
+                str(result.metrics.total_documents),
+                str(result.metrics.correct_predictions),
                 f"{result.metrics.accuracy:.2%}",
                 f"${result.metrics.total_cost:.6f}",
-                f"{result.metrics.total_time:.2f}s",
-                f"${result.metrics.average_cost_per_document:.6f}",
                 f"{result.metrics.average_time_per_document:.2f}s",
+                f"${result.metrics.average_cost_per_document:.6f}",
             )
 
         console.print(table)
 
-        # Print best model
-        best_accuracy = max(results, key=lambda r: r.metrics.accuracy if r.metrics else 0)
-        best_cost = min(results, key=lambda r: r.metrics.total_cost if r.metrics else float("inf"))
-        best_speed = min(results, key=lambda r: r.metrics.total_time if r.metrics else float("inf"))
+        if len(results) > 1:
+            valid = [r for r in results if r.metrics]
+            if valid:
+                best_accuracy = max(valid, key=lambda r: r.metrics.accuracy)  # type: ignore[union-attr]
+                best_cost = min(valid, key=lambda r: r.metrics.total_cost)  # type: ignore[union-attr]
+                best_speed = min(valid, key=lambda r: r.metrics.total_time)  # type: ignore[union-attr]
+                console.print("\n[bold]Best Models:[/bold]")
+                console.print(f"  Accuracy: {escape(best_accuracy.model)}")
+                console.print(f"  Cost:     {escape(best_cost.model)}")
+                console.print(f"  Speed:    {escape(best_speed.model)}")
 
-        console.print("\n[bold]Best Models:[/bold]")
-        console.print(f"  🎯 Accuracy: {best_accuracy.model}")
-        console.print(f"  💰 Cost: {best_cost.model}")
-        console.print(f"  ⚡ Speed: {best_speed.model}")
-
-        # Print field-level metrics if available
         if show_field_metrics:
             self._print_field_metrics_comparison(results)
 

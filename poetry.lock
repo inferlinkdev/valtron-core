@@ -5400,4 +5400,4 @@ transformers = ["accelerate", "datasets", "scikit-learn", "torch", "transformers
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.12,<3.15"
-content-hash = "3e80f353f58557466edcef121b04760b2e630ebf35d3447e4af6cd8a16fc597f"
+content-hash = "0ddd63e074347960ee6fe5babc0a4e31836c2417163c12e703bc934ccda7ef5e"
