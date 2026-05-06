@@ -369,6 +369,14 @@ class PromptEvaluator:
                 except Exception:
                     pass
 
+            # Resolve effective cost: user cost_rate > litellm pricing > fallback estimate
+            original_cost = cost
+            if isinstance(model, dict) and model.get("cost_rate") is not None:
+                unit_seconds = _parse_time_unit_to_seconds(model.get("cost_rate_time_unit", "1hr"))
+                cost = float(model["cost_rate"]) * (response_time / unit_seconds)
+            elif cost == 0.0:
+                cost = _fallback_cost(model, response_time)
+
             # Apply post-extraction filter (e.g. hallucination filter)
             if post_extraction_filter is not None:
                 predicted_value = await post_extraction_filter(predicted_value, document)
@@ -411,7 +419,7 @@ class PromptEvaluator:
                 is_correct=is_correct,
                 example_score=example_score,
                 response_time=response_time,
-                original_cost=cost,
+                original_cost=original_cost,
                 cost=cost,
                 model=model_name,
                 field_metrics=field_metrics,
@@ -497,8 +505,11 @@ class PromptEvaluator:
         try:
             # Use semaphore to limit concurrent requests
             semaphore = asyncio.Semaphore(max_concurrent)
+            _fallback_warning_logged = False
+            _has_user_cost_rate = isinstance(eval_input.model, dict) and eval_input.model.get("cost_rate") is not None
 
             async def evaluate_with_semaphore(doc: Document) -> PredictionResult | None:
+                nonlocal _fallback_warning_logged
                 if doc.id not in label_map:
                     return None
 
@@ -515,8 +526,21 @@ class PromptEvaluator:
                         post_extraction_filter=post_extraction_filter,
                         multi_pass=multi_pass,
                     )
-                    if pred is not None and on_document_complete is not None:
-                        on_document_complete(pred)
+                    if pred is not None:
+                        if (
+                            not _fallback_warning_logged
+                            and not _has_user_cost_rate
+                            and pred.original_cost == 0.0
+                            and pred.cost > 0.0
+                        ):
+                            logger.warning(
+                                "using_estimated_cost",
+                                model=model_name,
+                                note="no litellm pricing found; costs are approximate",
+                            )
+                            _fallback_warning_logged = True
+                        if on_document_complete is not None:
+                            on_document_complete(pred)
                     return pred
 
             # Evaluate all documents concurrently
@@ -527,22 +551,10 @@ class PromptEvaluator:
             # Filter out None predictions (documents without labels)
             result.predictions = [p for p in predictions if p is not None]
 
-            # Apply cost overrides now that all predictions are collected.
-            # This ensures consistent cost treatment across all predictions.
-            cost_rate = eval_input.model.get("cost_rate") if isinstance(eval_input.model, dict) else None
-            if cost_rate is not None:
-                # Explicit cost_rate: override every prediction's cost with time-based pricing
-                time_unit_str = eval_input.model.get("cost_rate_time_unit", "1hr") if isinstance(eval_input.model, dict) else "1hr"
-                unit_seconds = _parse_time_unit_to_seconds(time_unit_str)
-                for p in result.predictions:
-                    p.cost = float(cost_rate) * (p.response_time / unit_seconds)
-            elif all(p.cost == 0.0 for p in result.predictions):
-                # LiteLLM had no pricing data — apply fallback rate to all predictions
-                fallback_rate_info = _get_fallback_rate_info(eval_input.model)
-                if fallback_rate_info:
-                    for p in result.predictions:
-                        p.cost = _fallback_cost(eval_input.model, p.response_time)
-                    result.llm_config.update(fallback_rate_info)
+            # Propagate fallback rate info to result metadata if it was used
+            fallback_rate_info = _get_fallback_rate_info(eval_input.model)
+            if fallback_rate_info and all(p.original_cost == 0.0 for p in result.predictions):
+                result.llm_config.update(fallback_rate_info)
 
             # Compute metrics
             result.compute_metrics()
