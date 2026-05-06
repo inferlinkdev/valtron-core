@@ -756,12 +756,12 @@ class TestAddModels:
 
     def test_add_duplicate_label_raises(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
-        with pytest.raises(ValueError, match="already exists"):
+        with pytest.raises(ValueError, match="Duplicate model label"):
             eval_.add_models([{"name": "gpt-4o-mini"}])
 
     def test_add_duplicate_within_batch_raises(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
-        with pytest.raises(ValueError, match="Duplicate label"):
+        with pytest.raises(ValueError, match="Duplicate model label"):
             eval_.add_models(
                 [{"name": "gpt-4o", "label": "new"}, {"name": "gpt-4o-2", "label": "new"}]
             )
