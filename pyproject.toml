@@ -27,7 +27,7 @@ litellm = "^1.0.0"
 # Configuration management
 python-dotenv = "^1.0.0"
 # Logging
-structlog = "^24.0.0"
+structlog = ">=24,<26"
 # CLI support
 typer = "^0.12.0"
 rich = "^13.0.0"
