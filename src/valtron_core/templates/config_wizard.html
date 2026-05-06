@@ -808,6 +808,7 @@ function nextStep() {
 
     if (currentStep === 2) {
         if (selectedTestModels.length === 0) { alert('Please add at least one model to test against'); return; }
+        config.models = config.models.slice(0, 1);
         const improve = document.getElementById('improve-prompts').checked;
         selectedTestModels.forEach(model => {
             const mc = { name: model.name, type: 'llm', prompt_manipulation: [], params: {} };
