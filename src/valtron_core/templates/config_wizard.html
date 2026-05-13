@@ -171,7 +171,7 @@
             padding: 0;
             font-family: 'JetBrains Mono','Courier New',monospace;
             font-size: 0.85em;
-            overflow: hidden;
+            overflow: visible;
         }
 
         .tree-header {
@@ -255,6 +255,32 @@
             color: #8b949e; font-size: .82em; cursor: pointer; white-space: nowrap;
         }
         .ctrl-check input { accent-color: #58a6ff; cursor: pointer; width: auto; }
+
+        input.ctrl-text {
+            background: #161b22; border: 1px solid #30363d; border-radius: 4px;
+            color: #c9d1d9; font-family: inherit; font-size: .82em;
+            padding: 3px 8px; width: 160px;
+            transition: border-color .15s;
+        }
+        input.ctrl-text:focus { outline: none; border-color: #58a6ff; }
+
+        .llm-model-picker { width: 400px; }
+        .llm-help-link { font-size: .78em; color: #58a6ff; text-decoration: none; white-space: nowrap; }
+        .llm-help-link:hover { text-decoration: underline; }
+
+        textarea.ctrl-textarea {
+            background: #161b22; border: 1px solid #30363d; border-radius: 4px;
+            color: #c9d1d9; font-family: inherit; font-size: .82em;
+            padding: 6px 8px; width: 100%; box-sizing: border-box;
+            resize: vertical; line-height: 1.5;
+            transition: border-color .15s;
+        }
+        textarea.ctrl-textarea:focus { outline: none; border-color: #58a6ff; }
+
+        .llm-prompt-row {
+            width: 100%; margin-top: 6px;
+            display: flex; flex-direction: column; gap: 4px;
+        }
 
         /* Nested children */
         .row-children {
@@ -1040,9 +1066,15 @@ function makeFieldRow(key, fieldConfig, labelValue) {
     ctrl.className = 'row-controls';
 
     if (type === 'leaf') {
-        ctrl.appendChild(makeMetricCtrl(mc.metric || 'exact'));
+        const currentMetric = mc.metric || 'exact';
+        ctrl.appendChild(makeMetricCtrl(currentMetric));
         ctrl.appendChild(makeWeightCtrl(weight));
         ctrl.appendChild(makeCheckCtrl('optional', 'Optional', optional, 'row-optional'));
+        const llmOpts = makeLlmJudgeOpts(mc.params || {}, currentMetric === 'llm');
+        ctrl.appendChild(llmOpts);
+        ctrl.querySelector('.row-metric').addEventListener('change', function() {
+            llmOpts.style.display = this.value === 'llm' ? 'contents' : 'none';
+        });
     } else if (type === 'list') {
         ctrl.appendChild(makeCheckCtrl('ordered', 'Ordered', mc.ordered ?? false, 'row-ordered'));
         ctrl.appendChild(makeLabeledNum('Match threshold', mc.match_threshold ?? 0.5, 0, 1, 0.05, 'row-threshold'));
@@ -1089,7 +1121,13 @@ function makeFieldRow(key, fieldConfig, labelValue) {
                 itemRow.appendChild(itemHdr);
                 const itemCtrl = document.createElement('div');
                 itemCtrl.className = 'row-controls';
-                itemCtrl.appendChild(makeMetricCtrl(itemLogic.metric_config?.metric || 'exact'));
+                const itemCurrentMetric = itemLogic.metric_config?.metric || 'exact';
+                itemCtrl.appendChild(makeMetricCtrl(itemCurrentMetric));
+                const itemLlmOpts = makeLlmJudgeOpts(itemLogic.metric_config?.params || {}, itemCurrentMetric === 'llm');
+                itemCtrl.appendChild(itemLlmOpts);
+                itemCtrl.querySelector('.row-metric').addEventListener('change', function() {
+                    itemLlmOpts.style.display = this.value === 'llm' ? 'contents' : 'none';
+                });
                 itemRow.appendChild(itemCtrl);
                 section.appendChild(itemRow);
             }
@@ -1110,6 +1148,92 @@ function makeFieldRow(key, fieldConfig, labelValue) {
 }
 
 // ── Control factories ─────────────────────────────────────────────────────────
+
+const DEFAULT_LLM_PROMPT =
+`Do these two values refer to the same entity or concept? Consider them a match even if one is more specific, has extra qualifiers, or is an abbreviation of the other.
+
+Value 1: {predicted}
+Value 2: {expected}
+
+Respond with only "YES" or "NO".`;
+
+function makeLlmJudgeOpts(params, visible) {
+    const wrap = document.createElement('span');
+    wrap.style.display = visible ? 'contents' : 'none';
+
+    // Judge model label
+    const modelLbl = document.createElement('span');
+    modelLbl.className = 'ctrl-label';
+    modelLbl.textContent = 'Judge model:';
+    wrap.appendChild(modelLbl);
+
+    // Autocomplete wrapper
+    const acWrap = document.createElement('div');
+    acWrap.className = 'autocomplete-wrapper llm-model-picker';
+    const modelInp = document.createElement('input');
+    modelInp.type = 'text';
+    modelInp.className = 'ctrl-text row-llm-model';
+    modelInp.style.width = '100%';
+    modelInp.value = params.llm_model || 'gpt-4o-mini';
+    modelInp.placeholder = 'gpt-4o-mini';
+    modelInp.setAttribute('autocomplete', 'off');
+    const acDrop = document.createElement('div');
+    acDrop.className = 'autocomplete-dropdown';
+    acWrap.appendChild(modelInp);
+    acWrap.appendChild(acDrop);
+    wrap.appendChild(acWrap);
+
+    createAutocomplete({
+        inputEl:       modelInp,
+        dropdownEl:    acDrop,
+        onSelect(model) { modelInp.value = model.name; },
+        excludeFn:     () => '',
+        clearOnSelect: false,
+    });
+
+    // Help link
+    const helpLink = document.createElement('a');
+    helpLink.className = 'llm-help-link';
+    helpLink.href = 'https://valtron.ai/docs/field-metrics#comparator';
+    helpLink.target = '_blank';
+    helpLink.textContent = 'Options reference ↗';
+    wrap.appendChild(helpLink);
+
+    // Prompt row (full-width)
+    const promptRow = document.createElement('div');
+    promptRow.className = 'llm-prompt-row';
+    const promptLbl = document.createElement('span');
+    promptLbl.className = 'ctrl-label';
+    promptLbl.textContent = 'Judge prompt:';
+    const promptTa = document.createElement('textarea');
+    promptTa.className = 'ctrl-textarea row-llm-prompt';
+    promptTa.rows = 5;
+    promptTa.value = params.llm_prompt_template || DEFAULT_LLM_PROMPT;
+    promptRow.appendChild(promptLbl);
+    promptRow.appendChild(promptTa);
+    wrap.appendChild(promptRow);
+
+    return wrap;
+}
+
+function metricValToConfig(metricVal, ctrlEl) {
+    if (metricVal === 'fuzzy') {
+        return { metric: 'comparator', params: { element_compare: 'text_similarity' }, propagation: 'weighted_avg' };
+    }
+    if (metricVal === 'embedding') {
+        return { metric: 'comparator', params: { element_compare: 'embedding' }, propagation: 'weighted_avg' };
+    }
+    if (metricVal === 'llm') {
+        const llmModel = ctrlEl?.querySelector('.row-llm-model')?.value?.trim() || 'gpt-4o-mini';
+        const promptRaw = ctrlEl?.querySelector('.row-llm-prompt')?.value?.trim() || '';
+        const params = { element_compare: 'llm', llm_model: llmModel };
+        if (promptRaw && promptRaw !== DEFAULT_LLM_PROMPT) {
+            params.llm_prompt_template = promptRaw;
+        }
+        return { metric: 'comparator', params, propagation: 'weighted_avg' };
+    }
+    return { metric: 'exact', propagation: 'weighted_avg' };
+}
 
 function makeMetricCtrl(current) {
     const wrap = document.createElement('span');
@@ -1186,10 +1310,7 @@ function readRow(rowEl) {
             type: 'leaf',
             weight:   parseFloat(ctrl.querySelector('.row-weight').value),
             optional: ctrl.querySelector('.row-optional').checked,
-            metric_config: {
-                metric: ctrl.querySelector('.row-metric').value,
-                propagation: 'weighted_avg'
-            }
+            metric_config: metricValToConfig(ctrl.querySelector('.row-metric').value, ctrl)
         };
     }
 
@@ -1204,8 +1325,9 @@ function readRow(rowEl) {
             const kind = section.dataset.childKind;
             if (kind === 'leaf') {
                 const itemRow    = section.querySelector('.field-row[data-key="__item__"]');
-                const itemMetric = itemRow ? itemRow.querySelector('.row-metric').value : 'exact';
-                itemLogic = { type: 'leaf', weight: 1.0, metric_config: { metric: itemMetric, propagation: 'weighted_avg' } };
+                const itemMetricSel = itemRow?.querySelector('.row-metric');
+                const itemMetric = itemMetricSel ? itemMetricSel.value : 'exact';
+                itemLogic = { type: 'leaf', weight: 1.0, metric_config: metricValToConfig(itemMetric, itemRow) };
             } else if (kind === 'object') {
                 const itemFields = {};
                 section.querySelectorAll(':scope > .field-row').forEach(child => {

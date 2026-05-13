@@ -168,6 +168,13 @@ When you select **"Yes — configure field grading"**, an interactive tree edito
 | **Weight** | How much this field contributes to the overall score (default 1) |
 | **Optional** | Whether a missing field counts as correct |
 
+When **LLM graded** is selected, two additional controls appear:
+
+| Control | Description |
+|---|---|
+| **Judge model** | The LiteLLM model used to judge the comparison (default: `gpt-4o-mini`) |
+| **Judge prompt** | The prompt sent to the judge model. Pre-filled with the default entity-matching prompt — edit to tailor it to your domain. Supports `{predicted}`, `{expected}`, `{prompt_used}`, and `{example_*}` placeholders. |
+
 For **list fields**, additional controls appear:
 
 | Control | Description |
