@@ -140,7 +140,7 @@
         .modal p, .modal li { color:#8b949e; font-size:.9em; line-height:1.6; }
         .modal strong { color:#c9d1d9; }
         .modal code   { color:#58a6ff; background:#0d1117; padding:2px 6px; border-radius:4px; border:1px solid #30363d; }
-        .modal pre    { background:#0d1117; padding:15px; border-radius:6px; overflow-x:auto; font-size:.85em; border:1px solid #30363d; color:#c9d1d9; margin:10px 0; }
+        .modal pre    { background:#0d1117; padding:15px; border-radius:6px; overflow:hidden; white-space:pre-wrap; word-break:break-all; font-size:.85em; border:1px solid #30363d; color:#c9d1d9; margin:10px 0; }
 
         /* ════════════════════════════════════════════════════════════════════
            Field Metrics Step
@@ -452,7 +452,7 @@
         <!-- ── Step 4: Training Data ──────────────────────────────────────── -->
         <div class="step" data-step="4">
             <h2>Provide labeled training data</h2>
-            <p class="step-description">Upload or link to your labeled dataset. This will be used for evaluation and few-shot learning.</p>
+            <p class="step-description">Upload or link to your labeled dataset. This will be used for evaluation and few-shot learning. <a href="#" class="help-link" onclick="showModal('format-modal');return false">View required data format</a></p>
             <div class="form-group">
                 <label for="data-url">Data URL or Path</label>
                 <div style="display:flex;gap:8px;align-items:center">
@@ -463,9 +463,6 @@
                 <div id="upload-status" style="margin-top:6px;font-size:0.85em;color:#8b949e;min-height:1.2em">Browse supports files up to 1 GB. For larger files, enter the path directly.</div>
                 <p class="step-description" style="margin-top:2px;font-size:0.82em;color:#8b949e">
                     Relative paths resolve from: <code id="cwd-display">...</code>
-                </p>
-                <p class="step-description" style="margin-top:4px">
-                    <a href="#" class="help-link" onclick="showModal('format-modal');return false">📋 View required data format</a>
                 </p>
             </div>
             <div class="form-group" id="few-shot-config-section" style="display:none">
@@ -629,32 +626,28 @@ ollama pull mistral</pre></li>
     <div class="modal-content">
         <button class="modal-close" onclick="closeModal('format-modal')">&times;</button>
         <h3>Required Data Format</h3>
-        <p>Your training data must be a JSON array. The <code>content</code> field can be a plain string or a JSON object for prompt variables:</p>
-        <p><strong>Plain text content</strong> — use <code>{content}</code> in your prompt:</p>
-        <pre>[
-  {
-    "id": "example-1",
-    "content": "Your document text here...",
-    "label": "yes"
-  }
-]</pre>
-        <p><strong>Dict content (prompt variables)</strong> — use <code>{key}</code> placeholders in your prompt:</p>
-        <pre>[
-  {
-    "id": "example-1",
-    "content": {
-      "text": "The Amazon basin receives over 2,000 mm of rain.",
-      "topic": "climate"
-    },
-    "label": "yes"
-  }
-]</pre>
-        <p>With dict content, each key becomes a <code>{key}</code> placeholder — e.g. <code>Text: {text}\nTopic: {topic}</code>.</p>
-        <p><strong>Required fields:</strong></p>
+        <p>A JSON array of objects. Each object has these fields:</p>
         <ul>
-            <li><code>content</code>: The text to classify (string or object)</li>
-            <li><code>label</code>: The correct answer</li>
+            <li><code>id</code> — unique identifier for the document</li>
+            <li><code>content</code> — text passed into your prompt; a plain string (use <code>{content}</code> in your prompt) or a <code>{key: value}</code> object (use <code>{key}</code> placeholders)</li>
+            <li><code>label</code> — expected output; a plain string for classification, or a JSON object for structured extraction</li>
+            <li><code>metadata</code> <em>(optional)</em> — arbitrary key/value pairs shown in the report</li>
+            <li><code>attachments</code> <em>(optional)</em> — list of file paths or URLs appended to the prompt</li>
         </ul>
+        <p><strong>Classification (string label):</strong></p>
+        <pre>[
+  { "id": "1", "content": "Absolutely love this product!", "label": "positive" },
+  { "id": "2", "content": "Terrible experience, would not recommend.", "label": "negative" }
+]</pre>
+        <p><strong>Structured extraction (dict label):</strong></p>
+        <pre>[
+  {
+    "id": "1",
+    "content": "Apple Inc. was founded in Cupertino, California.",
+    "label": { "name": "Apple Inc.", "city": "Cupertino", "state": "California" }
+  }
+]</pre>
+        <p>For the full spec see <a href="https://valtron.ai/docs/data-format" target="_blank" style="color:#58a6ff">valtron.ai/data-format</a>.</p>
     </div>
 </div>
 
