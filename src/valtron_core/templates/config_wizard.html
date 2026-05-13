@@ -416,6 +416,7 @@
                     <input type="text" id="current-model" placeholder="e.g., gpt-5-mini, claude-sonnet-4-6, ollama/llama3.3" autocomplete="off" />
                     <div class="autocomplete-dropdown" id="current-model-dropdown"></div>
                 </div>
+                <p id="current-model-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;"></p>
             </div>
             <div class="button-group">
                 <button class="btn btn-primary" onclick="nextStep()">Next →</button>
@@ -434,6 +435,7 @@
                     <div class="autocomplete-dropdown" id="add-model-dropdown"></div>
                 </div>
                 <p id="duplicate-model-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;">That model is already in the list.</p>
+                <p id="no-models-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;">Please add at least one model to test against.</p>
             </div>
             <div class="form-group">
                 <label>
@@ -467,6 +469,7 @@
                 <p class="step-description" style="margin-top:2px;font-size:0.82em;color:#8b949e">
                     Relative paths resolve from: <code id="cwd-display">...</code>
                 </p>
+                <p id="data-url-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;"></p>
             </div>
             <div class="form-group" id="few-shot-config-section" style="display:none">
                 <h3>Few-Shot Configuration</h3>
@@ -478,6 +481,7 @@
             <div class="form-group">
                 <label for="use-case">Use Case Description</label>
                 <input type="text" id="use-case" placeholder="e.g., geographic location disambiguation" />
+                <p id="use-case-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;">Please describe your use case.</p>
             </div>
             <div class="button-group">
                 <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
@@ -594,6 +598,7 @@
                 <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
                 <button class="btn btn-primary"   onclick="downloadConfig()">Download Config</button>
                 <button class="btn btn-primary"   onclick="copyToClipboard()">Copy to Clipboard</button>
+                <span id="copy-success" style="display:none;color:#3fb950;font-size:.9em;margin-left:8px;align-self:center"></span>
             </div>
         </div>
 
@@ -811,7 +816,9 @@ createAutocomplete({
 function nextStep() {
     if (currentStep === 1) {
         const m = document.getElementById('current-model').value.trim();
-        if (!m) { alert('Please enter your current model'); return; }
+        const cmErr = document.getElementById('current-model-error');
+        if (!m) { cmErr.textContent = 'Please enter your current model.'; cmErr.style.display = 'block'; return; }
+        cmErr.style.display = 'none';
         config.models = [{ name: m, type: 'llm', prompt_manipulation: [], params: {} }];
         if (m !== lastSuggestedForModel) {
             lastSuggestedForModel = m;
@@ -826,7 +833,9 @@ function nextStep() {
     }
 
     if (currentStep === 2) {
-        if (selectedTestModels.length === 0) { alert('Please add at least one model to test against'); return; }
+        const nmErr = document.getElementById('no-models-error');
+        if (selectedTestModels.length === 0) { nmErr.style.display = 'block'; return; }
+        nmErr.style.display = 'none';
         config.models = config.models.slice(0, 1);
         const improve = document.getElementById('improve-prompts').checked;
         selectedTestModels.forEach(model => {
@@ -872,13 +881,14 @@ function updateStepDisplay(step) {
 async function handleFilePick(input) {
     const file = input.files[0];
     if (!file) return;
+    const status = document.getElementById('upload-status');
     const ONE_GB = 1024 * 1024 * 1024;
     if (file.size > ONE_GB) {
-        alert(`"${file.name}" is ${(file.size / ONE_GB).toFixed(2)} GB, which exceeds the 1 GB limit. Enter the file path directly instead.`);
+        status.textContent = `"${file.name}" is ${(file.size / ONE_GB).toFixed(2)} GB, which exceeds the 1 GB limit. Enter the file path directly instead.`;
+        status.style.color = '#f85149';
         input.value = '';
         return;
     }
-    const status = document.getElementById('upload-status');
     status.textContent = `Uploading ${file.name}…`;
     status.style.color = '#8b949e';
     const form = new FormData();
@@ -905,11 +915,19 @@ async function handleFilePick(input) {
 /* ════════════════════════════════════════════════════════════════
    Step 4 → Step 5: download + analyze data
    ════════════════════════════════════════════════════════════════ */
+function showDataError(msg) {
+    const el = document.getElementById('data-url-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
 async function analyzeData() {
     const dataUrl = document.getElementById('data-url').value.trim();
     const useCase = document.getElementById('use-case').value.trim();
-    if (!dataUrl) { alert('Please provide a data URL or path'); return; }
-    if (!useCase) { alert('Please describe your use case'); return; }
+    document.getElementById('data-url-error').style.display = 'none';
+    document.getElementById('use-case-error').style.display = 'none';
+    if (!dataUrl) { showDataError('Please provide a data URL or path.'); return; }
+    if (!useCase) { document.getElementById('use-case-error').style.display = 'block'; return; }
 
     config.use_case = useCase;
     if (config.few_shot.enabled) {
@@ -933,7 +951,7 @@ async function analyzeData() {
                 body: JSON.stringify({ url: dataUrl })
             });
             const dlResult = await dlResp.json();
-            if (!dlResp.ok) { alert('Error downloading data: ' + dlResult.error); return; }
+            if (!dlResp.ok) { showDataError('Error downloading data: ' + dlResult.error); return; }
             analyzeBody = { data: dlResult.data };
         } else {
             analyzeBody = { data_path: dataUrl };
@@ -944,14 +962,14 @@ async function analyzeData() {
             body: JSON.stringify(analyzeBody)
         });
         const result = await resp.json();
-        if (!resp.ok) { alert('Error analyzing data: ' + result.error); return; }
+        if (!resp.ok) { showDataError('Error analyzing data: ' + result.error); return; }
 
         analysisResult = result;
         populateRfStep(result);
         populateFmStep(result);
         updateStepDisplay(4);
     } catch (e) {
-        alert('Error: ' + e.message);
+        showDataError('Error: ' + e.message);
     } finally {
         btn.disabled = false; btn.textContent = 'Next →';
     }
@@ -1424,7 +1442,12 @@ function downloadConfig() {
 
 function copyToClipboard() {
     navigator.clipboard.writeText(document.getElementById('final-config').value)
-        .then(() => alert('Configuration copied to clipboard!'));
+        .then(() => {
+            const s = document.getElementById('copy-success');
+            s.textContent = 'Copied to clipboard!';
+            s.style.display = 'inline';
+            setTimeout(() => { s.style.display = 'none'; }, 3000);
+        });
 }
 
 /* ════════════════════════════════════════════════════════════════
