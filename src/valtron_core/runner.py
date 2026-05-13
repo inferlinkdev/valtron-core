@@ -155,7 +155,7 @@ class EvaluationRunner:
                 has_explicit_key = False
             elif isinstance(model, dict):
                 name = model.get("model") or model.get("name") or ""
-                has_explicit_key = bool(model.get("api_key"))
+                has_explicit_key = bool(model.get("api_key") or model.get("api_base"))
             else:
                 name = getattr(model, "name", "") or ""
                 params: dict[str, Any] = getattr(model, "params", {}) or {}

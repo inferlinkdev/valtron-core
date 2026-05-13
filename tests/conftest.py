@@ -5,7 +5,7 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator, Iterator
-from unittest.mock import AsyncMock, Mock, MagicMock
+from unittest.mock import AsyncMock, Mock, MagicMock, patch
 
 import pytest
 from litellm.utils import ModelResponse
@@ -475,3 +475,15 @@ def mock_transformer_classifier() -> Mock:
     classifier.model = Mock()
     classifier.tokenizer = Mock()
     return classifier
+
+
+@pytest.fixture(autouse=True)
+def _stub_litellm_validate_env() -> Iterator[None]:
+    """Stub litellm.validate_environment so tests that mock the LLM layer don't
+    trip the API-key pre-flight check. Tests in TestCheckApiKeys override this
+    with their own patch() context managers."""
+    with patch(
+        "valtron_core.runner.litellm.validate_environment",
+        return_value={"keys_in_environment": True, "missing_keys": []},
+    ):
+        yield
