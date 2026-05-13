@@ -234,7 +234,11 @@ def api_analyze_data():
         if not isinstance(data_list, list) or not data_list:
             return jsonify({"is_json": False, "reason": "Empty or non-list data"})
 
-        first_label = data_list[0].get("label", "")
+        first_item = data_list[0]
+        first_content = first_item.get("content", "")
+        content_keys: list[str] = list(first_content.keys()) if isinstance(first_content, dict) else ["content"]
+
+        first_label = first_item.get("label", "")
         if isinstance(first_label, (dict, list)):
             first_label = json.dumps(first_label)
 
@@ -280,6 +284,7 @@ def api_analyze_data():
                     "enum_values": enum_values,
                     "response_format_preview": response_format_preview,
                     "response_format_schema": response_format_schema,
+                    "content_keys": content_keys,
                 }
             )
 
@@ -365,6 +370,7 @@ def api_analyze_data():
                 "enum_values": [],
                 "response_format_preview": response_format_preview,
                 "response_format_schema": response_format_schema,
+                "content_keys": content_keys,
             }
         )
 
