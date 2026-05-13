@@ -8,7 +8,7 @@ from valtron_core.evaluation.comparison_functions import Comparator, element_com
 
 MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE = 4
 
-def comparator_metric(expected, actual, params) -> tuple[float, bool]:
+def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
     comp = Comparator(
         element_compare=params.get("element_compare", "exact"),
         text_similarity_threshold=params.get("text_similarity_threshold", None),
@@ -66,7 +66,7 @@ class FieldConfig(BaseModel):
 
     @model_validator(mode='before')
     @classmethod
-    def _route_metric_config(cls, data):
+    def _route_metric_config(cls, data: Any) -> Any:
         if not isinstance(data, dict):
             return data
         field_type = data.get('type', 'leaf')
@@ -112,7 +112,7 @@ class ExpensiveListComparisonError(Exception):
 _BUILTIN_METRIC_NAMES: frozenset[str] = frozenset({"exact", "threshold", "comparator"})
 
 
-def _check_builtin_metric_expensive(metric_name: str, params: dict) -> tuple[bool, str]:
+def _check_builtin_metric_expensive(metric_name: str, params: dict[str, Any]) -> tuple[bool, str]:
     """Return ``(is_expensive, description)`` for a built-in metric.
 
     DEVELOPER NOTE — when adding a new metric to ``JsonEvaluator.metric_registry``:
@@ -142,7 +142,7 @@ def _scan_item_logic_for_expensive_metrics(
     path: str,
     custom_metric_names: frozenset[str],
     relative_path: str = "",
-) -> list[dict]:
+) -> list[dict[str, str]]:
     """Recursively scan a FieldConfig subtree for expensive metrics.
 
     ``relative_path`` tracks the position within the current list's item_logic,
@@ -152,7 +152,7 @@ def _scan_item_logic_for_expensive_metrics(
     Returns a list of issue dicts with keys:
       metric_path, relative_path, type ("builtin" | "custom"), metric, description
     """
-    issues: list[dict] = []
+    issues: list[dict[str, str]] = []
 
     if config.type == "leaf":
         mc = config.metric_config
@@ -214,7 +214,7 @@ def _find_expensive_lists_recursive(
     config: "FieldConfig",
     path: str,
     custom_metric_names: frozenset[str],
-    issues: list,
+    issues: list[dict[str, str]],
 ) -> None:
     """Walk the config tree; append issue dicts for each offending list field."""
     if config.type == "list":
@@ -255,7 +255,7 @@ def _collect_llm_models_recursive(config: "FieldConfig") -> set[str]:
     return models
 
 
-def collect_field_metric_llm_models(config_dict: dict) -> set[str]:
+def collect_field_metric_llm_models(config_dict: dict[str, Any]) -> set[str]:
     """Return the set of LLM model names used as judges in field metrics.
 
     Walks the FieldConfig tree and collects every model name where
@@ -266,9 +266,9 @@ def collect_field_metric_llm_models(config_dict: dict) -> set[str]:
 
 
 def find_expensive_unordered_list_fields(
-    config_dict: dict,
+    config_dict: dict[str, Any],
     custom_metric_names: set[str] | None = None,
-) -> list[dict]:
+) -> list[dict[str, str]]:
     """Scan a FieldConfig dict for unordered list fields that use expensive
     (3rd-party API) metrics and have not explicitly opted in via
     ``allow_expensive_list_comparison: true``.
@@ -280,7 +280,7 @@ def find_expensive_unordered_list_fields(
       - ``metric``      - metric name
       - ``description`` - human-readable description of the issue
     """
-    issues: list[dict] = []
+    issues: list[dict[str, str]] = []
     config = FieldConfig.model_validate(config_dict)
     _find_expensive_lists_recursive(
         config, "root", frozenset(custom_metric_names or set()), issues
@@ -357,9 +357,9 @@ class JsonEvaluator:
 
     def evaluate(
         self,
-        config_dict: dict | str,
-        expected: dict | str,
-        actual: dict | str,
+        config_dict: dict[str, Any] | str,
+        expected: dict[str, Any] | str,
+        actual: dict[str, Any] | str,
         extra_template_vars: dict[str, Any] | None = None,
     ) -> EvalResult:
         if isinstance(config_dict, str):
@@ -443,7 +443,7 @@ class JsonEvaluator:
         )
 
 
-    def _eval_object(self, config: FieldConfig, exp: dict, act: dict, path: str) -> EvalResult:
+    def _eval_object(self, config: FieldConfig, exp: dict[str, Any], act: dict[str, Any], path: str) -> EvalResult:
         exp, act = (exp or {}), (act or {})
         child_results = {}
         eval_results = []
@@ -465,7 +465,7 @@ class JsonEvaluator:
             recall=self._weighted_avg_field(eval_results, "recall"),
         )
 
-    def _eval_list(self, config: FieldConfig, exp: list, act: list, path: str) -> EvalResult:
+    def _eval_list(self, config: FieldConfig, exp: list[Any], act: list[Any], path: str) -> EvalResult:
         m_cfg = config.metric_config
         exp, act = (exp or []), (act or [])
 
@@ -491,7 +491,7 @@ class JsonEvaluator:
         else:
             return self._eval_list_unordered(config, exp, act, path, m_cfg)
 
-    def _eval_list_ordered(self, config: FieldConfig, exp: list, act: list, path: str, m_cfg) -> EvalResult:
+    def _eval_list_ordered(self, config: FieldConfig, exp: list[Any], act: list[Any], path: str, m_cfg: "ListMetricConfig") -> EvalResult:
         alignments: list[AlignmentItem] = []
         min_len = min(len(exp), len(act))
         for i in range(min_len):
@@ -523,7 +523,7 @@ class JsonEvaluator:
             is_correct=(len(exp) == len(act) and all(a.result.is_correct for a in alignments)),
         )
 
-    def _eval_list_unordered(self, config: FieldConfig, exp: list, act: list, path: str, m_cfg) -> EvalResult:
+    def _eval_list_unordered(self, config: FieldConfig, exp: list[Any], act: list[Any], path: str, m_cfg: "ListMetricConfig") -> EvalResult:
         potential_matches: list[AlignmentItem] = []
         for i, e_item in enumerate(exp):
             for j, a_item in enumerate(act):

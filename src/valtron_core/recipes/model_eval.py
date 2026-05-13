@@ -38,7 +38,7 @@ from valtron_core.recipes.config import (
     ModelEvalConfig,
     STRUCTURED_MANIPULATIONS,
 )
-from tqdm import tqdm
+from tqdm import tqdm  # type: ignore[import-untyped]
 
 from valtron_core.runner import EvaluationResult, EvaluationRunner
 
@@ -238,7 +238,7 @@ class ModelEval(BaseRecipe):
         final form. Plain string labels without auto-wrap are skipped -- they are not
         JSON-structured and are already covered by the warning in _check_model_param_support.
         """
-        import jsonschema
+        import jsonschema  # type: ignore[import-untyped]
 
         effective_dict_schema = self._effective_dict_schema()
         if self.response_format is None and effective_dict_schema is None:

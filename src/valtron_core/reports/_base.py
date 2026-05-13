@@ -54,7 +54,7 @@ class _ReportBase:
 
     def _compute_performance_ranks(
         self, results: list[EvaluationResult]
-    ) -> dict[str, dict]:
+    ) -> dict[str, dict[str, int | float]]:
         """
         Compute dense performance ranks based on average_example_score (descending).
         Ties receive the same rank. Each entry includes the delta in percentage
@@ -71,7 +71,7 @@ class _ReportBase:
         sorted_models = sorted(model_scores, key=lambda x: x[1], reverse=True)
         best_score = sorted_models[0][1]
 
-        ranks: dict[str, dict] = {}
+        ranks: dict[str, dict[str, int | float]] = {}
         current_rank = 1
         for i, (model, score) in enumerate(sorted_models):
             if i > 0 and score < sorted_models[i - 1][1]:
@@ -138,12 +138,12 @@ class _ReportBase:
         }
 
     def _prepare_histogram_data(
-        self, all_doc_data: dict[str, list[dict]], models: list[str], num_bins: int = 10
+        self, all_doc_data: dict[str, list[dict[str, str | int | float]]], models: list[str], num_bins: int = 10
     ) -> dict[str, Any]:
         """Prepare histogram bin data for cost, time, and score distributions."""
         import math
 
-        result = {"cost": {}, "time": {}, "score": {}}
+        result: dict[str, dict[str, list[float]]] = {"cost": {}, "time": {}, "score": {}}
 
         all_costs = []
         all_times = []

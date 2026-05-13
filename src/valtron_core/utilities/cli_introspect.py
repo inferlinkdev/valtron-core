@@ -20,7 +20,7 @@ def scan(
     output: str = typer.Option(None, "--output", "-o", help="Output JSON file path"),
     exclude: str = typer.Option("", "--exclude", "-e", help="Comma-separated patterns to exclude"),
     show_details: bool = typer.Option(False, "--details", "-d", help="Show detailed results"),
-):
+) -> None:
     """
     Scan a directory for LLM API calls across all major providers.
 
@@ -194,14 +194,14 @@ def scan(
 
 
 @app.command()
-def list_providers():
+def list_providers() -> None:
     """List all supported LLM providers and libraries."""
     from valtron_core.utilities.code_introspection import LLM_CALL_PATTERNS
 
     console.print("\n[bold blue]Supported LLM Providers & Libraries[/bold blue]\n")
 
     # Group by provider
-    providers = {}
+    providers: dict[str, set[str]] = {}
     for pattern in LLM_CALL_PATTERNS:
         if pattern.provider not in providers:
             providers[pattern.provider] = set()

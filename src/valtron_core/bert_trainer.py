@@ -19,11 +19,11 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-import torch
-from datasets import Dataset
-from sklearn.metrics import accuracy_score, classification_report
-from sklearn.model_selection import train_test_split
-from transformers import (
+import torch  # type: ignore[import-not-found]
+from datasets import Dataset  # type: ignore[import-not-found]
+from sklearn.metrics import accuracy_score, classification_report  # type: ignore[import-not-found]
+from sklearn.model_selection import train_test_split  # type: ignore[import-not-found]
+from transformers import (  # type: ignore[import-not-found]
     AutoModelForSequenceClassification,
     AutoTokenizer,
     Trainer,

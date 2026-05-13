@@ -26,6 +26,7 @@ import argparse
 import asyncio
 import json
 from pathlib import Path
+from typing import Any
 from valtron_core.evaluation.json_eval import EvalResult, JsonEvaluator
 from valtron_core.cost_utils import _parse_time_unit_to_seconds, _get_fallback_rate_info, _fallback_cost
 from valtron_core.loader import DocumentLoader
@@ -57,7 +58,7 @@ def _apply_cost_rates(results: list[EvaluationResult]) -> None:
         result.compute_metrics()
 
 
-def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], dict]:
+def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], dict[str, Any]]:
     """Load results from new-format run directory (metadata.json + models/)."""
     with open(input_dir / "metadata.json") as f:
         meta = json.load(f)
@@ -130,7 +131,7 @@ def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], 
     }
 
 
-def load_legacy_results(path: Path) -> tuple[list[EvaluationResult], dict]:
+def load_legacy_results(path: Path) -> tuple[list[EvaluationResult], dict[str, Any]]:
     """Legacy loader for old formats. Delete this function to drop backwards compatibility.
 
     Handles:
@@ -169,7 +170,7 @@ def _is_legacy_path(path: Path) -> bool:
 
 def convert_legacy_to_run_dir(
     results: list[EvaluationResult],
-    meta: dict,
+    meta: dict[str, Any],
     output_dir: Path,
 ) -> None:
     """Write legacy results into the new run directory layout.
@@ -207,7 +208,7 @@ def convert_legacy_to_run_dir(
     print(f"Converted {len(results)} model(s) to run directory format at {output_dir}")
 
 
-def reevaluate_with_field_metrics(results, field_metrics_config: FieldMetricsConfig):
+def reevaluate_with_field_metrics(results: list[EvaluationResult], field_metrics_config: FieldMetricsConfig) -> None:
     """Re-evaluate all predictions in-place using a new field_metrics_config.
 
     This re-runs JsonEvaluator.evaluate() on each prediction's expected/predicted
@@ -245,7 +246,7 @@ async def main(
     force: bool = False,
     convert: bool = False,
     field_metrics_config: FieldMetricsConfig | None = None,
-):
+) -> None:
     if _is_legacy_path(input_path):
         print(f"Loading legacy results from {input_path}")
         results, meta = load_legacy_results(input_path)
@@ -319,7 +320,7 @@ if __name__ == "__main__":
     output_dir = Path(args.output_dir)
 
     # Define custom metric implementations here.
-    def my_metric(expected, actual, _params) -> tuple[float, bool]:
+    def my_metric(expected: Any, actual: Any, _params: dict[str, Any]) -> tuple[float, bool]:
         score = 1.0 if expected.lower() == actual.lower() else 0.0
         return score, score == 1.0
 

@@ -307,15 +307,15 @@ Format your response as Markdown using headers, bullet points, and bold text whe
 
         return None
 
-    def _create_html_template(self):
+    def _create_html_template(self) -> Any:
         """Load Jinja2 HTML template for report."""
         return _jinja_env.get_template("evaluation_report.jinja2.html")
 
-    def _create_detailed_analysis_template(self):
+    def _create_detailed_analysis_template(self) -> Any:
         """Load Jinja2 HTML template for detailed analysis page."""
         return _jinja_env.get_template("detailed_analysis.jinja2.html")
 
-    def _fetch_favicon(self):
+    def _fetch_favicon(self) -> Path:
         """Load HTML favicon for html report."""
         return Path(TEMPLATES_DIR / "favicon.svg")
 
@@ -360,7 +360,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
         elif results and results[0].metrics:
             num_documents = results[0].metrics.total_documents
 
-        all_field_names = set()
+        all_field_names: set[str] = set()
         has_field_metrics = False
         for result in results:
             if result.metrics and result.metrics.aggregated_field_metrics:

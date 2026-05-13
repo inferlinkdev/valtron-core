@@ -59,8 +59,8 @@ from typing import Any, Literal
 
 import litellm
 from litellm import completion, completion_cost, embedding
-from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
-from nltk.translate.gleu_score import sentence_gleu
+from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu  # type: ignore[import-untyped]
+from nltk.translate.gleu_score import sentence_gleu  # type: ignore[import-untyped]
 from pydantic import BaseModel
 from rapidfuzz import fuzz
 
@@ -73,7 +73,7 @@ AggregationType = Literal["avg", "all", "any"]
 MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE = 10
 
 
-def element_compare_uses_third_party(element_compare: str, params: dict) -> tuple[bool, str]:
+def element_compare_uses_third_party(element_compare: str, params: dict[str, str | float]) -> tuple[bool, str]:
     """Return ``(uses_third_party, human_readable_description)`` for a given
     element_compare strategy and its params.
 
@@ -376,7 +376,7 @@ Respond with only "YES" or "NO"."""
             (self.element_compare == "text_similarity" and self.text_similarity_threshold is None)
         )
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, int | float]:
         """Get comparison statistics."""
         return {
             "comparison_count": self.comparison_count,
@@ -541,13 +541,13 @@ class Grader:
 
     def grade_json(
         self,
-        predicted: str | dict,
-        expected: str | dict,
+        predicted: str | dict[str, Any],
+        expected: str | dict[str, Any],
         order_matters: bool | None = None,
         aggregation: AggregationType | None = None,
         threshold: float | None = None,
         context: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """
         Grade JSON predictions recursively, returning per-key scores.
 
@@ -581,13 +581,13 @@ class Grader:
 
     def _grade_json_recursive(
         self,
-        predicted: dict,
-        expected: dict,
+        predicted: dict[str, Any],
+        expected: dict[str, Any],
         order_matters: bool | None,
         aggregation: AggregationType | None,
         threshold: float | None,
         context: str | None = None,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """Recursively grade JSON structure."""
         results = {}
 
@@ -647,6 +647,6 @@ class Grader:
 
         return results
 
-    def get_stats(self) -> dict:
+    def get_stats(self) -> dict[str, int | float]:
         """Get grader and comparator statistics."""
         return self.comparator.get_stats()

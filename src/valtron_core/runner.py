@@ -11,7 +11,7 @@ from litellm import BaseModel
 from rich.console import Console
 from rich.markup import escape
 from rich.table import Table
-from tqdm import tqdm
+from tqdm import tqdm  # type: ignore[import-untyped]
 
 from valtron_core.client import LLMClient
 from valtron_core.evaluator import PromptEvaluator
@@ -706,7 +706,7 @@ class EvaluationRunner:
     def generate_report(
         self,
         results: list[EvaluationResult] | None = None,
-        output_dir: str | Path = None,
+        output_dir: str | Path | None = None,
         use_case: str | None = None,
         include_recommendation: bool = True,
         recommendation_model: str = "gpt-4o",
@@ -889,7 +889,7 @@ class EvaluationRunner:
             documents=documents,
             labels=labels,
             model_name=bert_model_name,
-            output_dir=bert_output_dir,
+            output_dir=str(bert_output_dir),
             num_epochs=bert_epochs,
             batch_size=bert_batch_size,
         )

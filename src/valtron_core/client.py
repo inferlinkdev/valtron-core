@@ -10,7 +10,7 @@ from pydantic import BaseModel
 import structlog
 import litellm
 from litellm import acompletion, completion, completion_cost
-from litellm.utils import ModelResponse
+from litellm.utils import ModelResponse  # type: ignore[attr-defined]
 
 from valtron_core.config import config
 
@@ -69,7 +69,7 @@ class LLMClient:
         temperature: float = 0.7,
         max_tokens: int | None = None,
         stream: bool = False,
-        response_format: "type[BaseModel] | dict | None" = None,
+        response_format: "type[BaseModel] | dict[str, Any] | None" = None,
         **kwargs: Any,
     ) -> ModelResponse | AsyncIterator[ModelResponse]:
         """
@@ -162,7 +162,7 @@ class LLMClient:
             except Exception as e:
                 if (
                     not _temperature_dropped
-                    and isinstance(e, litellm.BadRequestError)
+                    and isinstance(e, litellm.BadRequestError)  # type: ignore[attr-defined]
                     and "temperature" in str(e)
                     and "temperature" in completion_args
                 ):
