@@ -34,6 +34,10 @@ from valtron_core.models import (
 console = Console()
 
 
+class PreflightError(ValueError):
+    """Raised when a required environment variable (e.g. API key) is missing before evaluation."""
+
+
 def save_run_dir(
     run_dir: "Path | str",
     results: "list[EvaluationResult]",
@@ -151,20 +155,21 @@ class EvaluationRunner:
                 has_explicit_key = False
             elif isinstance(model, dict):
                 name = model.get("model") or model.get("name") or ""
-                has_explicit_key = bool(model.get("api_key") or model.get("api_base"))
+                has_explicit_key = bool(model.get("api_key"))
             else:
                 name = getattr(model, "name", "") or ""
                 params: dict[str, Any] = getattr(model, "params", {}) or {}
-                has_explicit_key = bool(params.get("api_key") or params.get("api_base"))
+                has_explicit_key = bool(params.get("api_key"))
 
             if not name or has_explicit_key:
                 continue
 
             try:
                 env_check = litellm.validate_environment(name)
-                missing = env_check.get("missing_keys", [])
-                if missing:
-                    missing_by_model[name] = missing
+                if not env_check.get("keys_in_environment"):
+                    missing = env_check.get("missing_keys", [])
+                    if missing:
+                        missing_by_model[name] = missing
             except Exception:
                 continue
 
@@ -173,14 +178,18 @@ class EvaluationRunner:
 
         lines = ""
         for model_name, keys in missing_by_model.items():
-            lines += f"  • {model_name}: {', '.join(keys)}\n"
+            if len(keys) == 1:
+                key_str = keys[0]
+            else:
+                key_str = ", ".join(keys) + " (set the one your provider uses)"
+            lines += f"  • {model_name}: {key_str}\n"
 
         console.print(
             f"\n[bold red]Pre-flight check failed:[/bold red] missing API key environment variables.\n\n"
             f"[bold yellow]Affected models:[/bold yellow]\n{lines}\n"
             f"Set these environment variables before running the evaluation.\n"
         )
-        raise ValueError(
+        raise PreflightError(
             f"Pre-flight check failed: missing API key environment variables for: "
             f"{', '.join(missing_by_model.keys())}"
         )

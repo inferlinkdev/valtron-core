@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -40,7 +41,7 @@ from valtron_core.recipes.config import (
 )
 from tqdm import tqdm  # type: ignore[import-untyped]
 
-from valtron_core.runner import EvaluationResult, EvaluationRunner
+from valtron_core.runner import EvaluationResult, EvaluationRunner, PreflightError
 
 from valtron_core.utilities.field_config_generator import infer_field_config
 
@@ -602,7 +603,10 @@ class ModelEval(BaseRecipe):
         running event loop. Use ``await experiment.arun()`` in async contexts
         (e.g. Jupyter notebooks).
         """
-        return asyncio.run(self.arun(output_dir=output_dir))
+        try:
+            return asyncio.run(self.arun(output_dir=output_dir))
+        except PreflightError:
+            sys.exit(1)
 
     async def aevaluate(self) -> None:
         """Run the evaluation pipeline and store results on this object (async).
