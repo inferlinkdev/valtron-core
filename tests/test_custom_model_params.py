@@ -237,7 +237,7 @@ class TestCustomModelParams:
             models = [
                 "gpt-3.5-turbo",
                 {"model": "gpt-4", "api_key": "custom-key"},
-                {"model": "claude-3-opus-20240229", "temperature": 0.0},
+                {"model": "claude-3-opus-20240229", "temperature": 0.0, "api_key": "mock-key"},
             ]
 
             results = await runner.evaluate_from_file(

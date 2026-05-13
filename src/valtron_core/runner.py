@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Union
 
+import litellm
 from litellm import BaseModel
 from rich.console import Console
 from rich.markup import escape
@@ -16,6 +17,7 @@ from valtron_core.client import LLMClient
 from valtron_core.evaluator import PromptEvaluator
 from valtron_core.evaluation.json_eval import (
     ExpensiveListComparisonError,
+    collect_field_metric_llm_models,
     find_expensive_unordered_list_fields,
 )
 from valtron_core.loader import DocumentLoader
@@ -137,15 +139,62 @@ class EvaluationRunner:
         self.evaluator = PromptEvaluator(client=self.client)
         self.loader = DocumentLoader()
 
+    def _check_api_keys(self, models: "list[Any]") -> None:
+        """Raise ValueError if any model is missing its required API key env vars."""
+        missing_by_model: dict[str, list[str]] = {}
+        for model in models:
+            if hasattr(model, "type") and getattr(model, "type") == "transformer":
+                continue
+
+            if isinstance(model, str):
+                name = model
+                has_explicit_key = False
+            elif isinstance(model, dict):
+                name = model.get("model") or model.get("name") or ""
+                has_explicit_key = bool(model.get("api_key") or model.get("api_base"))
+            else:
+                name = getattr(model, "name", "") or ""
+                params: dict[str, Any] = getattr(model, "params", {}) or {}
+                has_explicit_key = bool(params.get("api_key") or params.get("api_base"))
+
+            if not name or has_explicit_key:
+                continue
+
+            try:
+                env_check = litellm.validate_environment(name)
+                missing = env_check.get("missing_keys", [])
+                if missing:
+                    missing_by_model[name] = missing
+            except Exception:
+                continue
+
+        if not missing_by_model:
+            return
+
+        lines = ""
+        for model_name, keys in missing_by_model.items():
+            lines += f"  • {model_name}: {', '.join(keys)}\n"
+
+        console.print(
+            f"\n[bold red]Pre-flight check failed:[/bold red] missing API key environment variables.\n\n"
+            f"[bold yellow]Affected models:[/bold yellow]\n{lines}\n"
+            f"Set these environment variables before running the evaluation.\n"
+        )
+        raise ValueError(
+            f"Pre-flight check failed: missing API key environment variables for: "
+            f"{', '.join(missing_by_model.keys())}"
+        )
+
     def _preflight_check(
         self,
         field_metrics_config: "FieldMetricsConfig | dict | None",
         num_documents: int,
         num_models: int,
+        models: "list[Any] | None" = None,
     ) -> None:
-        """Raise ValueError before any model is invoked if the field config
-        contains unordered list fields whose item comparison calls a 3rd-party
-        API (LLM or embedding).
+        """Raise ValueError before any model is invoked if required API keys are
+        missing or if the field config contains unordered list fields whose item
+        comparison calls a 3rd-party API (LLM or embedding).
 
         Unordered list matching compares every expected item against every
         actual item — n^2 comparisons per list per document.  When each
@@ -156,6 +205,9 @@ class EvaluationRunner:
         (relative to item_logic) that are allowed to be expensive.  Use ``"$item"``
         for lists of primitives.
         """
+        if models:
+            self._check_api_keys(models)
+
         if field_metrics_config is None:
             return
 
@@ -165,6 +217,13 @@ class EvaluationRunner:
         else:
             config_dict = field_metrics_config.config
             custom_metric_names = set(field_metrics_config.custom_metrics.keys())
+
+        try:
+            llm_judge_models = collect_field_metric_llm_models(config_dict)
+            if llm_judge_models:
+                self._check_api_keys(list(llm_judge_models))
+        except Exception:
+            pass
 
         issues = find_expensive_unordered_list_fields(config_dict, custom_metric_names)
         if not issues:
@@ -403,7 +462,7 @@ class EvaluationRunner:
         Returns:
             EvaluationResult
         """
-        self._preflight_check(field_metrics_config, len(documents), 1)
+        self._preflight_check(field_metrics_config, len(documents), 1, [model])
 
         temp = model.get("temperature", 0.0) if isinstance(model, dict) else 0.0
         max_tok = model.get("max_tokens") if isinstance(model, dict) else None
@@ -508,7 +567,7 @@ class EvaluationRunner:
             [models] if isinstance(models, (str, dict)) else list(models)
         )
 
-        self._preflight_check(field_metrics_config, len(documents), len(models_list))
+        self._preflight_check(field_metrics_config, len(documents), len(models_list), models_list)
 
         total_docs = len(documents) * len(models_list)
         running_cost: list[float] = [0.0]
@@ -742,6 +801,17 @@ class EvaluationRunner:
             field_config = next(
                 (r.field_config for r in results if r.field_config is not None), None
             )
+
+        if include_recommendation:
+            env_check = litellm.validate_environment(recommendation_model)
+            missing_keys = env_check.get("missing_keys", [])
+            if missing_keys:
+                console.print(
+                    f"\n[bold red]Error:[/bold red] missing API key(s) for recommendation model "
+                    f"'{recommendation_model}': {', '.join(missing_keys)}. "
+                    f"AI summary will be skipped.\n"
+                )
+                include_recommendation = False
 
         report_path = None
         recommendation = None

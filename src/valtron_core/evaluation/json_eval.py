@@ -239,6 +239,32 @@ def _find_expensive_lists_recursive(
             _find_expensive_lists_recursive(fc, f"{path}.{key}", custom_metric_names, issues)
 
 
+def _collect_llm_models_recursive(config: "FieldConfig") -> set[str]:
+    models: set[str] = set()
+    if config.type == "leaf" and config.metric_config is not None:
+        params: dict[str, Any] = getattr(config.metric_config, "params", {})
+        if params.get("element_compare") == "llm":
+            models.add(params.get("llm_model", "gpt-4o-mini"))
+    elif config.type == "object" and config.fields:
+        for fc in config.fields.values():
+            models.update(_collect_llm_models_recursive(fc))
+    elif config.type == "list" and config.metric_config is not None:
+        item_logic = getattr(config.metric_config, "item_logic", None)
+        if item_logic is not None:
+            models.update(_collect_llm_models_recursive(item_logic))
+    return models
+
+
+def collect_field_metric_llm_models(config_dict: dict) -> set[str]:
+    """Return the set of LLM model names used as judges in field metrics.
+
+    Walks the FieldConfig tree and collects every model name where
+    element_compare='llm' is set in a leaf metric's params.
+    """
+    config = FieldConfig.model_validate(config_dict)
+    return _collect_llm_models_recursive(config)
+
+
 def find_expensive_unordered_list_fields(
     config_dict: dict,
     custom_metric_names: set[str] | None = None,
