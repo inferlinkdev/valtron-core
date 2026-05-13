@@ -14,6 +14,8 @@ def comparator_metric(expected, actual, params) -> tuple[float, bool]:
         text_similarity_threshold=params.get("text_similarity_threshold", None),
         text_similarity_metric=params.get("text_similarity_metric", "fuzz_ratio"),
         llm_model=params.get("llm_model", "gpt-4o-mini"),
+        llm_prompt_template=params.get("llm_prompt_template", None),
+        llm_prompt_extra_vars=params.get("_template_vars", None),
         embedding_model=params.get("embedding_model", "text-embedding-3-small"),
         embedding_threshold=params.get("embedding_threshold", None),
         case_sensitive=params.get("case_sensitive", False),
@@ -295,6 +297,8 @@ class JsonEvaluator:
         custom_metrics: dict[str, callable] | None = None,
         custom_aggs: dict[str, callable] | None = None,
     ):
+        self._template_vars: dict[str, Any] = {}
+
         # Metric Registry: (expected, actual, params) -> tuple[float, bool]:
         self.metric_registry = {
             "exact": lambda e, a, p: 1.0 if e == a else 0.0,
@@ -326,7 +330,11 @@ class JsonEvaluator:
         return sum(getattr(res, field) * res.weight for res in items) / total_weight
 
     def evaluate(
-        self, config_dict: dict | str, expected: dict | str, actual: dict | str
+        self,
+        config_dict: dict | str,
+        expected: dict | str,
+        actual: dict | str,
+        extra_template_vars: dict[str, Any] | None = None,
     ) -> EvalResult:
         if isinstance(config_dict, str):
             config_dict = json.loads(config_dict)
@@ -335,6 +343,7 @@ class JsonEvaluator:
         if isinstance(actual, str):
             actual = json.loads(actual)
 
+        self._template_vars: dict[str, Any] = extra_template_vars or {}
         config = FieldConfig.model_validate(config_dict)
         return self._recurse(config, expected, actual, "root")
 
@@ -385,7 +394,8 @@ class JsonEvaluator:
         # Normal metric evaluation
         m_cfg = config.metric_config
         metric_fn = self.metric_registry.get(m_cfg.metric, self.metric_registry["exact"])
-        result = metric_fn(exp, act, m_cfg.params)
+        effective_params = {**m_cfg.params, "_template_vars": self._template_vars}
+        result = metric_fn(exp, act, effective_params)
         if isinstance(result, tuple):
             score, is_correct = result
         else:

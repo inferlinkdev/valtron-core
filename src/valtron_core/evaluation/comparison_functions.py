@@ -55,11 +55,13 @@ Example usage:
 
 import json
 import math
-from typing import Literal
+from typing import Any, Literal
 
+import litellm
 from litellm import completion, completion_cost, embedding
 from nltk.translate.bleu_score import SmoothingFunction, sentence_bleu
 from nltk.translate.gleu_score import sentence_gleu
+from pydantic import BaseModel
 from rapidfuzz import fuzz
 
 ElementCompareType = Literal["exact", "text_similarity", "llm", "embedding"]
@@ -116,6 +118,10 @@ def element_compare_uses_third_party(element_compare: str, params: dict) -> tupl
     )
 
 
+class _MatchResult(BaseModel):
+    match: bool
+
+
 class Comparator:
     """Low-level element comparator with pluggable comparison strategies.
 
@@ -130,6 +136,8 @@ class Comparator:
         text_similarity_threshold: float | None = None,
         text_similarity_metric: TextSimilarityMetric = "fuzz_ratio",
         llm_model: str = "gpt-4o",
+        llm_prompt_template: str | None = None,
+        llm_prompt_extra_vars: dict[str, Any] | None = None,
         embedding_model: str = "text-embedding-3-small",
         embedding_threshold: float | None = None,
         case_sensitive: bool = False,
@@ -143,6 +151,14 @@ class Comparator:
             text_similarity_threshold: Threshold for text similarity matching (0.0-1.0). None returns raw score.
             text_similarity_metric: Which metric to use for text similarity ("fuzz_ratio", "bleu", "gleu", "cosine")
             llm_model: LiteLLM model name for LLM comparisons
+            llm_prompt_template: Custom prompt template for LLM comparisons. Must contain {predicted}
+                and {expected} placeholders and must end with instructions to respond with only "YES"
+                or "NO". Supports additional placeholders: {prompt_used} (the prompt sent to the
+                evaluated model) and {example_content} / {example_<key>} (document fields). If None,
+                uses the default entity-matching prompt.
+            llm_prompt_extra_vars: Additional placeholder values injected into llm_prompt_template
+                at format time. Keys map directly to template placeholders. Populated automatically
+                from document data when called via the evaluation pipeline.
             embedding_model: LiteLLM model name for embeddings
             embedding_threshold: Threshold for embedding matching (0.0-1.0). None returns raw score.
             case_sensitive: Whether comparison should be case sensitive
@@ -152,6 +168,8 @@ class Comparator:
         self.text_similarity_threshold = text_similarity_threshold
         self.text_similarity_metric = text_similarity_metric
         self.llm_model = llm_model
+        self.llm_prompt_template = llm_prompt_template
+        self.llm_prompt_extra_vars: dict[str, Any] = llm_prompt_extra_vars or {}
         self.embedding_model = embedding_model
         self.embedding_threshold = embedding_threshold
         self.case_sensitive = case_sensitive
@@ -245,23 +263,43 @@ class Comparator:
             expected: The expected ground truth value
             context: Optional source document text for additional context
         """
-        context_section = ""
-        if context:
-            context_section = f"\nSource text: {context}\n"
+        if self.llm_prompt_template is not None:
+            prompt = self.llm_prompt_template.format(
+                predicted=predicted,
+                expected=expected,
+                **self.llm_prompt_extra_vars,
+            )
+        else:
+            context_section = ""
+            if context:
+                context_section = f"\nSource text: {context}\n"
 
-        prompt = f"""Do these two values refer to the same entity or concept? Consider them a match even if one is more specific, has extra qualifiers, or is an abbreviation of the other.
+            prompt = f"""Do these two values refer to the same entity or concept? Consider them a match even if one is more specific, has extra qualifiers, or is an abbreviation of the other.
 {context_section}
 Value 1: {predicted}
 Value 2: {expected}
 
 Respond with only "YES" or "NO"."""
 
-        response = completion(
-            model=self.llm_model,
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.0,
-            max_tokens=10,
-        )
+        try:
+            use_structured = litellm.supports_response_schema(model=self.llm_model)
+        except Exception:
+            use_structured = False
+
+        if use_structured:
+            response = completion(
+                model=self.llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                response_format=_MatchResult,
+            )
+        else:
+            response = completion(
+                model=self.llm_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                max_tokens=10,
+            )
 
         try:
             cost = completion_cost(completion_response=response)
@@ -269,8 +307,15 @@ Respond with only "YES" or "NO"."""
         except Exception:
             pass
 
+        if use_structured:
+            try:
+                result = json.loads(response.choices[0].message.content)
+                return bool(result.get("match", False))
+            except Exception:
+                pass
+
         answer = response.choices[0].message.content.strip().upper()
-        return answer == "YES"
+        return answer.startswith("YES")
 
     def _embedding_compare(self, predicted: str, expected: str) -> bool | float:
         """Compare two strings using embedding cosine similarity."""

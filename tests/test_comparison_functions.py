@@ -261,47 +261,244 @@ class TestTextSimilarityCompare:
 class TestLLMCompare:
     """Tests for LLM-based comparison."""
 
-    def test_llm_compare_equivalent(self) -> None:
-        """Test LLM compare returns True for equivalent values."""
-        comparator = Comparator(element_compare="llm")
-
+    def _mock_completion(self, content: str) -> Mock:
         mock_response = Mock()
         mock_response.choices = [Mock()]
-        mock_response.choices[0].message.content = "YES"
+        mock_response.choices[0].message.content = content
+        return mock_response
 
-        with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-            with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
-                result = comparator._llm_compare("NYC", "New York City")
+    def test_llm_compare_equivalent_text_fallback(self) -> None:
+        """Returns True for YES when model does not support structured output."""
+        comparator = Comparator(element_compare="llm")
+        mock_response = self._mock_completion("YES")
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    result = comparator._llm_compare("NYC", "New York City")
 
         assert result is True
 
-    def test_llm_compare_not_equivalent(self) -> None:
-        """Test LLM compare returns False for non-equivalent values."""
+    def test_llm_compare_not_equivalent_text_fallback(self) -> None:
+        """Returns False for NO when model does not support structured output."""
         comparator = Comparator(element_compare="llm")
+        mock_response = self._mock_completion("NO")
 
-        mock_response = Mock()
-        mock_response.choices = [Mock()]
-        mock_response.choices[0].message.content = "NO"
-
-        with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-            with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
-                result = comparator._llm_compare("apple", "orange")
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    result = comparator._llm_compare("apple", "orange")
 
         assert result is False
 
-    def test_llm_compare_tracks_cost(self) -> None:
-        """Test LLM compare tracks cost."""
+    def test_llm_compare_equivalent_structured_output(self) -> None:
+        """Returns True when model returns structured JSON {match: true}."""
+        comparator = Comparator(element_compare="llm")
+        mock_response = self._mock_completion('{"match": true}')
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    result = comparator._llm_compare("NYC", "New York City")
+
+        assert result is True
+
+    def test_llm_compare_not_equivalent_structured_output(self) -> None:
+        """Returns False when model returns structured JSON {match: false}."""
+        comparator = Comparator(element_compare="llm")
+        mock_response = self._mock_completion('{"match": false}')
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    result = comparator._llm_compare("apple", "orange")
+
+        assert result is False
+
+    def test_llm_compare_structured_output_json_parse_failure_falls_back_to_text(self) -> None:
+        """Falls back to normalised text check if JSON parsing fails."""
+        comparator = Comparator(element_compare="llm")
+        mock_response = self._mock_completion("yes.")
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    result = comparator._llm_compare("a", "a")
+
+        assert result is True
+
+    def test_llm_compare_text_fallback_case_insensitive(self) -> None:
+        """Text fallback accepts yes/YES/Yes and verbose yes responses."""
         comparator = Comparator(element_compare="llm")
 
-        mock_response = Mock()
-        mock_response.choices = [Mock()]
-        mock_response.choices[0].message.content = "YES"
+        for content in ("yes", "Yes", "YES", "yes because they match", "YES, correct"):
+            mock_response = self._mock_completion(content)
+            with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
+                    with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.0):
+                        assert comparator._llm_compare("a", "a") is True, f"failed for {content!r}"
 
-        with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-            with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.005):
-                comparator._llm_compare("a", "a")
+    def test_llm_compare_text_fallback_rejects_no_response(self) -> None:
+        """Text fallback returns False for responses starting with NO."""
+        comparator = Comparator(element_compare="llm")
+
+        for content in ("no", "No", "NO", "no they differ"):
+            mock_response = self._mock_completion(content)
+            with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
+                    with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.0):
+                        assert comparator._llm_compare("a", "b") is False, f"failed for {content!r}"
+
+    def test_llm_compare_structured_output_passes_response_format(self) -> None:
+        """Structured output path passes _MatchResult as response_format."""
+        from valtron_core.evaluation.comparison_functions import _MatchResult
+
+        comparator = Comparator(element_compare="llm")
+        mock_response = self._mock_completion('{"match": true}')
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    comparator._llm_compare("a", "a")
+
+        _, kwargs = mock_completion.call_args
+        assert kwargs["response_format"] is _MatchResult
+
+    def test_llm_compare_text_fallback_passes_max_tokens(self) -> None:
+        """Text fallback path passes max_tokens=10."""
+        comparator = Comparator(element_compare="llm")
+        mock_response = self._mock_completion("YES")
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    comparator._llm_compare("a", "a")
+
+        _, kwargs = mock_completion.call_args
+        assert kwargs["max_tokens"] == 10
+
+    def test_llm_compare_tracks_cost(self) -> None:
+        """LLM compare tracks cost regardless of which path is used."""
+        comparator = Comparator(element_compare="llm")
+        mock_response = self._mock_completion("YES")
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.005):
+                    comparator._llm_compare("a", "a")
 
         assert comparator.total_comparison_cost == pytest.approx(0.005)
+
+    def test_llm_compare_supports_response_schema_exception_falls_back(self) -> None:
+        """If supports_response_schema raises, falls back to text parsing."""
+        comparator = Comparator(element_compare="llm")
+        mock_response = self._mock_completion("YES")
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", side_effect=Exception("unknown model")):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    result = comparator._llm_compare("a", "a")
+
+        assert result is True
+
+    def test_llm_prompt_template_replaces_default_prompt(self) -> None:
+        """Custom template is sent to the LLM instead of the default prompt."""
+        template = "Is '{predicted}' the same as '{expected}'? YES or NO."
+        comparator = Comparator(
+            element_compare="llm",
+            llm_prompt_template=template,
+        )
+        mock_response = self._mock_completion("YES")
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    result = comparator._llm_compare("NYC", "New York")
+
+        assert result is True
+        sent_prompt = mock_completion.call_args[1]["messages"][0]["content"]
+        assert sent_prompt == "Is 'NYC' the same as 'New York'? YES or NO."
+
+    def test_llm_prompt_template_with_extra_vars(self) -> None:
+        """Extra vars are interpolated into the custom template."""
+        template = "Document: {example_content}\nDoes '{predicted}' equal '{expected}'? YES or NO."
+        comparator = Comparator(
+            element_compare="llm",
+            llm_prompt_template=template,
+            llm_prompt_extra_vars={"example_content": "The capital of France is Paris."},
+        )
+        mock_response = self._mock_completion("YES")
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    comparator._llm_compare("Paris", "Paris")
+
+        sent_prompt = mock_completion.call_args[1]["messages"][0]["content"]
+        assert "The capital of France is Paris." in sent_prompt
+        assert "Paris" in sent_prompt
+
+    def test_llm_prompt_template_with_prompt_used_var(self) -> None:
+        """The {prompt_used} placeholder is interpolated when present in extra vars."""
+        template = "Prompt: {prompt_used}\nDoes '{predicted}' equal '{expected}'? YES or NO."
+        comparator = Comparator(
+            element_compare="llm",
+            llm_prompt_template=template,
+            llm_prompt_extra_vars={"prompt_used": "Extract the city name."},
+        )
+        mock_response = self._mock_completion("YES")
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    comparator._llm_compare("Paris", "Paris")
+
+        sent_prompt = mock_completion.call_args[1]["messages"][0]["content"]
+        assert "Extract the city name." in sent_prompt
+
+    def test_llm_prompt_template_with_dict_content_vars(self) -> None:
+        """Per-key example vars ({example_key1}, {example_key2}) are interpolated."""
+        template = "Key1: {example_key1}, Key2: {example_key2}\n'{predicted}' vs '{expected}'? YES or NO."
+        comparator = Comparator(
+            element_compare="llm",
+            llm_prompt_template=template,
+            llm_prompt_extra_vars={"example_key1": "alpha", "example_key2": "beta"},
+        )
+        mock_response = self._mock_completion("YES")
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    comparator._llm_compare("x", "x")
+
+        sent_prompt = mock_completion.call_args[1]["messages"][0]["content"]
+        assert "Key1: alpha" in sent_prompt
+        assert "Key2: beta" in sent_prompt
+
+    def test_llm_no_template_uses_default_prompt(self) -> None:
+        """When no template is set, the default entity-matching prompt is used."""
+        comparator = Comparator(element_compare="llm")
+        mock_response = self._mock_completion("YES")
+
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    comparator._llm_compare("NYC", "New York")
+
+        sent_prompt = mock_completion.call_args[1]["messages"][0]["content"]
+        assert "same entity or concept" in sent_prompt
+        assert "Value 1: NYC" in sent_prompt
+        assert "Value 2: New York" in sent_prompt
+
+    def test_comparator_default_llm_prompt_template_is_none(self) -> None:
+        """llm_prompt_template defaults to None."""
+        comparator = Comparator()
+        assert comparator.llm_prompt_template is None
+
+    def test_comparator_default_llm_prompt_extra_vars_is_empty(self) -> None:
+        """llm_prompt_extra_vars defaults to an empty dict."""
+        comparator = Comparator()
+        assert comparator.llm_prompt_extra_vars == {}
 
 
 class TestEmbeddingCompare:
@@ -396,9 +593,10 @@ class TestComparatorCompare:
         mock_response.choices = [Mock()]
         mock_response.choices[0].message.content = "YES"
 
-        with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-            with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
-                result = comparator.compare("NYC", "New York")
+        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+                    result = comparator.compare("NYC", "New York")
 
         assert result is True
 

@@ -135,7 +135,46 @@ The flexible comparison metric. Wraps the `Comparator` class and supports four c
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `llm_model` | string | `"gpt-4o-mini"` | Model used for the comparison call |
+| `llm_model` | string | `"gpt-4o-mini"` | Any [LiteLLM-supported model string](https://docs.litellm.ai/docs/providers). Controls which model is called for the comparison. |
+| `llm_prompt_template` | string | `null` | Custom prompt template. Must contain `{predicted}` and `{expected}` placeholders and end with an instruction to respond with only `YES` or `NO`. When omitted, the built-in entity-matching prompt is used. |
+
+**Custom prompt templates**
+
+By default the following prompt is used:
+
+```
+Do these two values refer to the same entity or concept? Consider them a match even if one is more specific, has extra qualifiers, or is an abbreviation of the other.
+
+Value 1: <predicted>
+Value 2: <expected>
+
+Respond with only "YES" or "NO".
+```
+
+Set `llm_prompt_template` to replace it with a prompt suited to your domain. The template supports the following placeholders, which are filled in automatically at evaluation time:
+
+| Placeholder | Value |
+|---|---|
+| `{predicted}` | The model's predicted value for the field |
+| `{expected}` | The ground-truth value for the field |
+| `{prompt_used}` | The full prompt that was sent to the model being evaluated |
+| `{example_content}` | The document content (when the document has a plain-string `content` field) |
+| `{example_<key>}` | One placeholder per key when the document `content` is a dict (e.g. `{example_title}`, `{example_body}`) |
+
+Your template must end with an instruction to respond with only `YES` or `NO`.
+
+```json
+{
+  "metric": "comparator",
+  "params": {
+    "element_compare": "llm",
+    "llm_model": "claude-sonnet-4-6",
+    "llm_prompt_template": "Source document:\n{example_content}\n\nDoes '{predicted}' refer to the same entity as '{expected}'?\nRespond with only YES or NO."
+  }
+}
+```
+
+When the model supports structured outputs (e.g. GPT-4o, Claude 3.5+), Valtron uses a JSON schema response format to enforce a boolean `match` field, making the result reliable regardless of how the model phrases its answer. For models that do not support structured outputs, the response must start with `YES` or `NO` (case insensitive).
 
 Incurs one LLM call per field per document. Costs are tracked.
 

@@ -395,10 +395,20 @@ class PromptEvaluator:
                         custom_aggs=field_metrics_config.custom_aggs,
                     )
                     expected_for_eval = label.value
+
+                    if isinstance(document.content, dict):
+                        doc_vars: dict[str, Any] = {
+                            f"example_{k}": v for k, v in document.content.items()
+                        }
+                    else:
+                        doc_vars = {"example_content": document.content}
+                    extra_template_vars = {"prompt_used": prompt, **doc_vars}
+
                     result = evaluator.evaluate(
                         field_metrics_config.config,
                         expected_for_eval,
                         predicted_value,
+                        extra_template_vars=extra_template_vars,
                     )
 
                     field_metrics = result
