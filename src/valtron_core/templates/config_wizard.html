@@ -104,6 +104,7 @@
         .alert-info    { background: rgba(88,166,255,.1); color: #58a6ff; border-color: #1f6feb; }
         .alert-success { background: rgba(63,185,80,.1);  color: #3fb950; border-color: #238636; }
         .alert-warning { background: rgba(227,179,65,.1); color: #e3b341; border-color: #9e6a03; }
+        .alert-danger  { background: rgba(248,81,73,.1);  color: #f85149; border-color: #da3633; }
 
         /* ── Model list ──────────────────────────────────────────────────── */
         .model-list { display: flex; flex-direction: column; gap: 10px; }
@@ -140,7 +141,7 @@
         .modal p, .modal li { color:#8b949e; font-size:.9em; line-height:1.6; }
         .modal strong { color:#c9d1d9; }
         .modal code   { color:#58a6ff; background:#0d1117; padding:2px 6px; border-radius:4px; border:1px solid #30363d; }
-        .modal pre    { background:#0d1117; padding:15px; border-radius:6px; overflow-x:auto; font-size:.85em; border:1px solid #30363d; color:#c9d1d9; margin:10px 0; }
+        .modal pre    { background:#0d1117; padding:15px; border-radius:6px; overflow:hidden; white-space:pre-wrap; word-break:break-all; font-size:.85em; border:1px solid #30363d; color:#c9d1d9; margin:10px 0; }
 
         /* ════════════════════════════════════════════════════════════════════
            Field Metrics Step
@@ -170,7 +171,7 @@
             padding: 0;
             font-family: 'JetBrains Mono','Courier New',monospace;
             font-size: 0.85em;
-            overflow: hidden;
+            overflow: visible;
         }
 
         .tree-header {
@@ -254,6 +255,32 @@
             color: #8b949e; font-size: .82em; cursor: pointer; white-space: nowrap;
         }
         .ctrl-check input { accent-color: #58a6ff; cursor: pointer; width: auto; }
+
+        input.ctrl-text {
+            background: #161b22; border: 1px solid #30363d; border-radius: 4px;
+            color: #c9d1d9; font-family: inherit; font-size: .82em;
+            padding: 3px 8px; width: 160px;
+            transition: border-color .15s;
+        }
+        input.ctrl-text:focus { outline: none; border-color: #58a6ff; }
+
+        .llm-model-picker { width: 400px; }
+        .llm-help-link { font-size: .78em; color: #58a6ff; text-decoration: none; white-space: nowrap; }
+        .llm-help-link:hover { text-decoration: underline; }
+
+        textarea.ctrl-textarea {
+            background: #161b22; border: 1px solid #30363d; border-radius: 4px;
+            color: #c9d1d9; font-family: inherit; font-size: .82em;
+            padding: 6px 8px; width: 100%; box-sizing: border-box;
+            resize: vertical; line-height: 1.5;
+            transition: border-color .15s;
+        }
+        textarea.ctrl-textarea:focus { outline: none; border-color: #58a6ff; }
+
+        .llm-prompt-row {
+            width: 100%; margin-top: 6px;
+            display: flex; flex-direction: column; gap: 4px;
+        }
 
         /* Nested children */
         .row-children {
@@ -370,10 +397,10 @@
     <div class="progress-bar">
         <div class="progress-step active" data-step="1">Current Model</div>
         <div class="progress-step" data-step="2">Test Models</div>
-        <div class="progress-step" data-step="3">Prompt</div>
-        <div class="progress-step" data-step="4">Training Data</div>
-        <div class="progress-step" data-step="5">Response Format</div>
-        <div class="progress-step" data-step="6">Field Metrics</div>
+        <div class="progress-step" data-step="3">Training Data</div>
+        <div class="progress-step" data-step="4">Response Format</div>
+        <div class="progress-step" data-step="5">Field Metrics</div>
+        <div class="progress-step" data-step="6">Prompt</div>
         <div class="progress-step" data-step="7">Review</div>
     </div>
 
@@ -389,6 +416,7 @@
                     <input type="text" id="current-model" placeholder="e.g., gpt-5-mini, claude-sonnet-4-6, ollama/llama3.3" autocomplete="off" />
                     <div class="autocomplete-dropdown" id="current-model-dropdown"></div>
                 </div>
+                <p id="current-model-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;"></p>
             </div>
             <div class="button-group">
                 <button class="btn btn-primary" onclick="nextStep()">Next →</button>
@@ -407,6 +435,7 @@
                     <div class="autocomplete-dropdown" id="add-model-dropdown"></div>
                 </div>
                 <p id="duplicate-model-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;">That model is already in the list.</p>
+                <p id="no-models-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;">Please add at least one model to test against.</p>
             </div>
             <div class="form-group">
                 <label>
@@ -425,34 +454,10 @@
             </div>
         </div>
 
-        <!-- ── Step 3: Prompt ─────────────────────────────────────────────── -->
+        <!-- ── Step 3: Training Data ──────────────────────────────────────── -->
         <div class="step" data-step="3">
-            <h2>Enter your prompt template</h2>
-            <p class="step-description">Your prompt must include at least one placeholder. Use <code>{content}</code> for plain-text documents, or use named keys like <code>{text}</code>, <code>{topic}</code> when your data's <code>content</code> field is a JSON object with those keys.</p>
-            <div class="form-group">
-                <label for="prompt-template">Prompt Template</label>
-                <textarea id="prompt-template" placeholder="Example:&#10;&#10;Determine if two geographic locations are the same or in close proximity (within 10 miles). Respond with yes or no in JSON format like {&quot;response&quot;:&quot;yes&quot;} or {&quot;response&quot;:&quot;no&quot;}.&#10;&#10;Document: {content}"></textarea>
-                <div id="prompt-error" style="display:none; margin-top:10px;" class="alert alert-warning">
-                    Type your prompt in the box above. It must contain at least one <code>{placeholder}</code> where your document content will be inserted.<br><br>
-                    Example:<br>
-                    <code style="display:block; margin-top:6px; white-space:pre-wrap;">Classify the sentiment of the following text. Respond with POSITIVE or NEGATIVE only.
-
-{content}</code>
-                </div>
-            </div>
-            <div class="alert alert-warning" id="few-shot-alert" style="display:none">
-                📚 Few-shot learning is enabled. We'll configure training data on the next step.
-            </div>
-            <div class="button-group">
-                <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
-                <button class="btn btn-primary"   onclick="nextStep()">Next →</button>
-            </div>
-        </div>
-
-        <!-- ── Step 4: Training Data ──────────────────────────────────────── -->
-        <div class="step" data-step="4">
             <h2>Provide labeled training data</h2>
-            <p class="step-description">Upload or link to your labeled dataset. This will be used for evaluation and few-shot learning.</p>
+            <p class="step-description">Upload or link to your labeled dataset. This will be used for evaluation and few-shot learning. <a href="#" class="help-link" onclick="showModal('format-modal');return false">View required data format</a></p>
             <div class="form-group">
                 <label for="data-url">Data URL or Path</label>
                 <div style="display:flex;gap:8px;align-items:center">
@@ -464,9 +469,7 @@
                 <p class="step-description" style="margin-top:2px;font-size:0.82em;color:#8b949e">
                     Relative paths resolve from: <code id="cwd-display">...</code>
                 </p>
-                <p class="step-description" style="margin-top:4px">
-                    <a href="#" class="help-link" onclick="showModal('format-modal');return false">📋 View required data format</a>
-                </p>
+                <p id="data-url-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;"></p>
             </div>
             <div class="form-group" id="few-shot-config-section" style="display:none">
                 <h3>Few-Shot Configuration</h3>
@@ -478,6 +481,7 @@
             <div class="form-group">
                 <label for="use-case">Use Case Description</label>
                 <input type="text" id="use-case" placeholder="e.g., geographic location disambiguation" />
+                <p id="use-case-error" style="display:none;color:#f85149;font-size:.85em;margin-top:4px;">Please describe your use case.</p>
             </div>
             <div class="button-group">
                 <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
@@ -485,8 +489,8 @@
             </div>
         </div>
 
-        <!-- ── Step 5: Response Format ───────────────────────────────────── -->
-        <div class="step" data-step="5">
+        <!-- ── Step 4: Response Format ───────────────────────────────────── -->
+        <div class="step" data-step="4">
             <h2>Response Format</h2>
             <p class="step-description">This is the Pydantic model inferred from your data. It is a best-effort inference — for plain-text labels with up to 50 unique values a <code>Literal</code> enum is generated; for JSON labels the structure is recursively inferred from your first example. If you need a more precise schema, pass your own Pydantic model as <code>response_format</code> when constructing <code>ModelEval</code>. See <a href="https://valtron.ai/docs/evaluation-results#structured-extraction-mode" target="_blank" style="color:#58a6ff">Structured extraction mode</a> for details.</p>
             <p class="step-description" style="color:#8b949e;font-size:.9em">This schema will be saved to your config file and used for structured output.</p>
@@ -499,8 +503,8 @@
             </div>
         </div>
 
-        <!-- ── Step 6: Field Metrics ──────────────────────────────────────── -->
-        <div class="step" data-step="6">
+        <!-- ── Step 5: Field Metrics ──────────────────────────────────────── -->
+        <div class="step" data-step="5">
             <h2>Field-Level Metrics</h2>
             <p class="step-description" id="fm-description"></p>
 
@@ -559,7 +563,25 @@
 
             <div class="button-group">
                 <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
-                <button class="btn btn-primary" onclick="generateConfig()">Generate Config →</button>
+                <button class="btn btn-primary" onclick="nextStep()">Next →</button>
+            </div>
+        </div>
+
+        <!-- ── Step 6: Prompt ─────────────────────────────────────────────── -->
+        <div class="step" data-step="6">
+            <h2>Enter your prompt template</h2>
+            <p class="step-description">Your prompt must include all placeholders detected from your data. Required: <span id="prompt-keys-hint"></span></p>
+            <div class="form-group">
+                <label for="prompt-template">Prompt Template</label>
+                <textarea id="prompt-template" style="min-height:220px" placeholder="Example:&#10;&#10;Classify the sentiment of the following review. Respond with POSITIVE or NEGATIVE only.&#10;&#10;Review: {content}"></textarea>
+                <div id="prompt-error" style="display:none; margin-top:10px;" class="alert alert-danger"></div>
+            </div>
+            <div class="alert alert-warning" id="few-shot-alert" style="display:none">
+                📚 Few-shot learning is enabled.
+            </div>
+            <div class="button-group">
+                <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
+                <button class="btn btn-primary"   onclick="savePromptAndGenerate()">Generate Config →</button>
             </div>
         </div>
 
@@ -576,6 +598,7 @@
                 <button class="btn btn-secondary" onclick="prevStep()">← Back</button>
                 <button class="btn btn-primary"   onclick="downloadConfig()">Download Config</button>
                 <button class="btn btn-primary"   onclick="copyToClipboard()">Copy to Clipboard</button>
+                <span id="copy-success" style="display:none;color:#3fb950;font-size:.9em;margin-left:8px;align-self:center"></span>
             </div>
         </div>
 
@@ -629,32 +652,28 @@ ollama pull mistral</pre></li>
     <div class="modal-content">
         <button class="modal-close" onclick="closeModal('format-modal')">&times;</button>
         <h3>Required Data Format</h3>
-        <p>Your training data must be a JSON array. The <code>content</code> field can be a plain string or a JSON object for prompt variables:</p>
-        <p><strong>Plain text content</strong> — use <code>{content}</code> in your prompt:</p>
-        <pre>[
-  {
-    "id": "example-1",
-    "content": "Your document text here...",
-    "label": "yes"
-  }
-]</pre>
-        <p><strong>Dict content (prompt variables)</strong> — use <code>{key}</code> placeholders in your prompt:</p>
-        <pre>[
-  {
-    "id": "example-1",
-    "content": {
-      "text": "The Amazon basin receives over 2,000 mm of rain.",
-      "topic": "climate"
-    },
-    "label": "yes"
-  }
-]</pre>
-        <p>With dict content, each key becomes a <code>{key}</code> placeholder — e.g. <code>Text: {text}\nTopic: {topic}</code>.</p>
-        <p><strong>Required fields:</strong></p>
+        <p>A JSON array of objects. Each object has these fields:</p>
         <ul>
-            <li><code>content</code>: The text to classify (string or object)</li>
-            <li><code>label</code>: The correct answer</li>
+            <li><code>id</code> — unique identifier for the document</li>
+            <li><code>content</code> — text passed into your prompt; a plain string (use <code>{content}</code> in your prompt) or a <code>{key: value}</code> object (use <code>{key}</code> placeholders)</li>
+            <li><code>label</code> — expected output; a plain string for classification, or a JSON object for structured extraction</li>
+            <li><code>metadata</code> <em>(optional)</em> — arbitrary key/value pairs shown in the report</li>
+            <li><code>attachments</code> <em>(optional)</em> — list of file paths or URLs appended to the prompt</li>
         </ul>
+        <p><strong>Classification (string label):</strong></p>
+        <pre>[
+  { "id": "1", "content": "Absolutely love this product!", "label": "positive" },
+  { "id": "2", "content": "Terrible experience, would not recommend.", "label": "negative" }
+]</pre>
+        <p><strong>Structured extraction (dict label):</strong></p>
+        <pre>[
+  {
+    "id": "1",
+    "content": "Apple Inc. was founded in Cupertino, California.",
+    "label": { "name": "Apple Inc.", "city": "Cupertino", "state": "California" }
+  }
+]</pre>
+        <p>For the full spec see <a href="https://valtron.ai/docs/data-format" target="_blank" style="color:#58a6ff">valtron.ai/data-format</a>.</p>
     </div>
 </div>
 
@@ -797,7 +816,9 @@ createAutocomplete({
 function nextStep() {
     if (currentStep === 1) {
         const m = document.getElementById('current-model').value.trim();
-        if (!m) { alert('Please enter your current model'); return; }
+        const cmErr = document.getElementById('current-model-error');
+        if (!m) { cmErr.textContent = 'Please enter your current model.'; cmErr.style.display = 'block'; return; }
+        cmErr.style.display = 'none';
         config.models = [{ name: m, type: 'llm', prompt_manipulation: [], params: {} }];
         if (m !== lastSuggestedForModel) {
             lastSuggestedForModel = m;
@@ -812,7 +833,9 @@ function nextStep() {
     }
 
     if (currentStep === 2) {
-        if (selectedTestModels.length === 0) { alert('Please add at least one model to test against'); return; }
+        const nmErr = document.getElementById('no-models-error');
+        if (selectedTestModels.length === 0) { nmErr.style.display = 'block'; return; }
+        nmErr.style.display = 'none';
         config.models = config.models.slice(0, 1);
         const improve = document.getElementById('improve-prompts').checked;
         selectedTestModels.forEach(model => {
@@ -820,20 +843,19 @@ function nextStep() {
             if (improve && model.is_simple) { mc.prompt_manipulation = ['explanation', 'few_shot']; config.few_shot.enabled = true; }
             config.models.push(mc);
         });
-        if (config.few_shot.enabled) document.getElementById('few-shot-alert').style.display = 'block';
+        if (config.few_shot.enabled) {
+            document.getElementById('few-shot-config-section').style.display = 'block';
+            document.getElementById('few-shot-alert').style.display = 'block';
+        }
     }
 
-    if (currentStep === 3) {
-        const p = document.getElementById('prompt-template').value.trim();
-        const promptErr = document.getElementById('prompt-error');
-        if (!p) { promptErr.style.display = 'block'; return; }
-        promptErr.style.display = 'none';
-        if (!/\{\w+\}/.test(p)) { alert('Prompt must include at least one {placeholder}, e.g. {content}'); return; }
-        config.prompt = p;
-        if (config.few_shot.enabled) document.getElementById('few-shot-config-section').style.display = 'block';
-    }
+    if (currentStep === 3) return; // handled by analyzeData()
 
-    if (currentStep === 4) return; // handled by analyzeData()
+    if (currentStep === 5) {
+        const keys = (analysisResult && analysisResult.content_keys) || ['content'];
+        document.getElementById('prompt-keys-hint').innerHTML =
+            keys.map(k => `<code>{${k}}</code>`).join(', ');
+    }
 
     updateStepDisplay(currentStep + 1);
 }
@@ -859,13 +881,14 @@ function updateStepDisplay(step) {
 async function handleFilePick(input) {
     const file = input.files[0];
     if (!file) return;
+    const status = document.getElementById('upload-status');
     const ONE_GB = 1024 * 1024 * 1024;
     if (file.size > ONE_GB) {
-        alert(`"${file.name}" is ${(file.size / ONE_GB).toFixed(2)} GB, which exceeds the 1 GB limit. Enter the file path directly instead.`);
+        status.textContent = `"${file.name}" is ${(file.size / ONE_GB).toFixed(2)} GB, which exceeds the 1 GB limit. Enter the file path directly instead.`;
+        status.style.color = '#f85149';
         input.value = '';
         return;
     }
-    const status = document.getElementById('upload-status');
     status.textContent = `Uploading ${file.name}…`;
     status.style.color = '#8b949e';
     const form = new FormData();
@@ -892,11 +915,19 @@ async function handleFilePick(input) {
 /* ════════════════════════════════════════════════════════════════
    Step 4 → Step 5: download + analyze data
    ════════════════════════════════════════════════════════════════ */
+function showDataError(msg) {
+    const el = document.getElementById('data-url-error');
+    el.textContent = msg;
+    el.style.display = 'block';
+}
+
 async function analyzeData() {
     const dataUrl = document.getElementById('data-url').value.trim();
     const useCase = document.getElementById('use-case').value.trim();
-    if (!dataUrl) { alert('Please provide a data URL or path'); return; }
-    if (!useCase) { alert('Please describe your use case'); return; }
+    document.getElementById('data-url-error').style.display = 'none';
+    document.getElementById('use-case-error').style.display = 'none';
+    if (!dataUrl) { showDataError('Please provide a data URL or path.'); return; }
+    if (!useCase) { document.getElementById('use-case-error').style.display = 'block'; return; }
 
     config.use_case = useCase;
     if (config.few_shot.enabled) {
@@ -920,7 +951,7 @@ async function analyzeData() {
                 body: JSON.stringify({ url: dataUrl })
             });
             const dlResult = await dlResp.json();
-            if (!dlResp.ok) { alert('Error downloading data: ' + dlResult.error); return; }
+            if (!dlResp.ok) { showDataError('Error downloading data: ' + dlResult.error); return; }
             analyzeBody = { data: dlResult.data };
         } else {
             analyzeBody = { data_path: dataUrl };
@@ -931,14 +962,14 @@ async function analyzeData() {
             body: JSON.stringify(analyzeBody)
         });
         const result = await resp.json();
-        if (!resp.ok) { alert('Error analyzing data: ' + result.error); return; }
+        if (!resp.ok) { showDataError('Error analyzing data: ' + result.error); return; }
 
         analysisResult = result;
         populateRfStep(result);
         populateFmStep(result);
-        updateStepDisplay(5);
+        updateStepDisplay(4);
     } catch (e) {
-        alert('Error: ' + e.message);
+        showDataError('Error: ' + e.message);
     } finally {
         btn.disabled = false; btn.textContent = 'Next →';
     }
@@ -1053,9 +1084,15 @@ function makeFieldRow(key, fieldConfig, labelValue) {
     ctrl.className = 'row-controls';
 
     if (type === 'leaf') {
-        ctrl.appendChild(makeMetricCtrl(mc.metric || 'exact'));
+        const currentMetric = mc.metric || 'exact';
+        ctrl.appendChild(makeMetricCtrl(currentMetric));
         ctrl.appendChild(makeWeightCtrl(weight));
         ctrl.appendChild(makeCheckCtrl('optional', 'Optional', optional, 'row-optional'));
+        const llmOpts = makeLlmJudgeOpts(mc.params || {}, currentMetric === 'llm');
+        ctrl.appendChild(llmOpts);
+        ctrl.querySelector('.row-metric').addEventListener('change', function() {
+            llmOpts.style.display = this.value === 'llm' ? 'contents' : 'none';
+        });
     } else if (type === 'list') {
         ctrl.appendChild(makeCheckCtrl('ordered', 'Ordered', mc.ordered ?? false, 'row-ordered'));
         ctrl.appendChild(makeLabeledNum('Match threshold', mc.match_threshold ?? 0.5, 0, 1, 0.05, 'row-threshold'));
@@ -1102,7 +1139,13 @@ function makeFieldRow(key, fieldConfig, labelValue) {
                 itemRow.appendChild(itemHdr);
                 const itemCtrl = document.createElement('div');
                 itemCtrl.className = 'row-controls';
-                itemCtrl.appendChild(makeMetricCtrl(itemLogic.metric_config?.metric || 'exact'));
+                const itemCurrentMetric = itemLogic.metric_config?.metric || 'exact';
+                itemCtrl.appendChild(makeMetricCtrl(itemCurrentMetric));
+                const itemLlmOpts = makeLlmJudgeOpts(itemLogic.metric_config?.params || {}, itemCurrentMetric === 'llm');
+                itemCtrl.appendChild(itemLlmOpts);
+                itemCtrl.querySelector('.row-metric').addEventListener('change', function() {
+                    itemLlmOpts.style.display = this.value === 'llm' ? 'contents' : 'none';
+                });
                 itemRow.appendChild(itemCtrl);
                 section.appendChild(itemRow);
             }
@@ -1123,6 +1166,92 @@ function makeFieldRow(key, fieldConfig, labelValue) {
 }
 
 // ── Control factories ─────────────────────────────────────────────────────────
+
+const DEFAULT_LLM_PROMPT =
+`Do these two values refer to the same entity or concept? Consider them a match even if one is more specific, has extra qualifiers, or is an abbreviation of the other.
+
+Value 1: {predicted}
+Value 2: {expected}
+
+Respond with only "YES" or "NO".`;
+
+function makeLlmJudgeOpts(params, visible) {
+    const wrap = document.createElement('span');
+    wrap.style.display = visible ? 'contents' : 'none';
+
+    // Judge model label
+    const modelLbl = document.createElement('span');
+    modelLbl.className = 'ctrl-label';
+    modelLbl.textContent = 'Judge model:';
+    wrap.appendChild(modelLbl);
+
+    // Autocomplete wrapper
+    const acWrap = document.createElement('div');
+    acWrap.className = 'autocomplete-wrapper llm-model-picker';
+    const modelInp = document.createElement('input');
+    modelInp.type = 'text';
+    modelInp.className = 'ctrl-text row-llm-model';
+    modelInp.style.width = '100%';
+    modelInp.value = params.llm_model || 'gpt-4o-mini';
+    modelInp.placeholder = 'gpt-4o-mini';
+    modelInp.setAttribute('autocomplete', 'off');
+    const acDrop = document.createElement('div');
+    acDrop.className = 'autocomplete-dropdown';
+    acWrap.appendChild(modelInp);
+    acWrap.appendChild(acDrop);
+    wrap.appendChild(acWrap);
+
+    createAutocomplete({
+        inputEl:       modelInp,
+        dropdownEl:    acDrop,
+        onSelect(model) { modelInp.value = model.name; },
+        excludeFn:     () => '',
+        clearOnSelect: false,
+    });
+
+    // Help link
+    const helpLink = document.createElement('a');
+    helpLink.className = 'llm-help-link';
+    helpLink.href = 'https://valtron.ai/docs/field-metrics#comparator';
+    helpLink.target = '_blank';
+    helpLink.textContent = 'Options reference ↗';
+    wrap.appendChild(helpLink);
+
+    // Prompt row (full-width)
+    const promptRow = document.createElement('div');
+    promptRow.className = 'llm-prompt-row';
+    const promptLbl = document.createElement('span');
+    promptLbl.className = 'ctrl-label';
+    promptLbl.textContent = 'Judge prompt:';
+    const promptTa = document.createElement('textarea');
+    promptTa.className = 'ctrl-textarea row-llm-prompt';
+    promptTa.rows = 5;
+    promptTa.value = params.llm_prompt_template || DEFAULT_LLM_PROMPT;
+    promptRow.appendChild(promptLbl);
+    promptRow.appendChild(promptTa);
+    wrap.appendChild(promptRow);
+
+    return wrap;
+}
+
+function metricValToConfig(metricVal, ctrlEl) {
+    if (metricVal === 'fuzzy') {
+        return { metric: 'comparator', params: { element_compare: 'text_similarity' }, propagation: 'weighted_avg' };
+    }
+    if (metricVal === 'embedding') {
+        return { metric: 'comparator', params: { element_compare: 'embedding' }, propagation: 'weighted_avg' };
+    }
+    if (metricVal === 'llm') {
+        const llmModel = ctrlEl?.querySelector('.row-llm-model')?.value?.trim() || 'gpt-4o-mini';
+        const promptRaw = ctrlEl?.querySelector('.row-llm-prompt')?.value?.trim() || '';
+        const params = { element_compare: 'llm', llm_model: llmModel };
+        if (promptRaw) {
+            params.llm_prompt_template = promptRaw;
+        }
+        return { metric: 'comparator', params, propagation: 'weighted_avg' };
+    }
+    return { metric: 'exact', propagation: 'weighted_avg' };
+}
 
 function makeMetricCtrl(current) {
     const wrap = document.createElement('span');
@@ -1199,10 +1328,7 @@ function readRow(rowEl) {
             type: 'leaf',
             weight:   parseFloat(ctrl.querySelector('.row-weight').value),
             optional: ctrl.querySelector('.row-optional').checked,
-            metric_config: {
-                metric: ctrl.querySelector('.row-metric').value,
-                propagation: 'weighted_avg'
-            }
+            metric_config: metricValToConfig(ctrl.querySelector('.row-metric').value, ctrl)
         };
     }
 
@@ -1217,8 +1343,9 @@ function readRow(rowEl) {
             const kind = section.dataset.childKind;
             if (kind === 'leaf') {
                 const itemRow    = section.querySelector('.field-row[data-key="__item__"]');
-                const itemMetric = itemRow ? itemRow.querySelector('.row-metric').value : 'exact';
-                itemLogic = { type: 'leaf', weight: 1.0, metric_config: { metric: itemMetric, propagation: 'weighted_avg' } };
+                const itemMetricSel = itemRow?.querySelector('.row-metric');
+                const itemMetric = itemMetricSel ? itemMetricSel.value : 'exact';
+                itemLogic = { type: 'leaf', weight: 1.0, metric_config: metricValToConfig(itemMetric, itemRow) };
             } else if (kind === 'object') {
                 const itemFields = {};
                 section.querySelectorAll(':scope > .field-row').forEach(child => {
@@ -1259,6 +1386,27 @@ function readRow(rowEl) {
 }
 
 /* ════════════════════════════════════════════════════════════════
+   Step 6: validate prompt then generate config
+   ════════════════════════════════════════════════════════════════ */
+function savePromptAndGenerate() {
+    const p = document.getElementById('prompt-template').value.trim();
+    const promptErr = document.getElementById('prompt-error');
+    const keys = (analysisResult && analysisResult.content_keys) || ['content'];
+    const missing = keys.filter(k => !p.includes(`{${k}}`));
+
+    if (!p || missing.length > 0) {
+        const absent = missing.length ? missing : keys;
+        const list = absent.map(k => `<code>{${k}}</code>`).join(', ');
+        promptErr.innerHTML = `Your prompt is missing required placeholder${absent.length !== 1 ? 's' : ''}: ${list}`;
+        promptErr.style.display = 'block';
+        return;
+    }
+    promptErr.style.display = 'none';
+    config.prompt = p;
+    generateConfig();
+}
+
+/* ════════════════════════════════════════════════════════════════
    Step 6 → Step 7: build final config
    ════════════════════════════════════════════════════════════════ */
 function generateConfig() {
@@ -1294,7 +1442,12 @@ function downloadConfig() {
 
 function copyToClipboard() {
     navigator.clipboard.writeText(document.getElementById('final-config').value)
-        .then(() => alert('Configuration copied to clipboard!'));
+        .then(() => {
+            const s = document.getElementById('copy-success');
+            s.textContent = 'Copied to clipboard!';
+            s.style.display = 'inline';
+            setTimeout(() => { s.style.display = 'none'; }, 3000);
+        });
 }
 
 /* ════════════════════════════════════════════════════════════════

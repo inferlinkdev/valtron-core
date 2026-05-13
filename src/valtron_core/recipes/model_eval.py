@@ -3,6 +3,7 @@
 import asyncio
 import json
 import re
+import sys
 import time
 import uuid
 from datetime import datetime
@@ -38,9 +39,9 @@ from valtron_core.recipes.config import (
     ModelEvalConfig,
     STRUCTURED_MANIPULATIONS,
 )
-from tqdm import tqdm
+from tqdm import tqdm  # type: ignore[import-untyped]
 
-from valtron_core.runner import EvaluationResult, EvaluationRunner
+from valtron_core.runner import EvaluationResult, EvaluationRunner, PreflightError
 
 from valtron_core.utilities.field_config_generator import infer_field_config
 
@@ -238,7 +239,7 @@ class ModelEval(BaseRecipe):
         final form. Plain string labels without auto-wrap are skipped -- they are not
         JSON-structured and are already covered by the warning in _check_model_param_support.
         """
-        import jsonschema
+        import jsonschema  # type: ignore[import-untyped]
 
         effective_dict_schema = self._effective_dict_schema()
         if self.response_format is None and effective_dict_schema is None:
@@ -602,7 +603,10 @@ class ModelEval(BaseRecipe):
         running event loop. Use ``await experiment.arun()`` in async contexts
         (e.g. Jupyter notebooks).
         """
-        return asyncio.run(self.arun(output_dir=output_dir))
+        try:
+            return asyncio.run(self.arun(output_dir=output_dir))
+        except PreflightError:
+            sys.exit(1)
 
     async def aevaluate(self) -> None:
         """Run the evaluation pipeline and store results on this object (async).

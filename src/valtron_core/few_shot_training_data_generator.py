@@ -364,7 +364,7 @@ class FewShotTrainingDataGenerator:
 
         return "\n".join(prompt_parts)
 
-    def generate_from_few_shot(self, num_examples) -> str:
+    def generate_from_few_shot(self, num_examples: int) -> str:
         """
         Generate a prompt for creating more training examples from few-shot examples.
 
@@ -850,7 +850,7 @@ class FewShotTrainingDataGenerator:
         examples = []
         lines = generated_content.split("\n")
 
-        current_document_lines = []
+        current_document_lines: list[str] = []
         current_label = None
         in_document = False
 

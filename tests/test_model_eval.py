@@ -7,6 +7,15 @@ from datetime import datetime
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
+
+@pytest.fixture(autouse=True)
+def mock_validate_environment():
+    with patch(
+        "valtron_core.runner.litellm.validate_environment",
+        return_value={"keys_in_environment": True, "missing_keys": []},
+    ):
+        yield
+
 from valtron_core.recipes.model_eval import ModelEval
 from valtron_core.recipes.config import (
     ModelEvalConfig,

@@ -10,11 +10,11 @@ import matplotlib
 matplotlib.use('Agg')  # non-interactive backend - must be before pyplot import
 import matplotlib.pyplot as plt
 
-from reportlab.lib import colors
-from reportlab.lib.pagesizes import LETTER
-from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib.units import inch
-from reportlab.platypus import (
+from reportlab.lib import colors  # type: ignore[import-untyped]
+from reportlab.lib.pagesizes import LETTER  # type: ignore[import-untyped]
+from reportlab.lib.styles import ParagraphStyle  # type: ignore[import-untyped]
+from reportlab.lib.units import inch  # type: ignore[import-untyped]
+from reportlab.platypus import (  # type: ignore[import-untyped]
     HRFlowable,
     Image,
     KeepTogether,
@@ -115,8 +115,8 @@ class PdfReportGenerator(_ReportBase):
         has_field_metrics = bool(all_field_names)
 
         # Per-field metrics
-        field_metrics_data: dict[str, list[dict]] = {}
-        field_max_values: dict[str, dict] = {}
+        field_metrics_data: dict[str, list[dict[str, str | float]]] = {}
+        field_max_values: dict[str, dict[str, float]] = {}
         if has_field_metrics:
             for field_name in all_field_names:
                 field_metrics_data[field_name] = []
@@ -180,7 +180,7 @@ class PdfReportGenerator(_ReportBase):
 
         story = self._build_pdf_story(data)
 
-        pdf_path = output_dir / f"{output_path.stem}.pdf"
+        pdf_path = output_dir / f"{output_dir.stem}.pdf"
         doc = SimpleDocTemplate(
             str(pdf_path),
             pagesize=LETTER,
@@ -198,7 +198,7 @@ class PdfReportGenerator(_ReportBase):
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _format_metric_display(metric: str, params: dict) -> str:
+    def _format_metric_display(metric: str, params: dict[str, Any]) -> str:
         """Return a human-readable label for a metric name + params."""
         _METRIC_NAMES: dict[str, str] = {
             "exact":           "Exact Match",
@@ -341,8 +341,8 @@ class PdfReportGenerator(_ReportBase):
     # Story builder - top-level orchestrator
     # ------------------------------------------------------------------
 
-    def _build_pdf_story(self, data: dict) -> list:
-        story: list = []
+    def _build_pdf_story(self, data: dict) -> list[Any]:
+        story: list[Any] = []
         story.extend(self._build_header(data))
         story.extend(self._build_summary(data))
         story.extend(self._build_perf_section(data))
@@ -373,7 +373,7 @@ class PdfReportGenerator(_ReportBase):
     # Section builders
     # ------------------------------------------------------------------
 
-    def _build_header(self, data: dict) -> list:
+    def _build_header(self, data: dict) -> list[Any]:
         rows = [
             [Paragraph("Valtron Evaluation Report", _STYLES["h1"])],
             [Paragraph("LLM Model Comparison Analysis", _STYLES["small"])],
@@ -392,8 +392,8 @@ class PdfReportGenerator(_ReportBase):
         ]))
         return [t, Spacer(1, 0.15 * inch)]
 
-    def _build_summary(self, data: dict) -> list:
-        elems: list = []
+    def _build_summary(self, data: dict) -> list[Any]:
+        elems: list[Any] = []
         elems.extend(self._section_heading("Summary"))
         elems.append(Paragraph(
             f"<b>Models Evaluated:</b> {data['num_models']}", _STYLES["body"]
@@ -406,14 +406,14 @@ class PdfReportGenerator(_ReportBase):
             elems.append(self._make_code_box(data["original_prompt"]))
         return elems
 
-    def _build_perf_section(self, data: dict) -> list:
-        elems: list = []
+    def _build_perf_section(self, data: dict) -> list[Any]:
+        elems: list[Any] = []
         elems.append(Spacer(1, 0.1 * inch))
         elems.extend(self._section_heading("Performance Metrics"))
         elems.extend(self._build_perf_table(data))
         return elems
 
-    def _build_perf_table(self, data: dict) -> list:
+    def _build_perf_table(self, data: dict) -> list[Any]:
         results          = data["results"]
         performance_best = data["performance_best"]
         performance_ranks = data["performance_ranks"]
@@ -439,7 +439,7 @@ class PdfReportGenerator(_ReportBase):
             # Add Optimizations column; shrink Model + Accuracy to stay at 7.0 in
             col_w = [1.0*inch, 0.65*inch, 0.80*inch, 0.85*inch, 0.9*inch, 0.85*inch, 0.9*inch, 1.05*inch]
 
-        base_style: list = [
+        base_style: list[Any] = [
             ("BACKGROUND",   (0, 0), (-1, 0),  C_TH_BG),
             ("GRID",         (0, 0), (-1, -1), 0.5, C_BORDER),
             ("LEFTPADDING",  (0, 0), (-1, -1), 6),
@@ -521,7 +521,7 @@ class PdfReportGenerator(_ReportBase):
         t = Table(table_data, colWidths=col_w, repeatRows=1)
         t.setStyle(TableStyle(base_style))
 
-        elems: list = [t, Spacer(1, 4)]
+        elems: list[Any] = [t, Spacer(1, 4)]
         elems.append(Paragraph("* See Appendix A for prompt references.", _STYLES["note"]))
         if use_rank:
             elems.append(Paragraph("† See Appendix B for metric definitions.", _STYLES["note"]))
@@ -538,8 +538,8 @@ class PdfReportGenerator(_ReportBase):
                 ))
         return elems
 
-    def _build_field_metrics(self, data: dict) -> list:
-        elems: list = []
+    def _build_field_metrics(self, data: dict) -> list[Any]:
+        elems: list[Any] = []
         elems.extend(self._section_heading("Per-Field Metrics"))
         elems.append(Paragraph(
             "Detailed accuracy metrics for individual fields in structured outputs. "
@@ -560,14 +560,14 @@ class PdfReportGenerator(_ReportBase):
             r_header  = "Average Recall of Subfields"   if is_agg else "Recall"
             f1_header = "Average F1 of Subfields"       if is_agg else "F1 Score"
 
-            block: list = [
+            block: list[Any] = [
                 Paragraph(f"Field: {_xml.escape(field_name)}", _STYLES["h3"]),
                 Paragraph(
                     f"Scored using: {_xml.escape(' / '.join(seen))}", _STYLES["field_note"]
                 ),
             ]
 
-            style_cmds: list = [
+            style_cmds: list[Any] = [
                 ("BACKGROUND",   (0, 0), (-1, 0),  C_TH_BG),
                 ("FONTNAME",     (0, 0), (-1, 0),  "Helvetica-Bold"),
                 ("FONTSIZE",     (0, 0), (-1, 0),  8),
@@ -615,11 +615,11 @@ class PdfReportGenerator(_ReportBase):
         ))
         return elems
 
-    def _build_recommendation(self, data: dict) -> list:
+    def _build_recommendation(self, data: dict) -> list[Any]:
         rec = data["recommendation"]
         if not rec:
             return []
-        elems: list = []
+        elems: list[Any] = []
         elems.extend(self._section_heading("AI-Powered Recommendation"))
         inner = Paragraph(
             _xml.escape(rec).replace("\n", "<br/>"), _STYLES["rec"]
@@ -636,7 +636,7 @@ class PdfReportGenerator(_ReportBase):
         elems.append(box)
         return elems
 
-    def _build_visual_analysis(self, data: dict) -> list:
+    def _build_visual_analysis(self, data: dict) -> list[Any]:
         chart_paths   = data["chart_paths"]
         has_fm        = data["has_field_metrics"]
         field_names   = data["all_field_names"]
@@ -649,7 +649,7 @@ class PdfReportGenerator(_ReportBase):
             (2, "Speed: Total Time by Model",    True),
         ]
 
-        elems: list = []
+        elems: list[Any] = []
         elems.extend(self._section_heading("Visual Analysis"))
 
         for idx, label, should_show in chart_config:
@@ -664,16 +664,16 @@ class PdfReportGenerator(_ReportBase):
 
         return elems
 
-    def _build_appendix_b(self, data: dict) -> list:
+    def _build_appendix_b(self, data: dict) -> list[Any]:
         use_rank = data["has_field_metrics"] and len(data["all_field_names"]) > 1
 
-        def _subhead(text: str) -> list:
+        def _subhead(text: str) -> list[Any]:
             return [
                 Paragraph(text, _STYLES["app_subhead"]),
                 HRFlowable(width="100%", thickness=0.5, color=C_BORDER, spaceAfter=6),
             ]
 
-        def _entry(title: str, tech_term: str | None, body: str) -> list:
+        def _entry(title: str, tech_term: str | None, body: str) -> list[Any]:
             heading = f"<b>{_xml.escape(title)}</b>"
             if tech_term:
                 heading += (
@@ -685,7 +685,7 @@ class PdfReportGenerator(_ReportBase):
                 Spacer(1, 10),
             ]
 
-        elems: list = [PageBreak()]
+        elems: list[Any] = [PageBreak()]
         elems.extend(self._section_heading("Appendix B: Metric Definitions"))
 
         elems.extend(_subhead("Performance Metrics"))
@@ -774,8 +774,8 @@ class PdfReportGenerator(_ReportBase):
         ))
         return elems
 
-    def _build_appendix_a(self, data: dict) -> list:
-        elems: list = [PageBreak()]
+    def _build_appendix_a(self, data: dict) -> list[Any]:
+        elems: list[Any] = [PageBreak()]
         elems.extend(self._section_heading("Appendix A: Prompts"))
 
         elems.append(Paragraph("<b>Base Prompt</b>", _STYLES["h4"]))
@@ -801,7 +801,7 @@ class PdfReportGenerator(_ReportBase):
     # Shared helpers
     # ------------------------------------------------------------------
 
-    def _section_heading(self, text: str) -> list:
+    def _section_heading(self, text: str) -> list[Any]:
         return [
             Paragraph(text, _STYLES["h2"]),
             HRFlowable(width="100%", thickness=0.5, color=C_BORDER, spaceAfter=8),

@@ -2,20 +2,24 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import litellm
-from litellm.utils import supports_pdf_input
 
 litellm.suppress_debug_info = True
-import requests
-from flask import Flask, jsonify, render_template, request, send_from_directory
-from flask_cors import CORS
+import requests  # type: ignore[import-untyped]
+from flask import Flask, Response, jsonify, render_template, request, send_from_directory
+from flask_cors import CORS  # type: ignore[import-untyped]
 
 app = Flask(__name__, template_folder="../templates")
 CORS(app)
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1 GB
 
-_all_models_cache: list[dict] | None = None
+_LITELLM_PRICES_URL = (
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+)
+_all_models_cache: list[str] | None = None
+_model_data_cache: dict[str, Any] | None = None
 
 _POPULAR_MODELS = [
     "gpt-5.3-chat-latest",
@@ -35,31 +39,57 @@ _POPULAR_MODELS = [
 ]
 
 
-def _build_model_entry(name: str) -> dict:
+def _load_model_data() -> dict[str, Any]:
+    """Fetch and cache the litellm prices JSON, falling back to an empty dict."""
+    global _model_data_cache, _all_models_cache
+    if _model_data_cache is not None:
+        return _model_data_cache
     try:
-        vision = litellm.supports_vision(name)
+        resp = requests.get(_LITELLM_PRICES_URL, timeout=10)
+        resp.raise_for_status()
+        data: dict[str, Any] = resp.json()
+        data.pop("sample_spec", None)
     except Exception:
-        vision = False
-    try:
-        pdf = supports_pdf_input(name)
-    except Exception:
-        pdf = False
+        data = {}
+    _model_data_cache = data
+    _all_models_cache = list(data.keys()) if data else list(litellm.model_list)
+    return _model_data_cache
+
+
+def _build_model_entry(name: str) -> dict[str, str | bool]:
+    data = _load_model_data()
+    info = data.get(name, {})
+    vision = bool(info.get("supports_vision", False))
+    pdf = bool(info.get("supports_pdf_input", False))
     return {"name": name, "supports_vision": vision, "supports_pdf": pdf}
 
 
-def get_all_models() -> list[dict]:
-    """Return all litellm models with vision/pdf support flags (cached)."""
+def get_all_models() -> list[str]:
+    """Return all model names (cached), fetched from the litellm prices JSON."""
     global _all_models_cache
     if _all_models_cache is not None:
         return _all_models_cache
-
-    models = [_build_model_entry(name) for name in litellm.model_list]
-    _all_models_cache = models
-    return models
+    _load_model_data()
+    return _all_models_cache or []
 
 
-def search_models(query: str, exclude: str = "", limit: int = 20) -> list[dict]:
-    """Return up to `limit` models matching `query`, excluding comma-separated names in `exclude`."""
+def _search_rank(name: str, query: str) -> int:
+    """Lower rank = higher priority in search results."""
+    lower = name.lower()
+    suffix = lower.split("/")[-1] if "/" in lower else lower
+    if lower == query:
+        return 0
+    if lower.startswith(query):
+        return 1
+    if suffix == query:
+        return 2
+    if suffix.startswith(query):
+        return 3
+    return 4
+
+
+def search_models(query: str, exclude: str = "", limit: int = 20) -> list[dict[str, str | bool]]:
+    """Return up to `limit` models matching `query`."""
     query = query.strip().lower()
     excluded = {e.strip() for e in exclude.split(",") if e.strip()}
     if not query:
@@ -69,12 +99,13 @@ def search_models(query: str, exclude: str = "", limit: int = 20) -> list[dict]:
                 results.append(_build_model_entry(name))
         return results[:limit]
 
-    all_models = get_all_models()
-    matches = [m for m in all_models if query in m["name"].lower() and m["name"] not in excluded]
-    return matches[:limit]
+    all_names = get_all_models()
+    matches = [n for n in all_names if query in n.lower() and n not in excluded]
+    matches.sort(key=lambda n: (_search_rank(n, query), n))
+    return [_build_model_entry(n) for n in matches[:limit]]
 
 
-def suggest_models(current_model: str) -> list[dict]:
+def suggest_models(current_model: str) -> list[dict[str, str | bool]]:
     """Suggest 3 models to test against, excluding the current model."""
     all_suggestions = [
         {"name": "gpt-5-mini", "is_simple": True},
@@ -103,13 +134,13 @@ def favicon() -> object:
 
 
 @app.route("/")
-def index():
+def index() -> str:
     """Render the configuration wizard."""
     return render_template("config_wizard.html")
 
 
 @app.route("/api/search-models", methods=["GET"])
-def api_search_models():
+def api_search_models() -> Response:
     """Search litellm models by query string. Returns up to 20 results."""
     query = request.args.get("q", "")
     exclude = request.args.get("exclude", "")
@@ -118,7 +149,7 @@ def api_search_models():
 
 
 @app.route("/api/suggest-models", methods=["POST"])
-def api_suggest_models():
+def api_suggest_models() -> Response:
     """API endpoint to get model suggestions."""
     data = request.json
     current_model = data.get("current_model", "")
@@ -129,7 +160,7 @@ def api_suggest_models():
 
 
 @app.route("/api/download-data", methods=["POST"])
-def api_download_data():
+def api_download_data() -> Response | tuple[Response, int]:
     """Download training data from URL and return it in memory."""
     data = request.json
     url = data.get("url", "")
@@ -181,7 +212,7 @@ def api_upload_data() -> tuple:
 
 
 @app.route("/api/analyze-data", methods=["POST"])
-def api_analyze_data():
+def api_analyze_data() -> Response | tuple[Response, int]:
     """Analyze training data to detect JSON labels and infer field metrics config."""
     payload = request.json
     inline_data = payload.get("data")
@@ -204,7 +235,11 @@ def api_analyze_data():
         if not isinstance(data_list, list) or not data_list:
             return jsonify({"is_json": False, "reason": "Empty or non-list data"})
 
-        first_label = data_list[0].get("label", "")
+        first_item = data_list[0]
+        first_content = first_item.get("content", "")
+        content_keys: list[str] = list(first_content.keys()) if isinstance(first_content, dict) else ["content"]
+
+        first_label = first_item.get("label", "")
         if isinstance(first_label, (dict, list)):
             first_label = json.dumps(first_label)
 
@@ -228,10 +263,10 @@ def api_analyze_data():
                 else:
                     response_format_preview = "class ResponseModel(BaseModel):\n    label: str"
                     enum_values = []
-            label_property: dict = {"type": "string", "description": "Predicted class label"}
+            label_property: dict[str, Any] = {"type": "string", "description": "Predicted class label"}
             if enum_values:
                 label_property["enum"] = enum_values
-            string_label_schema: dict = {
+            string_label_schema: dict[str, Any] = {
                 "type": "object",
                 "title": "ResponseModel",
                 "properties": {"label": label_property},
@@ -250,6 +285,7 @@ def api_analyze_data():
                     "enum_values": enum_values,
                     "response_format_preview": response_format_preview,
                     "response_format_schema": response_format_schema,
+                    "content_keys": content_keys,
                 }
             )
 
@@ -281,7 +317,7 @@ def api_analyze_data():
                 return "list[str]"
             return "str"
 
-        def _json_schema_from_value(value: object, title: str) -> dict:
+        def _json_schema_from_value(value: object, title: str) -> dict[str, Any]:
             if isinstance(value, bool):
                 return {"type": "boolean"}
             if isinstance(value, int):
@@ -335,6 +371,7 @@ def api_analyze_data():
                 "enum_values": [],
                 "response_format_preview": response_format_preview,
                 "response_format_schema": response_format_schema,
+                "content_keys": content_keys,
             }
         )
 
@@ -349,7 +386,7 @@ def api_cwd() -> tuple:
 
 
 @app.route("/api/save-config", methods=["POST"])
-def api_save_config():
+def api_save_config() -> Response:
     """Save the generated configuration to a file."""
     data = request.json
     config = data.get("config", {})
@@ -366,7 +403,7 @@ def api_save_config():
     return jsonify({"success": True, "path": str(config_path)})
 
 
-def start_wizard(host="0.0.0.0", port=5000):
+def start_wizard(host: str = "0.0.0.0", port: int = 5000) -> None:
     """Start the configuration wizard server."""
     print(f"\n{'=' * 80}")
     print("CONFIGURATION WIZARD")

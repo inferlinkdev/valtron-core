@@ -165,7 +165,7 @@ class PromptEvaluator:
 
     def _build_message_content(
         self, prompt: str, document: Document, model: str
-    ) -> str | list[dict]:
+    ) -> str | list[dict[str, str]]:
         """
         Build the user message content, adding attachment parts when present.
 
@@ -185,7 +185,7 @@ class PromptEvaluator:
         import base64
         import litellm
 
-        parts: list[dict] = [{"type": "text", "text": prompt}]
+        parts: list[dict[str, str]] = [{"type": "text", "text": prompt}]
 
         for s in document.attachments:
             try:
@@ -284,7 +284,7 @@ class PromptEvaluator:
         max_tokens: int | None = None,
         response_format: type[BaseModel] | None = None,
         field_metrics_config: FieldMetricsConfig | None = None,
-        post_extraction_filter: Callable | None = None,
+        post_extraction_filter: Callable[[Any, Document], Any] | None = None,
         multi_pass: int = 1,
     ) -> PredictionResult:
         """
@@ -321,7 +321,7 @@ class PromptEvaluator:
             if multi_pass > 1:
                 temperatures = [0.0, 0.3]
 
-                async def _single_pass(temp: float):
+                async def _single_pass(temp: float) -> ModelResponse | AsyncIterator[ModelResponse]:
                     return await self.client.complete(
                         model=model,
                         messages=messages,
@@ -395,10 +395,20 @@ class PromptEvaluator:
                         custom_aggs=field_metrics_config.custom_aggs,
                     )
                     expected_for_eval = label.value
+
+                    if isinstance(document.content, dict):
+                        doc_vars: dict[str, Any] = {
+                            f"example_{k}": v for k, v in document.content.items()
+                        }
+                    else:
+                        doc_vars = {"example_content": document.content}
+                    extra_template_vars = {"prompt_used": prompt, **doc_vars}
+
                     result = evaluator.evaluate(
                         field_metrics_config.config,
                         expected_for_eval,
                         predicted_value,
+                        extra_template_vars=extra_template_vars,
                     )
 
                     field_metrics = result
@@ -456,7 +466,7 @@ class PromptEvaluator:
         max_concurrent: int = 5,
         response_format: type[BaseModel] | None = None,
         field_metrics_config: FieldMetricsConfig | None = None,
-        post_extraction_filter: Callable | None = None,
+        post_extraction_filter: Callable[[Any, Document], Any] | None = None,
         multi_pass: int = 1,
         on_document_complete: Callable[["PredictionResult"], None] | None = None,
     ) -> EvaluationResult:

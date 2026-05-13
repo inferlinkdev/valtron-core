@@ -1002,3 +1002,102 @@ class TestExpensiveListGuardInEval:
             MockComp.return_value.compare.return_value = True
             result = evaluator.evaluate(config, {"tags": ["a"]}, {"tags": ["a"]})
         assert result is not None
+
+
+class TestLLMPromptTemplate:
+    """Tests for llm_prompt_template and extra_template_vars plumbing."""
+
+    def test_comparator_metric_passes_template_vars_to_comparator(self):
+        """_template_vars from params are forwarded to Comparator as llm_prompt_extra_vars."""
+        params = {
+            "element_compare": "llm",
+            "llm_prompt_template": "Does '{predicted}' equal '{expected}'? YES or NO.",
+            "_template_vars": {"prompt_used": "Extract city.", "example_content": "Paris is in France."},
+        }
+
+        with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
+            MockComp.return_value.compare.return_value = True
+            comparator_metric("Paris", "Paris", params)
+
+        _, kwargs = MockComp.call_args
+        assert kwargs["llm_prompt_template"] == params["llm_prompt_template"]
+        assert kwargs["llm_prompt_extra_vars"] == params["_template_vars"]
+
+    def test_comparator_metric_no_template_vars_passes_none(self):
+        """When _template_vars is absent, llm_prompt_extra_vars is None."""
+        params = {"element_compare": "llm"}
+
+        with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
+            MockComp.return_value.compare.return_value = True
+            comparator_metric("a", "a", params)
+
+        _, kwargs = MockComp.call_args
+        assert kwargs["llm_prompt_extra_vars"] is None
+
+    def test_extra_template_vars_flow_through_evaluate(self):
+        """extra_template_vars passed to evaluate() reach comparator_metric via _template_vars."""
+        config = {
+            "type": "object",
+            "fields": {
+                "city": {
+                    "metric_config": {
+                        "metric": "comparator",
+                        "params": {
+                            "element_compare": "llm",
+                            "llm_prompt_template": "Prompt: {prompt_used} '{predicted}' vs '{expected}'? YES or NO.",
+                        },
+                    }
+                }
+            },
+        }
+        extra_vars = {"prompt_used": "Extract the city.", "example_content": "doc text"}
+        evaluator = JsonEvaluator()
+
+        with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
+            MockComp.return_value.compare.return_value = True
+            evaluator.evaluate(
+                config,
+                {"city": "Paris"},
+                {"city": "Paris"},
+                extra_template_vars=extra_vars,
+            )
+
+        _, kwargs = MockComp.call_args
+        assert kwargs["llm_prompt_extra_vars"] == extra_vars
+
+    def test_extra_template_vars_not_stored_in_eval_result_params(self):
+        """_template_vars must not bleed into EvalResult.params."""
+        config = {
+            "type": "object",
+            "fields": {
+                "city": {
+                    "metric_config": {
+                        "metric": "comparator",
+                        "params": {"element_compare": "llm"},
+                    }
+                }
+            },
+        }
+        evaluator = JsonEvaluator()
+
+        with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
+            MockComp.return_value.compare.return_value = True
+            result = evaluator.evaluate(
+                config,
+                {"city": "Paris"},
+                {"city": "Paris"},
+                extra_template_vars={"prompt_used": "some prompt"},
+            )
+
+        city_result = result.children["city"]
+        assert "_template_vars" not in (city_result.params or {})
+
+    def test_evaluate_without_extra_template_vars_still_works(self):
+        """evaluate() with no extra_template_vars arg is backward compatible."""
+        config = {
+            "type": "object",
+            "fields": {"name": {"metric_config": {"metric": "exact"}}},
+        }
+        evaluator = JsonEvaluator()
+        result = evaluator.evaluate(config, {"name": "John"}, {"name": "John"})
+        assert result.children["name"].is_correct is True

@@ -57,7 +57,7 @@ class BaseRecipe(ABC):
         """
         self._check_unique_model_labels()
         field_metrics_config = self._get_field_metrics_config()
-        self.runner._preflight_check(field_metrics_config, len(self.data), len(self.models))
+        self.runner._preflight_check(field_metrics_config, len(self.data), len(self.models), self.models)
 
     def _check_unique_model_labels(self) -> None:
         labels = [m.label or m.name for m in self.models]

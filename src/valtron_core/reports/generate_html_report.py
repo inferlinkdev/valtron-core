@@ -19,6 +19,7 @@ class HtmlReportGenerator(_ReportBase):
         self,
         results: list[EvaluationResult],
         use_case: str = "general purpose",
+        recommendation_model: str = "gpt-4o",
     ) -> str | None:
         """Generate LLM-powered recommendation for best model."""
         metrics_summary = []
@@ -50,13 +51,13 @@ Based on these metrics, provide:
 3. Secondary recommendation if speed is a critical factor
 4. Warning if the highest accuracy model is significantly more expensive
 
-Keep your response concise and actionable (3-4 paragraphs maximum)."""
+Format your response as Markdown using headers, bullet points, and bold text where appropriate. Keep your response concise and actionable (3-4 paragraphs maximum)."""
 
         messages = [{"role": "user", "content": prompt}]
 
         try:
             response = self.client.complete_sync(
-                model="gpt-4o",
+                model=recommendation_model,
                 messages=messages,
                 temperature=0.0,
             )
@@ -306,15 +307,15 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
 
         return None
 
-    def _create_html_template(self):
+    def _create_html_template(self) -> Any:
         """Load Jinja2 HTML template for report."""
         return _jinja_env.get_template("evaluation_report.jinja2.html")
 
-    def _create_detailed_analysis_template(self):
+    def _create_detailed_analysis_template(self) -> Any:
         """Load Jinja2 HTML template for detailed analysis page."""
         return _jinja_env.get_template("detailed_analysis.jinja2.html")
 
-    def _fetch_favicon(self):
+    def _fetch_favicon(self) -> Path:
         """Load HTML favicon for html report."""
         return Path(TEMPLATES_DIR / "favicon.svg")
 
@@ -324,6 +325,7 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
         output_path: str | Path,
         use_case: str = "general purpose",
         include_recommendation: bool = True,
+        recommendation_model: str = "gpt-4o",
         prompt_optimizations: dict[str, list[str]] | None = None,
         model_prompts: dict[str, str] | None = None,
         model_override_prompts: dict[str, str] | None = None,
@@ -347,7 +349,7 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
         recommendation = None
         recommended_model = None
         if include_recommendation:
-            recommendation = self.generate_recommendation(results, use_case)
+            recommendation = self.generate_recommendation(results, use_case, recommendation_model)
             recommended_model = self._extract_recommended_model(recommendation, results)
 
         num_documents = 0
@@ -358,7 +360,7 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
         elif results and results[0].metrics:
             num_documents = results[0].metrics.total_documents
 
-        all_field_names = set()
+        all_field_names: set[str] = set()
         has_field_metrics = False
         for result in results:
             if result.metrics and result.metrics.aggregated_field_metrics:

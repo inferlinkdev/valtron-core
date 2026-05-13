@@ -333,5 +333,5 @@ class EvaluationResult(BaseModel):
 
 class FieldMetricsConfig(BaseModel):
     config: dict[str, Any]
-    custom_metrics: dict[str, Callable] = Field(default_factory=dict)
-    custom_aggs: dict[str, Callable] = Field(default_factory=dict)
+    custom_metrics: dict[str, Callable[[Any, Any, dict[str, Any]], tuple[float, bool]]] = Field(default_factory=dict)
+    custom_aggs: dict[str, Callable[[list[EvalResult]], float]] = Field(default_factory=dict)

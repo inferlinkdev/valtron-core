@@ -621,3 +621,100 @@ class TestPrintMethods:
 
         # Should not raise
         runner._print_summary_table(sample_evaluation_results, show_field_metrics=True)
+
+
+class TestCheckApiKeys:
+    """Tests for EvaluationRunner._check_api_keys and its integration into _preflight_check."""
+
+    @pytest.mark.unit
+    def test_missing_key_raises(self, mock_llm_client):
+        runner = EvaluationRunner(client=mock_llm_client)
+        with patch(
+            "valtron_core.runner.litellm.validate_environment",
+            return_value={"keys_in_environment": False, "missing_keys": ["OPENAI_API_KEY"]},
+        ):
+            with pytest.raises(ValueError, match="missing API key"):
+                runner._check_api_keys(["gpt-4o-mini"])
+
+    @pytest.mark.unit
+    def test_present_key_passes(self, mock_llm_client):
+        runner = EvaluationRunner(client=mock_llm_client)
+        with patch(
+            "valtron_core.runner.litellm.validate_environment",
+            return_value={"keys_in_environment": True, "missing_keys": []},
+        ):
+            runner._check_api_keys(["gpt-4o-mini"])  # should not raise
+
+    @pytest.mark.unit
+    def test_model_dict_with_explicit_api_key_skipped(self, mock_llm_client):
+        runner = EvaluationRunner(client=mock_llm_client)
+        with patch(
+            "valtron_core.runner.litellm.validate_environment",
+            return_value={"keys_in_environment": False, "missing_keys": ["OPENAI_API_KEY"]},
+        ) as mock_env:
+            runner._check_api_keys([{"model": "gpt-4o-mini", "api_key": "sk-test"}])
+            mock_env.assert_not_called()
+
+    @pytest.mark.unit
+    def test_model_dict_with_api_base_skipped(self, mock_llm_client):
+        runner = EvaluationRunner(client=mock_llm_client)
+        with patch(
+            "valtron_core.runner.litellm.validate_environment",
+            return_value={"keys_in_environment": False, "missing_keys": ["OPENAI_API_KEY"]},
+        ) as mock_env:
+            runner._check_api_keys([{"model": "gpt-4o-mini", "api_base": "http://localhost:11434"}])
+            mock_env.assert_not_called()
+
+    @pytest.mark.unit
+    def test_transformer_model_skipped(self, mock_llm_client):
+        runner = EvaluationRunner(client=mock_llm_client)
+
+        class FakeTransformer:
+            type = "transformer"
+
+        with patch(
+            "valtron_core.runner.litellm.validate_environment",
+            return_value={"keys_in_environment": False, "missing_keys": ["OPENAI_API_KEY"]},
+        ) as mock_env:
+            runner._check_api_keys([FakeTransformer()])
+            mock_env.assert_not_called()
+
+    @pytest.mark.unit
+    def test_unknown_model_exception_is_ignored(self, mock_llm_client):
+        runner = EvaluationRunner(client=mock_llm_client)
+        with patch(
+            "valtron_core.runner.litellm.validate_environment",
+            side_effect=Exception("unknown model"),
+        ):
+            runner._check_api_keys(["totally-unknown-model"])  # should not raise
+
+    @pytest.mark.unit
+    def test_multiple_models_all_missing_reported(self, mock_llm_client):
+        runner = EvaluationRunner(client=mock_llm_client)
+
+        def fake_validate(model):
+            return {
+                "gpt-4o": {"keys_in_environment": False, "missing_keys": ["OPENAI_API_KEY"]},
+                "claude-sonnet-4-6": {"keys_in_environment": False, "missing_keys": ["ANTHROPIC_API_KEY"]},
+            }.get(model, {"keys_in_environment": True, "missing_keys": []})
+
+        with patch("valtron_core.runner.litellm.validate_environment", side_effect=fake_validate):
+            with pytest.raises(ValueError) as exc_info:
+                runner._check_api_keys(["gpt-4o", "claude-sonnet-4-6"])
+        msg = str(exc_info.value)
+        assert "gpt-4o" in msg
+        assert "claude-sonnet-4-6" in msg
+
+    @pytest.mark.unit
+    def test_preflight_check_calls_key_check_when_models_provided(self, mock_llm_client):
+        runner = EvaluationRunner(client=mock_llm_client)
+        with patch.object(runner, "_check_api_keys") as mock_check:
+            runner._preflight_check(None, 10, 1, ["gpt-4o-mini"])
+            mock_check.assert_called_once_with(["gpt-4o-mini"])
+
+    @pytest.mark.unit
+    def test_preflight_check_skips_key_check_when_no_models(self, mock_llm_client):
+        runner = EvaluationRunner(client=mock_llm_client)
+        with patch.object(runner, "_check_api_keys") as mock_check:
+            runner._preflight_check(None, 10, 1)
+            mock_check.assert_not_called()

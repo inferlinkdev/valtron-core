@@ -531,10 +531,10 @@ class CodeIntrospector:
             tree = ast.parse(content)
 
             class CallCollector(ast.NodeVisitor):
-                def __init__(self):
+                def __init__(self) -> None:
                     self.tree = tree  # Store tree for later use
 
-                def visit_Call(self, node):
+                def visit_Call(self, node: ast.Call) -> None:
                     if node.lineno not in line_to_calls:
                         line_to_calls[node.lineno] = []
                     line_to_calls[node.lineno].append(node)
@@ -601,17 +601,16 @@ class CodeIntrospector:
             tree = ast.parse(content)
 
             class CallVisitor(ast.NodeVisitor):
-                def __init__(self):
-                    self.calls = []  # Store (line_num, func_name, node)
+                def __init__(self) -> None:
+                    self.calls: list[tuple[int, str, ast.Call]] = []
 
-                def visit_Call(self, node):
-                    # Extract function name from various call patterns
+                def visit_Call(self, node: ast.Call) -> None:
                     func_name = self._get_full_name(node.func)
                     if func_name:
                         self.calls.append((node.lineno, func_name, node))
                     self.generic_visit(node)
 
-                def _get_full_name(self, node):
+                def _get_full_name(self, node: ast.expr) -> str | None:
                     """Get full dotted name from AST node."""
                     if isinstance(node, ast.Name):
                         return node.id
@@ -851,7 +850,7 @@ class CodeIntrospector:
 
         for key, value in zip(node.keys, node.values):
             if isinstance(key, ast.Constant):
-                if key.value == "role" and isinstance(value, ast.Constant):
+                if key.value == "role" and isinstance(value, ast.Constant) and isinstance(value.value, str):
                     role = value.value
                 elif key.value == "content":
                     extracted = self._extract_value_from_node(value, content, tree, call_line)
@@ -877,11 +876,11 @@ class CodeIntrospector:
             The string value if found, None otherwise
         """
         class VarFinder(ast.NodeVisitor):
-            def __init__(self):
-                self.value = None
+            def __init__(self) -> None:
+                self.value: str | None = None
                 self.found = False
 
-            def visit_Assign(self, node):
+            def visit_Assign(self, node: ast.Assign) -> None:
                 if self.found or node.lineno >= before_line:
                     return
 

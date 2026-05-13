@@ -1,15 +1,7 @@
 name: Release
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "src/**"
-      - "tests/**"
-      - "pyproject.toml"
-      - "poetry.lock"
-      - "pytest.ini"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
