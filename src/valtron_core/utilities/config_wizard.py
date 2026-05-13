@@ -4,7 +4,6 @@ import json
 from pathlib import Path
 
 import litellm
-from litellm.utils import supports_pdf_input
 
 litellm.suppress_debug_info = True
 import requests
@@ -15,7 +14,11 @@ app = Flask(__name__, template_folder="../templates")
 CORS(app)
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1 GB
 
-_all_models_cache: list[dict] | None = None
+_LITELLM_PRICES_URL = (
+    "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json"
+)
+_all_models_cache: list[str] | None = None
+_model_data_cache: dict | None = None
 
 _POPULAR_MODELS = [
     "gpt-5.3-chat-latest",
@@ -35,31 +38,57 @@ _POPULAR_MODELS = [
 ]
 
 
+def _load_model_data() -> dict:
+    """Fetch and cache the litellm prices JSON, falling back to an empty dict."""
+    global _model_data_cache, _all_models_cache
+    if _model_data_cache is not None:
+        return _model_data_cache
+    try:
+        resp = requests.get(_LITELLM_PRICES_URL, timeout=10)
+        resp.raise_for_status()
+        data: dict = resp.json()
+        data.pop("sample_spec", None)
+    except Exception:
+        data = {}
+    _model_data_cache = data
+    _all_models_cache = list(data.keys()) if data else list(litellm.model_list)
+    return _model_data_cache
+
+
 def _build_model_entry(name: str) -> dict:
-    try:
-        vision = litellm.supports_vision(name)
-    except Exception:
-        vision = False
-    try:
-        pdf = supports_pdf_input(name)
-    except Exception:
-        pdf = False
+    data = _load_model_data()
+    info = data.get(name, {})
+    vision = bool(info.get("supports_vision", False))
+    pdf = bool(info.get("supports_pdf_input", False))
     return {"name": name, "supports_vision": vision, "supports_pdf": pdf}
 
 
-def get_all_models() -> list[dict]:
-    """Return all litellm models with vision/pdf support flags (cached)."""
+def get_all_models() -> list[str]:
+    """Return all model names (cached), fetched from the litellm prices JSON."""
     global _all_models_cache
     if _all_models_cache is not None:
         return _all_models_cache
+    _load_model_data()
+    return _all_models_cache or []
 
-    models = [_build_model_entry(name) for name in litellm.model_list]
-    _all_models_cache = models
-    return models
+
+def _search_rank(name: str, query: str) -> int:
+    """Lower rank = higher priority in search results."""
+    lower = name.lower()
+    suffix = lower.split("/")[-1] if "/" in lower else lower
+    if lower == query:
+        return 0
+    if lower.startswith(query):
+        return 1
+    if suffix == query:
+        return 2
+    if suffix.startswith(query):
+        return 3
+    return 4
 
 
 def search_models(query: str, exclude: str = "", limit: int = 20) -> list[dict]:
-    """Return up to `limit` models matching `query`, excluding comma-separated names in `exclude`."""
+    """Return up to `limit` models matching `query`."""
     query = query.strip().lower()
     excluded = {e.strip() for e in exclude.split(",") if e.strip()}
     if not query:
@@ -69,9 +98,10 @@ def search_models(query: str, exclude: str = "", limit: int = 20) -> list[dict]:
                 results.append(_build_model_entry(name))
         return results[:limit]
 
-    all_models = get_all_models()
-    matches = [m for m in all_models if query in m["name"].lower() and m["name"] not in excluded]
-    return matches[:limit]
+    all_names = get_all_models()
+    matches = [n for n in all_names if query in n.lower() and n not in excluded]
+    matches.sort(key=lambda n: (_search_rank(n, query), n))
+    return [_build_model_entry(n) for n in matches[:limit]]
 
 
 def suggest_models(current_model: str) -> list[dict]:
