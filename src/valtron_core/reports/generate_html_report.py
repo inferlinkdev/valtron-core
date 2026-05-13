@@ -19,6 +19,7 @@ class HtmlReportGenerator(_ReportBase):
         self,
         results: list[EvaluationResult],
         use_case: str = "general purpose",
+        recommendation_model: str = "gpt-4o",
     ) -> str | None:
         """Generate LLM-powered recommendation for best model."""
         metrics_summary = []
@@ -50,13 +51,13 @@ Based on these metrics, provide:
 3. Secondary recommendation if speed is a critical factor
 4. Warning if the highest accuracy model is significantly more expensive
 
-Keep your response concise and actionable (3-4 paragraphs maximum)."""
+Format your response as Markdown using headers, bullet points, and bold text where appropriate. Keep your response concise and actionable (3-4 paragraphs maximum)."""
 
         messages = [{"role": "user", "content": prompt}]
 
         try:
             response = self.client.complete_sync(
-                model="gpt-4o",
+                model=recommendation_model,
                 messages=messages,
                 temperature=0.0,
             )
@@ -324,6 +325,7 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
         output_path: str | Path,
         use_case: str = "general purpose",
         include_recommendation: bool = True,
+        recommendation_model: str = "gpt-4o",
         prompt_optimizations: dict[str, list[str]] | None = None,
         model_prompts: dict[str, str] | None = None,
         model_override_prompts: dict[str, str] | None = None,
@@ -347,7 +349,7 @@ Keep your response concise and actionable (3-4 paragraphs maximum)."""
         recommendation = None
         recommended_model = None
         if include_recommendation:
-            recommendation = self.generate_recommendation(results, use_case)
+            recommendation = self.generate_recommendation(results, use_case, recommendation_model)
             recommended_model = self._extract_recommended_model(recommendation, results)
 
         num_documents = 0
