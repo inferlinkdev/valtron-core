@@ -1245,7 +1245,7 @@ function metricValToConfig(metricVal, ctrlEl) {
         const llmModel = ctrlEl?.querySelector('.row-llm-model')?.value?.trim() || 'gpt-4o-mini';
         const promptRaw = ctrlEl?.querySelector('.row-llm-prompt')?.value?.trim() || '';
         const params = { element_compare: 'llm', llm_model: llmModel };
-        if (promptRaw && promptRaw !== DEFAULT_LLM_PROMPT) {
+        if (promptRaw) {
             params.llm_prompt_template = promptRaw;
         }
         return { metric: 'comparator', params, propagation: 'weighted_avg' };
