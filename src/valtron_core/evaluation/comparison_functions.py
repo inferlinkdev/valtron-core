@@ -20,10 +20,6 @@ from rapidfuzz import fuzz
 ElementCompareType = Literal["exact", "text_similarity", "llm", "embedding"]
 TextSimilarityMetric = Literal["fuzz_ratio", "bleu", "gleu", "cosine"]
 
-# Maximum list length for expensive comparisons (embedding, llm)
-# With N×M comparisons, 10 elements = 100 API calls max
-MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE = 10
-
 
 <<<<<<< HEAD
 MetricCategory = Literal["local", "llm", "embedding"]
