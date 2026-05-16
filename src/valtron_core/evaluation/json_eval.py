@@ -4,25 +4,37 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from concurrent.futures import ThreadPoolExecutor
 import json
 import copy
-import logging
-import os
+import warnings
 
-import litellm
-from litellm import completion
-
-from valtron_core.evaluation.comparison_functions import (
-    Comparator,
-    MetricCategory,
-    element_compare_category,
-    element_compare_uses_third_party,
+from valtron_core.evaluation.comparison_functions import Comparator, element_compare_uses_third_party
+from valtron_core.evaluation.comparisons import (
+    _embedding_compare,
+    _exact_compare,
+    _llm_compare,
+    _text_similarity_compare,
 )
-
-logger = logging.getLogger(__name__)
 
 MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE = 4
 DEFAULT_LLM_ALIGNER_MODEL = "gpt-4o-mini"
 
+
+def _score_to_result(result: bool | float, params: dict[str, Any]) -> tuple[float, bool]:
+    """Convert a comparison function's return value to a (score, is_correct) tuple."""
+    if isinstance(result, bool):
+        return (1.0 if result else 0.0), result
+    threshold = params.get("comparison_threshold") or params.get("threshold")
+    if threshold is not None:
+        return result, result >= float(threshold)
+    return result, True
+
+
 def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
+    warnings.warn(
+        "The 'comparator' metric is deprecated; use 'exact_compare', 'text_similarity', "
+        "'llm', or 'embedding' metrics directly instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     comp = Comparator(
         element_compare=params.get("element_compare", "exact"),
         text_similarity_threshold=params.get("text_similarity_threshold", None),
@@ -123,7 +135,12 @@ class ExpensiveListComparisonError(Exception):
 # metric, add a branch there and declare whether it calls a 3rd-party API.
 # Omitting it raises NotImplementedError at pre-flight time.
 
-_BUILTIN_METRIC_NAMES: frozenset[str] = frozenset({"exact", "threshold", "comparator"})
+_BUILTIN_METRIC_NAMES: frozenset[str] = frozenset({
+    # legacy (deprecated)
+    "exact", "threshold", "comparator",
+    # standalone metrics
+    "exact_compare", "text_similarity", "llm", "embedding",
+})
 
 
 def _check_builtin_metric_category(
@@ -142,13 +159,18 @@ def _check_builtin_metric_category(
     :param params: The metric's params dict.
     :return: A ``(category, description)`` tuple.
     """
-    if metric_name in ("exact", "threshold"):
+    if metric_name in ("exact", "threshold", "exact_compare", "text_similarity"):
         return "local", ""
 
     if metric_name == "comparator":
         element_compare = params.get("element_compare", "exact")
         return element_compare_category(element_compare, params)
 
+    if metric_name == "llm":
+        return "llm"
+    
+    if metric_name == "embedding":
+        return "embedding"
     raise NotImplementedError(
         f"Built-in metric '{metric_name}' has no category declaration.\n"
         "When adding a new metric to JsonEvaluator.metric_registry you MUST:\n"
@@ -279,9 +301,14 @@ def _find_expensive_lists_recursive(
 def _collect_llm_models_recursive(config: "FieldConfig") -> set[str]:
     models: set[str] = set()
     if config.type == "leaf" and config.metric_config is not None:
-        params: dict[str, Any] = getattr(config.metric_config, "params", {})
+        mc = config.metric_config
+        params: dict[str, Any] = getattr(mc, "params", {})
+        # Legacy: comparator metric with element_compare="llm"
         if params.get("element_compare") == "llm":
             models.add(params.get("llm_model", "gpt-4o-mini"))
+        # New: llm metric registered directly
+        if getattr(mc, "metric", None) == "llm":
+            models.add(params.get("model", "gpt-4o-mini"))
     elif config.type == "object" and config.fields:
         for fc in config.fields.values():
             models.update(_collect_llm_models_recursive(fc))
@@ -397,9 +424,47 @@ class JsonEvaluator:
 
         # Metric Registry: (expected, actual, params) -> tuple[float, bool]:
         self.metric_registry = {
+            # legacy (deprecated) metrics
             "exact": lambda e, a, p: 1.0 if e == a else 0.0,
             "threshold": lambda e, a, p: 1.0 if (a or 0) >= p.get("min", 0) else 0.0,
             "comparator": comparator_metric,
+            # standalone metrics -- register by strategy name directly
+            "exact_compare": lambda e, a, p: _score_to_result(
+                _exact_compare(
+                    str(e), str(a),
+                    case_sensitive=p.get("case_sensitive", False),
+                    ignore_spaces=p.get("ignore_spaces", False),
+                ),
+                p,
+            ),
+            "text_similarity": lambda e, a, p: _score_to_result(
+                _text_similarity_compare(
+                    str(e), str(a),
+                    metric=p.get("metric", "fuzz_ratio"),
+                    threshold=p.get("threshold"),
+                    case_sensitive=p.get("case_sensitive", False),
+                    ignore_spaces=p.get("ignore_spaces", False),
+                    embedding_model=p.get("embedding_model", "text-embedding-3-small"),
+                ),
+                p,
+            ),
+            "llm": lambda e, a, p: _score_to_result(
+                _llm_compare(
+                    str(e), str(a),
+                    model=p.get("model", "gpt-4o-mini"),
+                    prompt_template=p.get("prompt_template"),
+                    prompt_extra_vars=p.get("_template_vars"),
+                ),
+                p,
+            ),
+            "embedding": lambda e, a, p: _score_to_result(
+                _embedding_compare(
+                    str(e), str(a),
+                    model=p.get("model", "text-embedding-3-small"),
+                    threshold=p.get("threshold"),
+                ),
+                p,
+            ),
         }
         if custom_metrics:
             self.metric_registry.update(custom_metrics)
