@@ -1077,7 +1077,6 @@ class ModelEval(BaseRecipe):
         def _on_doc(pred: PredictionResult) -> None:
             running_cost[0] += pred.cost
             shared_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
-            shared_bar.update(1)
 
         async def _evaluate_single_model(
             index: int, model_config: Any
