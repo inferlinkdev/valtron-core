@@ -470,7 +470,10 @@ class ModelEval(BaseRecipe):
         if response_format_schema:
             instance._response_format_schema = response_format_schema
 
-        label_map = {str(d.get("id", "")): str(d.get("label", "")) for d in data}
+        label_map = {
+            str(d.get("id", "")): json.dumps(d["label"]) if isinstance(d.get("label"), (dict, list)) else str(d.get("label", ""))
+            for d in data
+        }
 
         results: list[EvaluationResult] = []
         model_prompts: dict[str, str] = {}
