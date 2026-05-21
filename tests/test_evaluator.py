@@ -215,6 +215,24 @@ class TestPromptEvaluator:
         result = evaluator._format_prompt(template, doc)
         assert result == "Text: Hello."
 
+    def test_format_prompt_dict_none_value_becomes_empty_string(self, mock_env_vars: dict[str, str]) -> None:
+        """A None value in dict content is substituted as an empty string."""
+        evaluator = PromptEvaluator()
+        template = "Text: {text} Topic: {topic}"
+        doc = Document(id="4", content={"text": "Some text.", "topic": None})
+
+        result = evaluator._format_prompt(template, doc)
+        assert result == "Text: Some text. Topic: "
+
+    def test_format_prompt_dict_all_none_values(self, mock_env_vars: dict[str, str]) -> None:
+        """All None values in dict content are substituted as empty strings."""
+        evaluator = PromptEvaluator()
+        template = "{a} {b}"
+        doc = Document(id="5", content={"a": None, "b": None})
+
+        result = evaluator._format_prompt(template, doc)
+        assert result == " "
+
 
 class TestEvaluateSinglePlainTextWrapping:
     """evaluate_single scores plain-text labels directly without JSON wrapping.
