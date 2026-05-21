@@ -338,7 +338,8 @@ class ModelEval(BaseRecipe):
             for manip in getattr(mc, "prompt_manipulation", [])
             if manip in STRUCTURED_MANIPULATIONS
         ]
-        if structured_requested and self.response_format is None:
+        has_schema = self.response_format is not None or self.config.response_format_schema is not None
+        if structured_requested and not has_schema:
             bad_models = sorted({name for name, _ in structured_requested})
             bad_manips = sorted({manip.value for _, manip in structured_requested})
             raise ValueError(

@@ -776,11 +776,31 @@ class TestAddModels:
             )
 
     def test_add_structured_manip_without_response_format_raises(self):
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
+        config_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
+        eval_ = ModelEval(config=config_no_schema, data=[{"content": "T", "label": "pos"}])
         with pytest.raises(ValueError, match="response_format"):
             eval_.add_models(
                 [{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}]
             )
+
+    def test_add_structured_manip_allowed_with_config_response_format_schema(self):
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
+        eval_.add_models(
+            [{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}]
+        )
+        assert eval_.models[-1].label == "new"
+
+    def test_add_structured_manip_allowed_with_pydantic_response_format(self):
+        config_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
+        eval_ = ModelEval(
+            config=config_no_schema,
+            data=[{"content": "T", "label": "pos"}],
+            response_format=SampleSchema,
+        )
+        eval_.add_models(
+            [{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}]
+        )
+        assert eval_.models[-1].label == "new"
 
     def test_add_updates_config_models(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
