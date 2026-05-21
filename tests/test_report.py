@@ -1,13 +1,8 @@
 """Tests for the ReportGenerator module."""
 
-import json
-from pathlib import Path
 from unittest.mock import Mock, patch
 
-import pytest
-
 from valtron_core.models import (
-    Document,
     EvaluationResult,
     EvaluationMetrics,
     PredictionResult,
@@ -56,7 +51,7 @@ class TestGenerateRecommendation:
             use_case="sentiment classification",
         )
 
-        assert "gpt-3.5-turbo" in recommendation or "recommended" in recommendation.lower()
+        assert "gpt-3.5-turbo" in str(recommendation) or "recommended" in str(recommendation).lower()
         mock_llm_client.complete_sync.assert_called_once()
 
     def test_generate_recommendation_with_custom_use_case(
@@ -535,6 +530,30 @@ class TestGeneratePdfReport:
             results=sample_evaluation_results,
             output_path=tmp_path / "report",
             prompt_optimizations={"gpt-3.5-turbo": ["few_shot", "explanation"]},
+        )
+
+        assert pdf_path.exists()
+        assert pdf_path.read_bytes()[:4] == b"%PDF"
+
+    def test_generate_pdf_report_with_long_prompt(
+        self, mock_llm_client, sample_evaluation_results, tmp_path
+    ):
+        """Regression: a prompt taller than one page frame must still render.
+
+        Wrapping a tall Paragraph in a single-row Table used to raise
+        LayoutError because a Table can only split between rows.
+        """
+        long_prompt = "\n\n".join(
+            f"Paragraph {i}: " + "the quick brown fox jumps over the lazy dog. " * 5
+            for i in range(60)
+        )
+
+        generator = ReportGenerator(client=mock_llm_client)
+
+        pdf_path = generator.generate_pdf_report(
+            results=sample_evaluation_results,
+            output_path=tmp_path / "report",
+            original_prompt=long_prompt,
         )
 
         assert pdf_path.exists()
