@@ -1,6 +1,7 @@
 """Abstract base class for evaluation recipes."""
 
 import asyncio
+import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -8,6 +9,19 @@ from typing import Any
 from valtron_core.models import FieldMetricsConfig
 from valtron_core.recipes.config import BaseRecipeConfig, ModelConfig
 from valtron_core.runner import EvaluationRunner
+
+
+def _normalize_label(label: Any) -> Any:
+    if isinstance(label, (dict, list)):
+        return label
+    if isinstance(label, str):
+        try:
+            parsed = json.loads(label)
+            if isinstance(parsed, (dict, list)):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return str(label)
 
 
 class BaseRecipe(ABC):
@@ -81,7 +95,7 @@ class BaseRecipe(ABC):
             doc_entry: dict[str, Any] = {
                 "id": str(item.get("id", "")),
                 "content": item.get("content", ""),
-                "label": str(item.get("label", "")),
+                "label": _normalize_label(item.get("label", "")),
             }
             if item.get("attachments"):
                 doc_entry["attachments"] = item["attachments"]
