@@ -92,7 +92,7 @@ class TestSaveResultToRunDir:
             model_data = json.load(f)
         assert model_data["model"] == "gpt-3.5-turbo"
         assert len(model_data["predictions"]) == 1
-        assert "expected_value" not in model_data["predictions"][0]
+        assert model_data["predictions"][0]["expected_value"] == "positive"
 
     def test_does_not_overwrite_metadata(self, mock_llm_client, tmp_path):
         """Test that metadata.json is not overwritten when a second model is added."""
