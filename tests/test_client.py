@@ -2,12 +2,12 @@
 
 from typing import Any
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
 from litellm.utils import ModelResponse
 
-from valtron_core.client import LLMClient
+from valtron_core.client import LLMClient, _normalize_responses_output
 
 
 class TestLLMClientInitialization:
@@ -321,3 +321,145 @@ class TestLLMClientStreaming:
                 chunks.append(chunk.choices[0].delta.content)
 
             assert chunks == ["Hello", " ", "World"]
+
+
+def _make_mock_responses_result(text: str = "test response") -> MagicMock:
+    r = MagicMock()
+    r.id = "resp-test-id"
+    r.output_text = text
+    return r
+
+
+class TestLLMClientResponsesAPI:
+    """Tests for the responses API routing path (api="responses")."""
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_routes_to_aresponses(
+        self,
+        mock_env_vars: dict[str, str],
+        sample_messages: list[dict[str, str]],
+    ) -> None:
+        client = LLMClient()
+        mock_raw = _make_mock_responses_result("hello world")
+
+        with (
+            patch("valtron_core.client.aresponses", new=AsyncMock(return_value=mock_raw)) as mock_resp,
+            patch("valtron_core.client.acompletion", side_effect=AssertionError("acompletion must not be called")),
+        ):
+            response = await client.complete(
+                model={"model": "gpt-4.1", "api": "responses"},
+                messages=sample_messages,
+            )
+
+        mock_resp.assert_called_once()
+        assert response.choices[0].message.content == "hello world"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_uses_input_not_messages(
+        self,
+        mock_env_vars: dict[str, str],
+        sample_messages: list[dict[str, str]],
+    ) -> None:
+        client = LLMClient()
+        mock_raw = _make_mock_responses_result()
+
+        with patch("valtron_core.client.aresponses", new=AsyncMock(return_value=mock_raw)) as mock_resp:
+            await client.complete(
+                model={"model": "gpt-4.1", "api": "responses"},
+                messages=sample_messages,
+            )
+
+        call_kwargs = mock_resp.call_args.kwargs
+        assert "input" in call_kwargs
+        assert "messages" not in call_kwargs
+        assert call_kwargs["input"] == sample_messages
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_api_key_stripped(
+        self,
+        mock_env_vars: dict[str, str],
+        sample_messages: list[dict[str, str]],
+    ) -> None:
+        client = LLMClient()
+        mock_raw = _make_mock_responses_result()
+
+        with patch("valtron_core.client.aresponses", new=AsyncMock(return_value=mock_raw)) as mock_resp:
+            await client.complete(
+                model={"model": "gpt-4.1", "api": "responses"},
+                messages=sample_messages,
+            )
+
+        call_kwargs = mock_resp.call_args.kwargs
+        assert "api" not in call_kwargs
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_default_routes_to_completion(
+        self,
+        mock_env_vars: dict[str, str],
+        sample_messages: list[dict[str, str]],
+        mock_model_response: ModelResponse,
+    ) -> None:
+        client = LLMClient()
+
+        with (
+            patch("valtron_core.client.acompletion", new=AsyncMock(return_value=mock_model_response)) as mock_comp,
+            patch("valtron_core.client.aresponses", side_effect=AssertionError("aresponses must not be called")),
+        ):
+            await client.complete(model={"model": "gpt-4.1"}, messages=sample_messages)
+
+        mock_comp.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_string_model_routes_to_completion(
+        self,
+        mock_env_vars: dict[str, str],
+        sample_messages: list[dict[str, str]],
+        mock_model_response: ModelResponse,
+    ) -> None:
+        client = LLMClient()
+
+        with (
+            patch("valtron_core.client.acompletion", new=AsyncMock(return_value=mock_model_response)) as mock_comp,
+            patch("valtron_core.client.aresponses", side_effect=AssertionError("aresponses must not be called")),
+        ):
+            await client.complete(model="gpt-4.1", messages=sample_messages)
+
+        mock_comp.assert_called_once()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_retry_on_transient_failure(
+        self,
+        mock_env_vars: dict[str, str],
+        sample_messages: list[dict[str, str]],
+    ) -> None:
+        client = LLMClient()
+        mock_raw = _make_mock_responses_result("retry success")
+
+        with (
+            patch(
+                "valtron_core.client.aresponses",
+                new=AsyncMock(side_effect=[Exception("transient"), mock_raw]),
+            ),
+            patch("asyncio.sleep", new=AsyncMock()),
+        ):
+            response = await client.complete(
+                model={"model": "gpt-4.1", "api": "responses"},
+                messages=sample_messages,
+            )
+
+        assert response.choices[0].message.content == "retry success"
+
+    @pytest.mark.unit
+    def test_normalize_responses_output(self, mock_env_vars: dict[str, str]) -> None:
+        mock_raw = _make_mock_responses_result("normalized text")
+        result = _normalize_responses_output(mock_raw, "gpt-4.1")
+
+        assert result.choices[0].message.content == "normalized text"
+        assert result.model == "gpt-4.1"
+        assert result.id == "resp-test-id"

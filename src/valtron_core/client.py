@@ -9,7 +9,7 @@ from typing import Any, AsyncIterator, Literal
 from pydantic import BaseModel
 import structlog
 import litellm
-from litellm import acompletion, completion, completion_cost
+from litellm import acompletion, aresponses, completion, completion_cost
 from litellm.utils import ModelResponse  # type: ignore[attr-defined]
 
 from valtron_core.config import config
@@ -20,6 +20,17 @@ logger = structlog.get_logger()
 # This allows us to pass response_format to all models, and litellm will
 # automatically drop it for models that don't support it (like gpt-4)
 litellm.drop_params = True
+
+_EVALTRON_KEYS: frozenset[str] = frozenset({"cost_rate", "cost_rate_time_unit", "api"})
+
+
+def _normalize_responses_output(result: Any, model_name: str) -> ModelResponse:
+    text: str = result.output_text
+    return ModelResponse(
+        id=result.id,
+        choices=[{"index": 0, "message": {"role": "assistant", "content": text}, "finish_reason": "stop"}],
+        model=model_name,
+    )
 
 
 class LLMClient:
@@ -114,9 +125,8 @@ class LLMClient:
             **kwargs,
         }
 
-        # If model is a dict, merge its parameters (strip evaltron_core-only keys)
+        # If model is a dict, merge its parameters (strip valtron-internal keys)
         if isinstance(model, dict):
-            _EVALTRON_KEYS = {"cost_rate", "cost_rate_time_unit"}
             completion_args.update({k: v for k, v in model.items() if k not in _EVALTRON_KEYS})
         else:
             completion_args["model"] = model
@@ -149,6 +159,23 @@ class LLMClient:
         max_retries = self.config.optimization.max_retries
         retry_delay = self.config.optimization.retry_delay
 
+        api_mode = str(model.get("api", "completion")) if isinstance(model, dict) else "completion"
+        if api_mode == "responses":
+            completion_args["input"] = completion_args.pop("messages")
+            rf = completion_args.pop("response_format", None)
+            if rf is not None:
+                if isinstance(rf, type) and issubclass(rf, BaseModel):
+                    schema = rf.model_json_schema()
+                    name = rf.__name__
+                elif isinstance(rf, dict) and rf.get("type") == "json_schema" and "json_schema" in rf:
+                    # Chat Completions format -- unwrap to get the raw schema
+                    schema = rf["json_schema"]["schema"]
+                    name = rf["json_schema"].get("name", "response")
+                else:
+                    schema = rf
+                    name = rf.get("title", "response") if isinstance(rf, dict) else "response"
+                completion_args["text"] = {"format": {"type": "json_schema", "name": name, "schema": schema, "strict": True}}
+
         _temperature_dropped = False
         attempt = 0
         while attempt <= max_retries:
@@ -157,11 +184,18 @@ class LLMClient:
                 logger.warning("llm_retry", model=model_name, attempt=attempt, wait=wait)
                 await asyncio.sleep(wait)
             try:
-                response = await acompletion(**completion_args)
+                if api_mode == "responses":
+                    raw = await aresponses(**completion_args)
+                    response: ModelResponse | AsyncIterator[ModelResponse] = _normalize_responses_output(
+                        raw, model_name
+                    )
+                else:
+                    response = await acompletion(**completion_args)
                 break
             except Exception as e:
                 if (
-                    not _temperature_dropped
+                    api_mode == "completion"
+                    and not _temperature_dropped
                     and isinstance(e, litellm.BadRequestError)  # type: ignore[attr-defined]
                     and "temperature" in str(e)
                     and "temperature" in completion_args
