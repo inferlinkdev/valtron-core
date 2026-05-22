@@ -98,6 +98,7 @@ def save_run_dir(
             pred_dict: dict[str, Any] = {
                 "document_id": p.document_id,
                 "predicted_value": p.predicted_value,
+                "expected_value": p.expected_value,
                 "original_cost": p.original_cost,
                 "cost": p.cost,
                 "response_time": p.response_time,
@@ -383,7 +384,7 @@ class EvaluationRunner:
                     PredictionResult(
                         document_id=doc_id,
                         predicted_value=p["predicted_value"],
-                        expected_value=label_map.get(doc_id, ""),
+                        expected_value=p.get("expected_value", label_map.get(doc_id, "")),
                         is_correct=p.get("is_correct", False),
                         example_score=p.get("example_score", 0.0),
                         response_time=p.get("response_time", 0.0),

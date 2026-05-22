@@ -504,7 +504,7 @@ class ModelEval(BaseRecipe):
                     PredictionResult(
                         document_id=p["document_id"],
                         predicted_value=p["predicted_value"],
-                        expected_value=label_map.get(p["document_id"], ""),
+                        expected_value=p.get("expected_value", label_map.get(p["document_id"], "")),
                         is_correct=p.get("is_correct", False),
                         example_score=p.get("example_score", 0.0),
                         response_time=p.get("response_time", 0.0),
