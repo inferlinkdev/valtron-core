@@ -6,10 +6,11 @@ import re
 import time
 import uuid
 from datetime import datetime
-from typing import Any, Callable
+from typing import Any, AsyncIterator, Callable
 
 import structlog
 from litellm import BaseModel, completion_cost
+from litellm.utils import ModelResponse  # type: ignore[attr-defined]
 
 from valtron_core.client import LLMClient
 from valtron_core.evaluation.json_eval import JsonEvaluator

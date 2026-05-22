@@ -1,6 +1,7 @@
 """Abstract base class for evaluation recipes."""
 
 import asyncio
+import json
 from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
@@ -75,17 +76,32 @@ class BaseRecipe(ABC):
             )
 
     def _build_save_documents(self) -> list[dict[str, Any]]:
-        """Build the document list used when writing the run directory."""
+        """Build the document list used when writing the run directory.
+
+        Dict and list labels are serialized via ``json.dumps`` so the saved
+        ``metadata.json`` contains valid JSON; ``str()`` would produce Python
+        repr (single quotes) and break any consumer that parses the label.
+
+        :return: List of document dicts ready to be embedded in ``metadata.json``.
+        """
         documents: list[dict[str, Any]] = []
+
         for item in self.data:
+            label_raw = item.get("label", "")
+            if isinstance(label_raw, (dict, list)):
+                label_value = json.dumps(label_raw)
+            else:
+                label_value = str(label_raw)
+
             doc_entry: dict[str, Any] = {
                 "id": str(item.get("id", "")),
                 "content": item.get("content", ""),
-                "label": str(item.get("label", "")),
+                "label": label_value,
             }
             if item.get("attachments"):
                 doc_entry["attachments"] = item["attachments"]
             documents.append(doc_entry)
+
         return documents
 
     def evaluate_sync(self) -> None:
