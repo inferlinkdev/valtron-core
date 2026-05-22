@@ -471,7 +471,10 @@ class ModelEval(BaseRecipe):
         if response_format_schema:
             instance._response_format_schema = response_format_schema
 
-        label_map = {str(d.get("id", "")): str(d.get("label", "")) for d in data}
+        label_map = {
+            str(d.get("id", "")): json.dumps(d["label"]) if isinstance(d.get("label"), (dict, list)) else str(d.get("label", ""))
+            for d in data
+        }
 
         results: list[EvaluationResult] = []
         model_prompts: dict[str, str] = {}
@@ -1078,7 +1081,6 @@ class ModelEval(BaseRecipe):
         def _on_doc(pred: PredictionResult) -> None:
             running_cost[0] += pred.cost
             shared_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
-            shared_bar.update(1)
 
         async def _evaluate_single_model(
             index: int, model_config: Any

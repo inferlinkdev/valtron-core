@@ -4,6 +4,7 @@ import json
 import pytest
 from pathlib import Path
 from datetime import datetime
+from typing import Any
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, create_model
 
@@ -546,6 +547,49 @@ class TestRunEvaluations:
 
         assert len(results) == 1
         assert "gpt-4o-mini" in manipulations
+
+
+# ===========================================================================
+# _build_save_documents label serialization
+# ===========================================================================
+
+
+class TestBuildSaveDocuments:
+    def _make_eval(self, labels: list[Any]) -> ModelEval:
+        return ModelEval(
+            config={
+                "models": [{"name": "gpt-4o-mini", "type": "llm"}],
+                "prompt": "Classify: {content}",
+                "output_dir": "./test_output",
+                "use_case": "test",
+            },
+            data=[{"id": str(i), "content": "x", "label": lbl} for i, lbl in enumerate(labels)],
+        )
+
+    @pytest.mark.unit
+    def test_plain_string_label(self) -> None:
+        docs = self._make_eval(["positive"])._build_save_documents()
+        assert docs[0]["label"] == "positive"
+
+    @pytest.mark.unit
+    def test_json_string_label_normalized_to_dict(self) -> None:
+        label_str = '{"institution": "MIT", "city": "Cambridge"}'
+        docs = self._make_eval([label_str])._build_save_documents()
+        assert docs[0]["label"] == {"institution": "MIT", "city": "Cambridge"}
+
+    @pytest.mark.unit
+    def test_dict_label_preserved_as_dict(self) -> None:
+        label_dict = {"institution": "MIT", "city": "Cambridge", "division": None}
+        docs = self._make_eval([label_dict])._build_save_documents()
+        assert docs[0]["label"] == label_dict
+
+    @pytest.mark.unit
+    def test_dict_label_serializes_to_valid_json(self) -> None:
+        label_dict = {"institution": "MIT", "division": None}
+        docs = self._make_eval([label_dict])._build_save_documents()
+        serialized = json.dumps(docs[0]["label"])
+        assert "None" not in serialized
+        assert json.loads(serialized) == label_dict
 
 
 # ===========================================================================

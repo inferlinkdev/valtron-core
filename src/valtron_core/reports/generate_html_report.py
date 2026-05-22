@@ -184,9 +184,9 @@ Format your response as Markdown using headers, bullet points, and bold text whe
 
             parts = field_path.split(".")
             node = tree
-            for part in parts:
+            for i, part in enumerate(parts):
                 node = node[part]
-                if part == parts[-1]:
+                if i == len(parts) - 1:
                     node["is_array"] = is_array
                     node["method"] = list(methods)[0] if len(methods) == 1 else None
                 else:

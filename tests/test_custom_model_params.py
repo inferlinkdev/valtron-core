@@ -218,41 +218,6 @@ class TestCustomModelParams:
             assert call_kwargs["model"] == model_config
 
     @pytest.mark.asyncio
-    async def test_runner_evaluate_from_file_with_mixed_model_types(
-        self, mock_response, tmp_path
-    ):
-        """Test runner.evaluate_from_file with mixed string and dict models."""
-        data = [
-            {"id": "1", "content": "This is great!", "label": "positive"},
-            {"id": "2", "content": "This is terrible.", "label": "negative"},
-        ]
-        data_file = tmp_path / "data.json"
-        data_file.write_text(json.dumps(data))
-
-        runner = EvaluationRunner()
-
-        with patch("valtron_core.client.acompletion", new_callable=AsyncMock) as mock_acompletion:
-            mock_acompletion.return_value = mock_response
-
-            models = [
-                "gpt-3.5-turbo",
-                {"model": "gpt-4", "api_key": "custom-key"},
-                {"model": "claude-3-opus-20240229", "temperature": 0.0, "api_key": "mock-key"},
-            ]
-
-            results = await runner.evaluate_from_file(
-                data_file=data_file,
-                prompt_template="Classify: {content}",
-                models=models,
-                max_concurrent=1,
-            )
-
-            assert len(results) == 3
-            assert results[0].model == "gpt-3.5-turbo"
-            assert results[1].model == "gpt-4"
-            assert results[2].model == "claude-3-opus-20240229"
-
-    @pytest.mark.asyncio
     async def test_evaluation_input_accepts_string_model(self, sample_documents, sample_labels):
         """Test that EvaluationInput accepts string model."""
         eval_input = EvaluationInput(

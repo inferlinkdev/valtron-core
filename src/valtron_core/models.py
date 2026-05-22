@@ -47,11 +47,11 @@ class Document(BaseModel):
     """Represents a document to be evaluated."""
 
     id: str = Field(..., description="Unique identifier for the document")
-    content: str | dict[str, str] = Field(
+    content: str | dict[str, str | None] = Field(
         ...,
         description=(
             "The document content. Either a plain string inserted at {content}, "
-            "or a dict[str, str] mapping placeholder names to their values."
+            "or a dict mapping placeholder names to their values. None values are treated as empty strings."
         ),
     )
     metadata: dict[str, Any] = Field(default_factory=dict, description="Optional metadata")

@@ -72,7 +72,7 @@ class PromptEvaluator:
         result = template
         for key in set(re.findall(r'\{(\w+)\}', template)):
             if key in document.content:
-                result = result.replace(f"{{{key}}}", document.content[key])
+                result = result.replace(f"{{{key}}}", document.content[key] or "")
             else:
                 logger.warning(
                     "prompt_variable_missing",
