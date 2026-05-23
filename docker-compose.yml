@@ -41,5 +41,5 @@ services:
     command: >
       bash -c "
         mkdir -p test-reports &&
-        pytest tests/ -v --junitxml=test-reports/report.xml --cov=src/valtron_core --cov-branch --cov-report=term-missing --cov-report=xml:test-reports/coverage.xml --cov-report=html:test-reports/htmlcov
+        pytest tests/ -v --junitxml=test-reports/report.xml --cov --cov-report=term-missing --cov-report=xml --cov-report=html
       "
