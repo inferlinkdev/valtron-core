@@ -78,12 +78,13 @@ Each entry in `models` is either an LLM model or a transformer model.
 |---|---|---|---|
 | `name` | `string` | required | LiteLLM model identifier (e.g. `gpt-4o`, `claude-sonnet-4-6`, `ollama/llama3`) |
 | `label` | `string` | `null` | **Unique identifier** used in results, output files, and the report. Defaults to `name`. Must be set when the same `name` appears more than once (e.g. same model with different manipulations). |
-| `params` | `object` | `{}` | Extra LiteLLM parameters (e.g. `{"temperature": 0.2, "max_tokens": 512}`) |
 | `prompt_manipulation` | `array[string]` | `[]` | Optimizer strategies to apply (see [Optimizers](./optimizers)) |
 | `decompose_config` | `object` | `null` | Required when using `"decompose"` (see [Optimizers](./optimizers#decompose)) |
 | `cost_rate` | `float` | `null` | Override token-based cost with a fixed rate (e.g. hourly server cost) |
 | `cost_rate_time_unit` | `string` | `"1hr"` | Unit for `cost_rate`: `"1hr"`, `"1min"`, etc. |
 | `prompt` | `string` | `null` | Per-model prompt override; replaces the top-level `prompt` for this model only |
+| `api` | `string` | `"completion"` | API mode for this model. `"completion"` uses the Chat Completions API (default). `"responses"` uses the OpenAI Responses API (requires a compatible model and provider). Determines which parameters are valid in `params`. |
+| `params` | `object` | `{}` | Extra parameters passed to the underlying API call. Valid keys depend on `api`: Chat Completions fields (e.g. `temperature`, `max_tokens`) for `"completion"`; Responses API fields for `"responses"`. |
 
 ```json
 {
@@ -91,6 +92,16 @@ Each entry in `models` is either an LLM model or a transformer model.
   "label": "GPT-4o (with few-shot)",
   "params": {"temperature": 0.0, "max_tokens": 256},
   "prompt_manipulation": ["few_shot", "explanation"]
+}
+```
+
+**Using the Responses API**: set `"api": "responses"` on any model to route that model through the OpenAI Responses API instead of Chat Completions. Structured output (`response_format_schema`) is supported and will be translated automatically.
+
+```json
+{
+  "name": "gpt-4o",
+  "api": "responses",
+  "params": {"max_tokens": 256}
 }
 ```
 
