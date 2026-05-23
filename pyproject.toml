@@ -85,5 +85,19 @@ warn_unused_configs = true
 testpaths = ["tests"]
 asyncio_mode = "auto"
 
+[tool.coverage.run]
+data_file = "test-reports/.coverage"
+source = ["src/valtron_core"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.coverage.html]
+directory = "test-reports/htmlcov"
+
+[tool.coverage.xml]
+output = "test-reports/coverage.xml"
+
 [solver]
 min-release-age = 7
