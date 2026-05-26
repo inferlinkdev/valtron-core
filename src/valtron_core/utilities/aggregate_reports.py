@@ -95,7 +95,7 @@ def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], 
             predictions.append(PredictionResult(
                 document_id=doc_id,
                 predicted_value=p["predicted_value"],
-                expected_value=label_map.get(doc_id, ""),
+                expected_value=p.get("expected_value", label_map.get(doc_id, "")),
                 is_correct=p.get("is_correct", False),
                 example_score=p.get("example_score", 0.0),
                 response_time=p.get("response_time", 0.0),

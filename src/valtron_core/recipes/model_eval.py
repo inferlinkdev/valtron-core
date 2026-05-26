@@ -15,6 +15,7 @@ import structlog
 from pydantic import BaseModel, ConfigDict, Field, create_model
 
 from valtron_core.client import LLMClient
+from valtron_core.schema_synthesis import synthesize_pydantic_model
 from valtron_core.cost_utils import _parse_time_unit_to_seconds
 from valtron_core.decompose import (
     DecomposedEvaluator,
@@ -47,6 +48,7 @@ from valtron_core.utilities.field_config_generator import infer_field_config
 
 
 logger = structlog.get_logger()
+
 
 
 class ModelEval(BaseRecipe):
@@ -106,13 +108,24 @@ class ModelEval(BaseRecipe):
                 data = json.load(f)
         self.data = data
         self.response_format = response_format
+        if self.response_format is None and config.response_format_schema is not None:
+            synthesized = synthesize_pydantic_model(config.response_format_schema)
+            if synthesized is not None:
+                self.response_format = synthesized
+
+        # Dict schema kept for API calls (synthesis fallback) and metadata serialization.
+        # Only capture the config dict when no Pydantic model was passed; aevaluate()
+        # will serialize from self.response_format in the user-passed-model case.
+        self._response_format_schema: dict[str, Any] | None = (
+            config.response_format_schema if response_format is None else None
+        )
 
         self.runner = EvaluationRunner()
         self.enhancer = ExplanationEnhancer()
         self.client = LLMClient()
         # DecomposedEvaluator is only needed in extraction mode
         self.decomposed_evaluator = (
-            DecomposedEvaluator(client=self.client) if response_format is not None else None
+            DecomposedEvaluator(client=self.client) if self.response_format is not None else None
         )
 
         # Parse configuration — add_models validates guards and populates self.models
@@ -131,7 +144,6 @@ class ModelEval(BaseRecipe):
         self._manipulations_applied: dict[str, list[Any]] | None = None
         self._model_prompts: dict[str, str] | None = None
         self._model_override_prompts: dict[str, str] | None = None
-        self._response_format_schema: dict[str, Any] | None = None
         self._auto_wrap_string_labels: bool = False
 
         logger.info(
@@ -151,18 +163,10 @@ class ModelEval(BaseRecipe):
         self._check_model_param_support()
         self._validate_labels_against_schema()
 
-    def _effective_dict_schema(self) -> "dict[str, Any] | None":
-        """Return the resolved dict-format schema regardless of how it was configured.
-
-        Checks config.response_format_schema first (set on fresh runs), then falls
-        back to _response_format_schema (pre-set on reloaded instances).
-        """
-        return self.config.response_format_schema or self._response_format_schema
-
     def _check_model_param_support(self) -> None:
         from valtron_core.recipes.config import LLMModelConfig
 
-        wants_response_format = self.response_format is not None or self._effective_dict_schema() is not None
+        wants_response_format = self.response_format is not None
 
         if wants_response_format and self.data:
             all_plain_string_labels = all(
@@ -207,28 +211,19 @@ class ModelEval(BaseRecipe):
     def _is_single_label_field_schema(self) -> bool:
         """Return True if the response schema has exactly one field named 'label' (str or Enum)."""
         import enum
+        from typing import Literal, get_origin
 
-        if self.response_format is not None:
-            fields = self.response_format.model_fields
-            if len(fields) != 1 or "label" not in fields:
-                return False
-            annotation = fields["label"].annotation
-            return annotation is str or (
-                isinstance(annotation, type) and issubclass(annotation, enum.Enum)
-            )
-
-        effective_dict_schema = self._effective_dict_schema()
-        if effective_dict_schema is not None:
-            try:
-                props = effective_dict_schema["json_schema"]["schema"]["properties"]
-                if set(props.keys()) != {"label"}:
-                    return False
-                label_prop = props["label"]
-                return label_prop.get("type") == "string" or "enum" in label_prop
-            except (KeyError, TypeError):
-                return False
-
-        return False
+        if self.response_format is None:
+            return False
+        fields = self.response_format.model_fields
+        if len(fields) != 1 or "label" not in fields:
+            return False
+        annotation = fields["label"].annotation
+        return (
+            annotation is str
+            or get_origin(annotation) is Literal
+            or (isinstance(annotation, type) and issubclass(annotation, enum.Enum))
+        )
 
     def _validate_labels_against_schema(self) -> None:
         """Validate each label against the response schema, raising if any fail.
@@ -241,14 +236,13 @@ class ModelEval(BaseRecipe):
         """
         import jsonschema  # type: ignore[import-untyped]
 
-        effective_dict_schema = self._effective_dict_schema()
-        if self.response_format is None and effective_dict_schema is None:
+        if self.response_format is None and self._response_format_schema is None:
             return
 
         json_schema: dict[str, Any] | None = None
         if self.response_format is None:
             try:
-                json_schema = effective_dict_schema["json_schema"]["schema"]  # type: ignore[index]
+                json_schema = self._response_format_schema["json_schema"]["schema"]  # type: ignore[index]
             except (KeyError, TypeError):
                 return
 
@@ -338,7 +332,8 @@ class ModelEval(BaseRecipe):
             for manip in getattr(mc, "prompt_manipulation", [])
             if manip in STRUCTURED_MANIPULATIONS
         ]
-        if structured_requested and self.response_format is None:
+        has_schema = self.response_format is not None
+        if structured_requested and not has_schema:
             bad_models = sorted({name for name, _ in structured_requested})
             bad_manips = sorted({manip.value for _, manip in structured_requested})
             raise ValueError(
@@ -469,6 +464,11 @@ class ModelEval(BaseRecipe):
         instance = cls(config=config_dict, data=data)
         if response_format_schema:
             instance._response_format_schema = response_format_schema
+            if instance.response_format is None:
+                synthesized = synthesize_pydantic_model(response_format_schema)
+                if synthesized is not None:
+                    instance.response_format = synthesized
+                    instance.decomposed_evaluator = DecomposedEvaluator(client=instance.client)
 
         label_map = {
             str(d.get("id", "")): json.dumps(d["label"]) if isinstance(d.get("label"), (dict, list)) else str(d.get("label", ""))
@@ -506,7 +506,7 @@ class ModelEval(BaseRecipe):
                     PredictionResult(
                         document_id=p["document_id"],
                         predicted_value=p["predicted_value"],
-                        expected_value=label_map.get(p["document_id"], ""),
+                        expected_value=p.get("expected_value", label_map.get(p["document_id"], "")),
                         is_correct=p.get("is_correct", False),
                         example_score=p.get("example_score", 0.0),
                         response_time=p.get("response_time", 0.0),
@@ -624,10 +624,8 @@ class ModelEval(BaseRecipe):
 
         self._preflight_check()
 
-        if self.response_format is not None:
+        if self._response_format_schema is None and self.response_format is not None:
             self._response_format_schema = self._serialize_response_format_schema(self.response_format)
-        elif self.config.response_format_schema is not None:
-            self._response_format_schema = self.config.response_format_schema
 
         field_metrics_config = self._get_field_metrics_config()
 

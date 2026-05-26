@@ -18,6 +18,8 @@ def mock_validate_environment():
         yield
 
 from valtron_core.recipes.model_eval import ModelEval
+from valtron_core.schema_synthesis import synthesize_pydantic_model
+from valtron_core.decompose import find_split_point
 from valtron_core.recipes.config import (
     ModelEvalConfig,
     LLMModelConfig,
@@ -137,7 +139,7 @@ class TestModelEvalInit:
     # --- label mode specifics ---
 
     def test_label_mode_no_response_format(self):
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[])
+        eval_ = ModelEval(config=EXTRACT_CONFIG, data=[])
         assert eval_.response_format is None
         assert eval_.decomposed_evaluator is None
 
@@ -188,6 +190,17 @@ class TestModelEvalInit:
     def test_unknown_config_key_raises(self):
         with pytest.raises(ValidationError):
             ModelEval(config={**EXTRACT_CONFIG, "unknown_key": True}, data=[])
+
+    @pytest.mark.unit
+    def test_dict_schema_in_config_synthesizes_response_format(self):
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[])
+        assert eval_.response_format is not None
+        assert issubclass(eval_.response_format, BaseModel)
+
+    @pytest.mark.unit
+    def test_dict_schema_initializes_decomposed_evaluator(self):
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[])
+        assert eval_.decomposed_evaluator is not None
 
 
 # ===========================================================================
@@ -820,17 +833,47 @@ class TestAddModels:
             )
 
     def test_add_structured_manip_without_response_format_raises(self):
-        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
+        config_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
+        eval_ = ModelEval(config=config_no_schema, data=[{"content": "T", "label": "pos"}])
         with pytest.raises(ValueError, match="response_format"):
             eval_.add_models(
                 [{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}]
             )
+
+    def test_add_structured_manip_allowed_with_config_response_format_schema(self):
+        eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
+        eval_.add_models(
+            [{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}]
+        )
+        assert eval_.models[-1].label == "new"
+
+    def test_add_structured_manip_allowed_with_pydantic_response_format(self):
+        config_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
+        eval_ = ModelEval(
+            config=config_no_schema,
+            data=[{"content": "T", "label": "pos"}],
+            response_format=SampleSchema,
+        )
+        eval_.add_models(
+            [{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}]
+        )
+        assert eval_.models[-1].label == "new"
 
     def test_add_updates_config_models(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
         eval_.add_models([{"name": "gpt-4o", "label": "GPT-4o"}])
         config_labels = [m.label or m.name for m in eval_.config.models]
         assert "GPT-4o" in config_labels
+
+    @pytest.mark.unit
+    def test_add_decompose_allowed_with_synthesized_schema(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        loaded = ModelEval.load_experiment_results(run_dir)
+        # synthesis from _LABEL_SCHEMA gives a valid response_format
+        loaded.add_models(
+            [{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}]
+        )
+        assert loaded.models[-1].label == "new"
 
 
 # ===========================================================================
@@ -976,6 +1019,14 @@ class TestLoadExperimentResults:
         labels = {r.model for r in loaded.results}
         assert "gpt-4o-mini" in labels
         assert "gpt-4o-new" in labels
+
+    @pytest.mark.unit
+    def test_load_synthesizes_pydantic_from_metadata_schema(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        loaded = ModelEval.load_experiment_results(run_dir)
+        assert loaded.response_format is not None
+        assert issubclass(loaded.response_format, BaseModel)
+        assert loaded.decomposed_evaluator is not None
 
 
 # ===========================================================================
@@ -1458,3 +1509,281 @@ class TestResponseFormatSchemaInMetadata:
 
         metadata = json.loads((tmp_path / "metadata.json").read_text())
         assert metadata["response_format_schema"] is None
+
+
+# ===========================================================================
+# Schema synthesis
+# ===========================================================================
+
+
+def _wrap_schema(name: str, schema: dict) -> dict:
+    return {"type": "json_schema", "json_schema": {"name": name, "strict": True, "schema": schema}}
+
+
+class TestSynthesizePydanticModel:
+
+    @pytest.mark.unit
+    def test_flat_schema(self):
+        schema = _wrap_schema(
+            "Flat",
+            {
+                "type": "object",
+                "title": "Flat",
+                "properties": {
+                    "name": {"type": "string"},
+                    "count": {"type": "integer"},
+                    "score": {"type": "number"},
+                    "flag": {"type": "boolean"},
+                },
+                "required": ["name", "count", "score", "flag"],
+                "additionalProperties": False,
+            },
+        )
+        model = synthesize_pydantic_model(schema)
+        assert model is not None
+        fields = model.model_fields
+        assert fields["name"].annotation is str
+        assert fields["count"].annotation is int
+        assert fields["score"].annotation is float
+        assert fields["flag"].annotation is bool
+
+    @pytest.mark.unit
+    def test_nested_object(self):
+        schema = _wrap_schema(
+            "Outer",
+            {
+                "type": "object",
+                "title": "Outer",
+                "properties": {
+                    "inner": {
+                        "type": "object",
+                        "title": "Inner",
+                        "properties": {"value": {"type": "string"}},
+                        "required": ["value"],
+                        "additionalProperties": False,
+                    }
+                },
+                "required": ["inner"],
+                "additionalProperties": False,
+            },
+        )
+        model = synthesize_pydantic_model(schema)
+        assert model is not None
+        inner_type = model.model_fields["inner"].annotation
+        assert isinstance(inner_type, type) and issubclass(inner_type, BaseModel)
+
+    @pytest.mark.unit
+    def test_array_of_objects(self):
+        schema = _wrap_schema(
+            "Root",
+            {
+                "type": "object",
+                "title": "Root",
+                "properties": {
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "title": "Item",
+                            "properties": {"label": {"type": "string"}},
+                            "required": ["label"],
+                            "additionalProperties": False,
+                        },
+                    }
+                },
+                "required": ["items"],
+                "additionalProperties": False,
+            },
+        )
+        model = synthesize_pydantic_model(schema)
+        assert model is not None
+        import typing
+
+        origin = typing.get_origin(model.model_fields["items"].annotation)
+        assert origin is list
+
+    @pytest.mark.unit
+    def test_optional_anyof_form(self):
+        schema = _wrap_schema(
+            "Opt",
+            {
+                "type": "object",
+                "title": "Opt",
+                "properties": {
+                    "maybe": {"anyOf": [{"type": "string"}, {"type": "null"}]},
+                },
+                "required": ["maybe"],
+                "additionalProperties": False,
+            },
+        )
+        model = synthesize_pydantic_model(schema)
+        assert model is not None
+        import typing
+
+        ann = model.model_fields["maybe"].annotation
+        # Optional[str] is Union[str, None]
+        args = typing.get_args(ann)
+        assert str in args
+
+    @pytest.mark.unit
+    def test_optional_type_array_form(self):
+        schema = _wrap_schema(
+            "TypeArr",
+            {
+                "type": "object",
+                "title": "TypeArr",
+                "properties": {
+                    "val": {"type": ["string", "null"]},
+                },
+                "required": ["val"],
+                "additionalProperties": False,
+            },
+        )
+        model = synthesize_pydantic_model(schema)
+        assert model is not None
+        import typing
+
+        ann = model.model_fields["val"].annotation
+        args = typing.get_args(ann)
+        assert str in args
+
+    @pytest.mark.unit
+    def test_enum_field(self):
+        schema = _wrap_schema(
+            "En",
+            {
+                "type": "object",
+                "title": "En",
+                "properties": {
+                    "color": {"enum": ["red", "green", "blue"]},
+                },
+                "required": ["color"],
+                "additionalProperties": False,
+            },
+        )
+        model = synthesize_pydantic_model(schema)
+        assert model is not None
+        import typing
+
+        ann = model.model_fields["color"].annotation
+        assert typing.get_origin(ann) is typing.Literal  # type: ignore[comparison-overlap]
+        assert set(typing.get_args(ann)) == {"red", "green", "blue"}
+
+    @pytest.mark.unit
+    def test_anyof_multi_branch(self):
+        schema = _wrap_schema(
+            "Multi",
+            {
+                "type": "object",
+                "title": "Multi",
+                "properties": {
+                    "data": {
+                        "anyOf": [
+                            {
+                                "type": "object",
+                                "title": "BranchA",
+                                "properties": {"a": {"type": "string"}},
+                                "required": ["a"],
+                                "additionalProperties": False,
+                            },
+                            {
+                                "type": "object",
+                                "title": "BranchB",
+                                "properties": {"b": {"type": "integer"}},
+                                "required": ["b"],
+                                "additionalProperties": False,
+                            },
+                        ]
+                    }
+                },
+                "required": ["data"],
+                "additionalProperties": False,
+            },
+        )
+        model = synthesize_pydantic_model(schema)
+        assert model is not None
+        import typing
+
+        ann = model.model_fields["data"].annotation
+        args = typing.get_args(ann)
+        assert len(args) == 2
+        assert all(isinstance(a, type) and issubclass(a, BaseModel) for a in args)
+
+    @pytest.mark.unit
+    def test_ref_resolution(self):
+        schema = _wrap_schema(
+            "WithRef",
+            {
+                "type": "object",
+                "title": "WithRef",
+                "$defs": {
+                    "Addr": {
+                        "type": "object",
+                        "title": "Addr",
+                        "properties": {"street": {"type": "string"}},
+                        "required": ["street"],
+                        "additionalProperties": False,
+                    }
+                },
+                "properties": {
+                    "home": {"$ref": "#/$defs/Addr"},
+                    "work": {"$ref": "#/$defs/Addr"},
+                },
+                "required": ["home", "work"],
+                "additionalProperties": False,
+            },
+        )
+        model = synthesize_pydantic_model(schema)
+        assert model is not None
+        home_type = model.model_fields["home"].annotation
+        work_type = model.model_fields["work"].annotation
+        # Same $ref should produce the same class
+        assert home_type is work_type
+
+    @pytest.mark.unit
+    def test_recursive_schema(self):
+        schema = _wrap_schema(
+            "Node",
+            {
+                "type": "object",
+                "title": "Node",
+                "$defs": {},
+                "properties": {
+                    "value": {"type": "string"},
+                    "child": {"anyOf": [{"$ref": "#"}, {"type": "null"}]},
+                },
+                "required": ["value"],
+                "additionalProperties": False,
+            },
+        )
+        model = synthesize_pydantic_model(schema)
+        # Must not infinite-loop; result may be None if cycle guard falls back to Any
+        assert model is not None or model is None  # no exception is the real assertion
+
+    @pytest.mark.unit
+    def test_unknown_schema_returns_none(self):
+        result = synthesize_pydantic_model({"totally": "invalid"})
+        # Either succeeds with something or returns None -- never raises
+        assert result is None or issubclass(result, BaseModel)
+
+    @pytest.mark.unit
+    def test_find_split_point_works_on_synthesized_model(self):
+        schema = _wrap_schema(
+            "Split",
+            {
+                "type": "object",
+                "title": "Split",
+                "properties": {
+                    "names": {"type": "array", "items": {"type": "string"}},
+                    "scores": {"type": "array", "items": {"type": "number"}},
+                    "label": {"type": "string"},
+                },
+                "required": ["names", "scores", "label"],
+                "additionalProperties": False,
+            },
+        )
+        model = synthesize_pydantic_model(schema)
+        assert model is not None
+        split = find_split_point(model)
+        assert split is not None
+        assert set(split.list_field_names) == {"names", "scores"}

@@ -67,11 +67,17 @@ _STYLES: dict[str, ParagraphStyle] = {
     "small":      ParagraphStyle("rl_sm",  fontName="Helvetica",         fontSize=8.5,textColor=C_MEDIUM,  leading=12),
     "timestamp":  ParagraphStyle("rl_ts",  fontName="Helvetica",         fontSize=8,  textColor=C_LIGHT,   leading=11),
     "note":       ParagraphStyle("rl_nt",  fontName="Helvetica-Oblique", fontSize=8,  textColor=C_MEDIUM,  leading=11),
-    "code":       ParagraphStyle("rl_cd",  fontName="Courier",           fontSize=8,  textColor=C_DARK,    leading=11),
+    # spaceBefore/spaceAfter on code & rec compensate for borderPadding, which
+    # ReportLab's Paragraph.wrap() does not include in its reported height.
+    "code":       ParagraphStyle("rl_cd",  fontName="Courier",           fontSize=8,  textColor=C_DARK,    leading=11,
+                                  backColor=C_GRAY_BG, borderColor=C_BORDER, borderWidth=0.5, borderPadding=8,
+                                  spaceBefore=8, spaceAfter=8),
     "field_note": ParagraphStyle("rl_fn",  fontName="Helvetica-Oblique", fontSize=8.5,textColor=C_SUBHEAD, leading=11),
     "app_body":   ParagraphStyle("rl_ab",  fontName="Helvetica",         fontSize=9.5,textColor=C_APP_BODY,leading=13),
     "app_subhead":ParagraphStyle("rl_as",  fontName="Helvetica-Bold",    fontSize=10.5,textColor=C_BLUE,   leading=14, spaceBefore=14, spaceAfter=6),
-    "rec":        ParagraphStyle("rl_rec", fontName="Helvetica",         fontSize=10, textColor=C_DARK,    leading=15),
+    "rec":        ParagraphStyle("rl_rec", fontName="Helvetica",         fontSize=10, textColor=C_DARK,    leading=15,
+                                  backColor=C_PURPLE_BG, borderColor=C_PURPLE, borderWidth=0.5, borderPadding=12,
+                                  spaceBefore=12, spaceAfter=12),
     "td_cell":    ParagraphStyle("rl_tdc", fontName="Helvetica",         fontSize=9,  textColor=C_DARK,    leading=11),
 }
 
@@ -621,19 +627,9 @@ class PdfReportGenerator(_ReportBase):
             return []
         elems: list[Any] = []
         elems.extend(self._section_heading("AI-Powered Recommendation"))
-        inner = Paragraph(
+        elems.append(Paragraph(
             _xml.escape(rec).replace("\n", "<br/>"), _STYLES["rec"]
-        )
-        box = Table([[inner]], colWidths=[_CONTENT_WIDTH - 0.3 * inch])
-        box.setStyle(TableStyle([
-            ("BACKGROUND",    (0, 0), (0, 0), C_PURPLE_BG),
-            ("LINEBEFORE",    (0, 0), (0, 0), 4, C_PURPLE),
-            ("LEFTPADDING",   (0, 0), (0, 0), 14),
-            ("RIGHTPADDING",  (0, 0), (0, 0), 12),
-            ("TOPPADDING",    (0, 0), (0, 0), 12),
-            ("BOTTOMPADDING", (0, 0), (0, 0), 12),
-        ]))
-        elems.append(box)
+        ))
         return elems
 
     def _build_visual_analysis(self, data: dict) -> list[Any]:
@@ -807,18 +803,5 @@ class PdfReportGenerator(_ReportBase):
             HRFlowable(width="100%", thickness=0.5, color=C_BORDER, spaceAfter=8),
         ]
 
-    def _make_code_box(self, text: str) -> Table:
-        inner = Paragraph(
-            _xml.escape(text).replace("\n", "<br/>"),
-            _STYLES["code"],
-        )
-        t = Table([[inner]], colWidths=[_CONTENT_WIDTH - 0.3 * inch])
-        t.setStyle(TableStyle([
-            ("BACKGROUND",    (0, 0), (0, 0), C_GRAY_BG),
-            ("BOX",           (0, 0), (0, 0), 0.5, C_BORDER),
-            ("LEFTPADDING",   (0, 0), (0, 0), 10),
-            ("RIGHTPADDING",  (0, 0), (0, 0), 10),
-            ("TOPPADDING",    (0, 0), (0, 0), 8),
-            ("BOTTOMPADDING", (0, 0), (0, 0), 8),
-        ]))
-        return t
+    def _make_code_box(self, text: str) -> Paragraph:
+        return Paragraph(_xml.escape(text).replace("\n", "<br/>"), _STYLES["code"])
