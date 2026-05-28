@@ -40,6 +40,47 @@ from valtron_core.cost_utils import (
 logger = structlog.get_logger()
 
 
+def _score_prediction(
+    predicted_value: str,
+    expected_value: str,
+    field_metrics_config: FieldMetricsConfig | None,
+    extra_template_vars: dict[str, Any] | None = None,
+    document_id: str = "",
+) -> tuple[Any, float, bool]:
+    """Compute (field_metrics, example_score, is_correct) without making any LLM calls.
+
+    Uses JsonEvaluator when field_metrics_config is provided; falls back to
+    case-insensitive string comparison otherwise.
+    """
+    is_correct = predicted_value.strip().lower() == expected_value.strip().lower()
+    example_score = 1.0 if is_correct else 0.0
+    field_metrics = None
+
+    if field_metrics_config:
+        try:
+            evaluator = JsonEvaluator(
+                custom_metrics=field_metrics_config.custom_metrics,
+                custom_aggs=field_metrics_config.custom_aggs,
+            )
+            result = evaluator.evaluate(
+                field_metrics_config.config,
+                expected_value,
+                predicted_value,
+                extra_template_vars=extra_template_vars or {},
+            )
+            field_metrics = result
+            example_score = result.score
+            is_correct = result.is_correct
+        except Exception as e:
+            logger.warning(
+                "field_metrics_error",
+                document_id=document_id,
+                error=str(e),
+            )
+
+    return field_metrics, example_score, is_correct
+
+
 class PromptEvaluator:
     """Evaluates prompts against labeled documents."""
 
@@ -382,46 +423,23 @@ class PromptEvaluator:
             if post_extraction_filter is not None:
                 predicted_value = await post_extraction_filter(predicted_value, document)
 
-            # Compare with expected
-            is_correct = self._compare_values(predicted_value, label.value, None, document.content)
-            example_score = 1.0 if is_correct else 0.0
+            # Build template vars for field metrics (prompt_used + doc content fields)
+            if isinstance(document.content, dict):
+                doc_vars: dict[str, Any] = {
+                    f"example_{k}": v for k, v in document.content.items()
+                }
+            else:
+                doc_vars = {"example_content": document.content}
+            extra_template_vars = {"prompt_used": prompt, **doc_vars}
 
-            # Compute field-level metrics if config is provided
-            field_metrics = None
-
-            if field_metrics_config:
-                try:
-                    evaluator = JsonEvaluator(
-                        custom_metrics=field_metrics_config.custom_metrics,
-                        custom_aggs=field_metrics_config.custom_aggs,
-                    )
-                    expected_for_eval = label.value
-
-                    if isinstance(document.content, dict):
-                        doc_vars: dict[str, Any] = {
-                            f"example_{k}": v for k, v in document.content.items()
-                        }
-                    else:
-                        doc_vars = {"example_content": document.content}
-                    extra_template_vars = {"prompt_used": prompt, **doc_vars}
-
-                    result = evaluator.evaluate(
-                        field_metrics_config.config,
-                        expected_for_eval,
-                        predicted_value,
-                        extra_template_vars=extra_template_vars,
-                    )
-
-                    field_metrics = result
-                    example_score = result.score
-                    is_correct = result.is_correct
-
-                except Exception as e:
-                    logger.warning(
-                        "field_metrics_error",
-                        document_id=document.id,
-                        error=str(e),
-                    )
+            # Score prediction (string comparison + optional JsonEvaluator)
+            field_metrics, example_score, is_correct = _score_prediction(
+                predicted_value=predicted_value,
+                expected_value=label.value,
+                field_metrics_config=field_metrics_config,
+                extra_template_vars=extra_template_vars,
+                document_id=document.id,
+            )
 
             return PredictionResult(
                 document_id=document.id,

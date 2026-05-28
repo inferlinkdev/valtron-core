@@ -42,6 +42,7 @@ from valtron_core.recipes.config import (
 )
 from tqdm import tqdm  # type: ignore[import-untyped]
 
+from valtron_core.evaluator import _score_prediction
 from valtron_core.runner import EvaluationResult, EvaluationRunner, PreflightError
 
 from valtron_core.utilities.field_config_generator import infer_field_config
@@ -569,6 +570,180 @@ class ModelEval(BaseRecipe):
         except (json.JSONDecodeError, TypeError):
             field_config = infer_field_config(json.dumps({"label": first_label}))
             return FieldMetricsConfig(config=field_config.model_dump())
+
+    # -------------------------------------------------------------------------
+    # Reevaluation
+    # -------------------------------------------------------------------------
+
+    @staticmethod
+    def _rescore_prediction(
+        prediction: PredictionResult,
+        field_metrics_config: "FieldMetricsConfig | None",
+        extra_template_vars: "dict[str, Any] | None" = None,
+    ) -> PredictionResult:
+        """Re-score a stored prediction without making any LLM calls.
+
+        Delegates to ``_score_prediction`` from the evaluator module, which uses
+        JsonEvaluator when a field_metrics_config is provided and falls back to
+        case-insensitive string comparison otherwise.
+        """
+        field_metrics, example_score, is_correct = _score_prediction(
+            predicted_value=prediction.predicted_value,
+            expected_value=prediction.expected_value,
+            field_metrics_config=field_metrics_config,
+            extra_template_vars=extra_template_vars,
+            document_id=prediction.document_id,
+        )
+        return prediction.model_copy(
+            update={
+                "field_metrics": field_metrics,
+                "example_score": example_score,
+                "is_correct": is_correct,
+            }
+        )
+
+    def reevaluate(
+        self,
+        field_metrics_config: "FieldMetricsConfig | dict[str, Any] | None" = None,
+        data: "list[dict[str, Any]] | None" = None,
+        output_dir: "str | Path | None" = None,
+    ) -> "Path | None":
+        """Re-score stored predictions with a new field_metrics_config or ground truth.
+
+        No LLM calls are made. Only the scoring step is re-run against the
+        ``predicted_value`` / ``expected_value`` pairs already stored in
+        ``self.results``.
+
+        Typical workflow::
+
+            me = ModelEval.load_experiment_results("path/to/run")
+            me.reevaluate(
+                field_metrics_config={"config": {...}},
+                output_dir="path/to/new_run",
+            )
+
+        Args:
+            field_metrics_config: New scoring config. Accepts a raw dict (same
+                format as the ``field_metrics_config`` config key) or a
+                ``FieldMetricsConfig`` instance. When omitted, the existing config
+                on this instance is used.
+            data: Updated ground truth in the same format as the constructor
+                ``data`` argument (``[{"id": ..., "content": ..., "label": ...}]``).
+                Only ``id`` and ``label`` are used; unknown IDs are warned and
+                skipped. Documents not present in the new list keep their previous
+                expected values.
+            output_dir: If provided, writes the re-scored results to this directory
+                via ``save_experiment_results()``. Note: ``metadata.json`` is NOT
+                overwritten if it already exists in that directory -- only the per-
+                model JSON files are updated. Pass a fresh directory to preserve the
+                updated field_metrics_config in the saved metadata.
+
+        Returns:
+            Path to the run directory if ``output_dir`` was provided, else ``None``.
+
+        Raises:
+            ValueError: If ``self.results`` is ``None`` (evaluate or load first).
+        """
+        if self.results is None:
+            raise ValueError(
+                "No results to reevaluate. Call evaluate() or load_experiment_results() first."
+            )
+
+        # Update ground truth labels from caller-supplied data
+        if data is not None:
+            auto_wrap = (
+                self.response_format is not None
+                and bool(data)
+                and all(not isinstance(item.get("label"), (dict, list)) for item in data)
+                and self._is_single_label_field_schema()
+            )
+
+            new_label_map: dict[str, str] = {}
+            for item in data:
+                label_raw = item.get("label", "")
+                if isinstance(label_raw, (dict, list)):
+                    serialized = json.dumps(label_raw)
+                elif auto_wrap:
+                    serialized = json.dumps({"label": str(label_raw)})
+                else:
+                    serialized = str(label_raw)
+                new_label_map[str(item.get("id", ""))] = serialized
+
+            existing_ids: set[str] = {
+                p.document_id
+                for er in self.results
+                for p in er.predictions
+            }
+            for doc_id in new_label_map:
+                if doc_id not in existing_ids:
+                    logger.warning(
+                        "reevaluate_unknown_doc_id",
+                        document_id=doc_id,
+                        action="skipped",
+                    )
+
+            for eval_result in self.results:
+                eval_result.predictions = [
+                    p.model_copy(update={"expected_value": new_label_map[p.document_id]})
+                    if p.document_id in new_label_map
+                    else p
+                    for p in eval_result.predictions
+                ]
+
+            self.data = data
+
+        # Resolve the effective FieldMetricsConfig and update stored config
+        effective_fmc: FieldMetricsConfig | None
+        if field_metrics_config is not None:
+            if isinstance(field_metrics_config, dict):
+                effective_fmc = FieldMetricsConfig.model_validate(field_metrics_config)
+                raw_dict: dict[str, Any] = field_metrics_config
+            else:
+                effective_fmc = field_metrics_config
+                raw_dict = {"config": field_metrics_config.config}
+            self._field_metrics_config_raw = raw_dict
+            self.config.field_metrics_config = raw_dict
+        else:
+            effective_fmc = self._get_field_metrics_config()
+
+        # Build doc_content_map so _rescore_prediction can pass extra_template_vars
+        # (prediction.metadata is not persisted after load_experiment_results)
+        doc_content_map: dict[str, Any] = {
+            str(item.get("id", f"doc_{i}")): item.get("content", "")
+            for i, item in enumerate(self.data)
+        }
+
+        # Re-score all predictions and recompute aggregated metrics
+        for eval_result in self.results:
+            new_predictions = []
+            for p in eval_result.predictions:
+                content = doc_content_map.get(p.document_id)
+                extra_vars: dict[str, Any] = (
+                    {f"example_{k}": v for k, v in content.items()}
+                    if isinstance(content, dict)
+                    else {}
+                )
+                new_predictions.append(
+                    self._rescore_prediction(p, effective_fmc, extra_vars)
+                )
+            eval_result.predictions = new_predictions
+            eval_result.compute_metrics()
+
+        if output_dir is not None:
+            resolved = Path(output_dir)
+            if (resolved / "metadata.json").exists():
+                logger.warning(
+                    "reevaluate_metadata_not_overwritten",
+                    output_dir=str(resolved),
+                    detail=(
+                        "metadata.json already exists and will not be overwritten. "
+                        "Only per-model JSON files will be updated. "
+                        "Pass a fresh output_dir to preserve the new field_metrics_config."
+                    ),
+                )
+            return self.save_experiment_results(output_dir)
+
+        return None
 
     # -------------------------------------------------------------------------
     # Main pipeline
