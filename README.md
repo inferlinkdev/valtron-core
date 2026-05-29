@@ -194,6 +194,17 @@ ModelEval.run()
 evaluation_report.html  ·  models/*.json  ·  metadata.json
 ```
 
+### Unordered-list field metrics
+
+Unordered list fields whose items are scored with metrics that call an external service — either an LLM judge (`comparator` metric with `element_compare: "llm"`) or an embedding service (`element_compare: "embedding"`, or cosine `text_similarity`) — require explicit opt-in via `allow_expensive_comparisons_for` on the list's `metric_config`. This is a safety check so users don't run up unexpected API costs.
+
+Once opted in, the evaluation strategy depends on the leaf:
+
+- **LLM-judge leaves** use **per-item iterative alignment**. For each expected item, one LLM call picks the matching actual item from the candidate set (or returns null). Calls run in parallel via a thread pool. Each call is a single one-field decision, so it scales reliably to lists of hundreds of items. Once alignment is decided, each matched pair is evaluated by recursing through `item_logic` — every leaf (LLM-judge, embedding, or local) runs through its own configured metric and prompt template, exactly the same way it would in a non-list context. Total LLM-call count per list is roughly *k* alignment calls plus *j*·*k* leaf-judge calls (where *j* is the number of LLM-judge leaves per item). When multiple expected items claim the same actual item, the lowest e-index wins; the others become unmatched (false negatives). The alignment model defaults to `gpt-4o-mini` and can be overridden with the `VALTRON_ALIGNER_MODEL` environment variable.
+- **Embedding leaves** compare every expected item against every actual item via the embedding API and do greedy matching on the resulting similarity scores.
+
+The per-item design avoids the global-consistency failures of one-shot full-list alignment (which becomes unreliable past ~30 items because a single LLM response cannot reliably maintain uniqueness and coverage invariants across a long structured output). Each per-item call is a local decision over a tiny schema and scales to lists of hundreds of items.
+
 Full documentation lives in [docs/valtron/](https://valtron.ai/docs/intro). To run the docs site locally:
 
 ```bash
