@@ -150,6 +150,7 @@ class BaseRecipe(ABC):
             prompt_manipulations=self._manipulations_applied,
             model_override_prompts=self._model_override_prompts,
             response_format_schema=getattr(self, "_response_format_schema", None),
+            judge_cost=getattr(self, "_judge_cost", None),
         )
         return run_dir
 

@@ -49,6 +49,7 @@ def save_run_dir(
     prompt_manipulations: "dict[str, list[str]] | None" = None,
     model_override_prompts: "dict[str, str] | None" = None,
     response_format_schema: "dict[str, Any] | None" = None,
+    judge_cost: "dict | None" = None,
 ) -> Path:
     """Write evaluation results to the canonical run directory layout.
 
@@ -69,6 +70,9 @@ def save_run_dir(
             Defaults to ``[]`` when absent.
         model_override_prompts: Mapping of model name → per-model override prompt (pre-manipulation).
             Only present when a model defines its own ``prompt`` field in config.
+        judge_cost: Optional ``{"cost_usd": float, "calls": int}`` of LLM-as-judge /
+            embedding comparison spend for the run, written into metadata as
+            ``total_judge_cost`` / ``judge_call_count``.
 
     Returns:
         Resolved Path to *run_dir*.
@@ -87,6 +91,9 @@ def save_run_dir(
             "response_format_schema": response_format_schema,
             "documents": documents,
         }
+        if judge_cost is not None:
+            metadata["total_judge_cost"] = judge_cost.get("cost_usd", 0.0)
+            metadata["judge_call_count"] = judge_cost.get("calls", 0)
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2, default=str)
 

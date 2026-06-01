@@ -16,6 +16,7 @@ from valtron_core.evaluation.comparison_functions import (
     element_compare_category,
     element_compare_uses_third_party,
 )
+from valtron_core.evaluation.judge_cost import record_judge_cost
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,16 @@ def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tup
         ignore_spaces=params.get("ignore_spaces", False),
     )
     compare_result = comp.compare(expected, actual)
+
+    # Account for judge spend: the comparator computed the API cost of this
+    # comparison but is discarded here, so forward it to the run-level
+    # accumulator before it is lost. Only third-party (llm/embedding/cosine)
+    # comparisons incur cost and count as judge calls.
+    uses_api, _ = element_compare_uses_third_party(
+        params.get("element_compare", "exact"), params
+    )
+    if uses_api:
+        record_judge_cost(comp.total_comparison_cost, comp.comparison_count)
 
     if isinstance(compare_result, bool):
         return (1.0 if compare_result else 0.0), compare_result

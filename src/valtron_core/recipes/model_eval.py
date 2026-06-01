@@ -28,6 +28,7 @@ from valtron_core.decompose import (
     inject_few_shot_into_sub_prompts,
 )
 from valtron_core.evaluation.json_eval import JsonEvaluator
+from valtron_core.evaluation.judge_cost import get_judge_cost, reset_judge_cost
 from valtron_core.few_shot_training_data_generator import (
     FewShotTrainingDataGenerator,
     LabeledExample,
@@ -629,6 +630,9 @@ class ModelEval(BaseRecipe):
 
         field_metrics_config = self._get_field_metrics_config()
 
+        # Track LLM-as-judge / embedding comparison spend incurred during scoring.
+        reset_judge_cost()
+
         if self.few_shot_config and self.few_shot_config.enabled:
             await self._generate_few_shot_data()
 
@@ -651,6 +655,8 @@ class ModelEval(BaseRecipe):
             else:
                 self.results = new_results
                 self._manipulations_applied = new_manipulations
+
+        self._judge_cost = get_judge_cost()
 
 
     async def arun(self, output_dir: "str | Path | None" = None) -> Path:
