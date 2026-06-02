@@ -270,16 +270,28 @@ class EvaluationRunner:
             },
             indent=2,
         )
+        has_llm = any(i.get("category") == "llm" for i in issues)
+        has_embedding = any(i.get("category") == "embedding" for i in issues)
+
+        cost_lines = ""
+        if has_embedding:
+            cost_lines += (
+                "  - For semantic similarity, every expected item is compared against every actual\n"
+                "    item, so the number of API calls grows quickly as your lists grow.\n"
+            )
+        if has_llm:
+            cost_lines += (
+                "  - For LLM grading, the engine makes about one API call per item in each list,\n"
+                "    plus one extra call to match items between expected and actual.\n"
+            )
+
         console.print(
             f"\n[bold red]Pre-flight check failed:[/bold red] your field config contains unordered list field(s) whose\n"
-            f"item comparison calls a 3rd-party service (LLM or embedding API).\n\n"
+            f"item comparison calls an external service (an LLM or an embedding service).\n\n"
             f"[bold yellow]Why this is a problem[/bold yellow]\n"
-            f"  Unordered list matching works by comparing EVERY expected item against EVERY\n"
-            f"  actual item to find the best alignment.  For a list with k items that means\n"
-            f"  k\u00b2 comparisons per document.  Each comparison here triggers an external API call.\n"
-            f"  With [bold]{num_documents}[/bold] document(s) and [bold]{num_models}[/bold] model(s) being evaluated,\n"
-            f"  total API calls \u2248  {num_documents} x k\u00b2 x {num_models}  =  [bold]{num_documents * num_models}[/bold] x k\u00b2\n"
-            f"  (where k is the number of items in the list for each document).\n\n"
+            f"  These comparisons call external APIs and add cost to every document evaluated.\n"
+            f"{cost_lines}"
+            f"  You're evaluating [bold]{num_documents}[/bold] document(s) with [bold]{num_models}[/bold] model(s), so cost scales with both.\n\n"
             f"[bold yellow]Affected fields:[/bold yellow]\n"
             f"{escape(affected_lines)}"
             f"[bold yellow]How to fix this:[/bold yellow]\n"
@@ -439,7 +451,7 @@ class EvaluationRunner:
         labels: list[Label],
         prompt_template: str,
         model: str | dict[str, Any],
-        response_format: "type[BaseModel] | dict | None" = None,
+        response_format: "type[BaseModel] | None" = None,
         field_metrics_config: FieldMetricsConfig | None = None,
         post_extraction_filter: Callable | None = None,
         multi_pass: int = 1,
@@ -657,6 +669,11 @@ class EvaluationRunner:
         if output_formats is None:
             output_formats = ["html", "pdf"]
 
+        if not any(fmt in output_formats for fmt in ("html", "pdf")):
+            raise ValueError(
+                f"output_formats must contain at least one of 'html' or 'pdf', got: {output_formats}"
+            )
+
         from valtron_core.reports import ReportGenerator
 
         # Initialize metadata dict
@@ -760,4 +777,5 @@ class EvaluationRunner:
             if report_path is None:
                 report_path = pdf_path
 
+        assert report_path is not None
         return report_path

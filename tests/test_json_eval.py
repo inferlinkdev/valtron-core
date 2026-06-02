@@ -689,7 +689,7 @@ class TestCheckBuiltinMetricExpensive:
         assert expensive is False
 
     def test_unknown_metric_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError, match="no 3rd-party API declaration"):
+        with pytest.raises(NotImplementedError, match="no category declaration"):
             _check_builtin_metric_expensive("unknown_metric", {})
 
 
