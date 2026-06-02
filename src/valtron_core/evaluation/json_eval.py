@@ -8,7 +8,7 @@ import logging
 import os
 
 import litellm
-from litellm import completion
+from litellm import completion, completion_cost
 
 from valtron_core.evaluation.comparison_functions import (
     Comparator,
@@ -742,6 +742,16 @@ class JsonEvaluator:
                     temperature=0.0,
                     response_format=_PerItemAlignment,
                 )
+
+                # Account for judge spend: each alignment call is a billable LLM
+                # request and is the dominant cost of unordered-list scoring.
+                # Record it before parsing so failed-parse retries are counted too.
+                # Best-effort — a cost-lookup failure must never block scoring.
+                try:
+                    record_judge_cost(completion_cost(completion_response=response), 1)
+                except Exception:  # noqa: BLE001
+                    logger.warning("judge_align_cost_tracking_failed at '%s'", path)
+
                 content = response.choices[0].message.content
                 parsed = _PerItemAlignment.model_validate_json(content)
 
