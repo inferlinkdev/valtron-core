@@ -47,6 +47,7 @@ def _atomic_write(path: Path, content: str) -> None:
     :param path: Destination file path.
     :param content: Full file content to write.
     """
+    path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(content)
     os.replace(str(tmp), str(path))
