@@ -605,7 +605,7 @@ class ModelEval(BaseRecipe):
     def reevaluate(
         self,
         field_metrics_config: "FieldMetricsConfig | dict[str, Any] | None" = None,
-        data: "list[dict[str, Any]] | None" = None,
+        data: "list[dict[str, Any]] | str | Path | None" = None,
         output_dir: "str | Path | None" = None,
     ) -> "Path | None":
         """Re-score stored predictions with a new field_metrics_config or ground truth.
@@ -628,7 +628,8 @@ class ModelEval(BaseRecipe):
                 ``FieldMetricsConfig`` instance. When omitted, the existing config
                 on this instance is used.
             data: Updated ground truth in the same format as the constructor
-                ``data`` argument (``[{"id": ..., "content": ..., "label": ...}]``).
+                ``data`` argument (``[{"id": ..., "content": ..., "label": ...}]``),
+                or a path (str/Path) to a JSON file with that structure.
                 Only ``id`` and ``label`` are used; unknown IDs are warned and
                 skipped. Documents not present in the new list keep their previous
                 expected values.
@@ -648,6 +649,11 @@ class ModelEval(BaseRecipe):
             raise ValueError(
                 "No results to reevaluate. Call evaluate() or load_experiment_results() first."
             )
+
+        # Load data from file path if a string/Path was passed
+        if isinstance(data, (str, Path)):
+            with open(data) as f:
+                data = json.load(f)
 
         # Update ground truth labels from caller-supplied data
         if data is not None:
