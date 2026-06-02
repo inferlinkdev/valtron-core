@@ -33,6 +33,7 @@ from valtron_core.few_shot_training_data_generator import (
     LabeledExample,
 )
 from valtron_core.models import Document, FieldMetricsConfig, Label, PredictionResult
+from valtron_core.progress import ProgressTracker, write_status
 from valtron_core.prompt_optimizer import ExplanationEnhancer
 from valtron_core.recipes.base import BaseRecipe
 from valtron_core.recipes.config import (
@@ -622,6 +623,19 @@ class ModelEval(BaseRecipe):
         """
         logger.info("starting_model_eval_pipeline")
 
+        # Best-effort progress status updates for the pre-evaluation setup window.
+        # The ProgressTracker (initialised inside _run_evaluations) replaces this with
+        # the full per-model schema once evaluation actually begins.
+        def _status(message: str) -> None:
+            if self.output_dir is None:
+                return
+            try:
+                write_status(self.output_dir, message)
+            except Exception:
+                pass
+
+        _status("Preparing run...")
+
         self._preflight_check()
 
         if self._response_format_schema is None and self.response_format is not None:
@@ -630,8 +644,10 @@ class ModelEval(BaseRecipe):
         field_metrics_config = self._get_field_metrics_config()
 
         if self.few_shot_config and self.few_shot_config.enabled:
+            _status("Generating few-shot examples...")
             await self._generate_few_shot_data()
 
+        _status("Preparing prompts...")
         self._model_prompts = await self._prepare_model_prompts()
 
         # Skip models that already have results (supports incremental evaluation)
@@ -1079,6 +1095,25 @@ class ModelEval(BaseRecipe):
             running_cost[0] += pred.cost
             shared_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
 
+        # Initialise the progress tracker so external pollers (e.g. the valtron
+        # web dashboard) can see per-model document progress in real time.  The
+        # absence of progress.json before this point is what signals "still
+        # initialising" (few-shot generation, validation, prompt prep).
+        progress_tracker = None
+        if self.output_dir is not None:
+            try:
+                progress_model_labels = [
+                    (mc.label or getattr(mc, "name", None) or "<unknown>") for mc in effective_models
+                ]
+                progress_tracker = ProgressTracker(
+                    output_dir=self.output_dir,
+                    model_names=progress_model_labels,
+                    docs_per_model=len(documents),
+                )
+            except Exception as e:
+                logger.warning("progress_tracker_init_failed", error=str(e))
+                progress_tracker = None
+
         async def _evaluate_single_model(
             index: int, model_config: Any
         ) -> tuple[int, Any, str, list, str | None]:
@@ -1086,10 +1121,22 @@ class ModelEval(BaseRecipe):
             model_label = model_config.label or model_name
             manipulations = getattr(model_config, "prompt_manipulation", [])
 
+            # Per-model callback wrapper.  The underlying ``_on_doc`` is shared (cost
+            # accounting + tqdm); we layer a tracker.on_doc_complete on top so each
+            # model's progress can be reported independently in progress.json.
+            def _on_doc_with_progress(pred: PredictionResult) -> None:
+                _on_doc(pred)
+                if progress_tracker is not None:
+                    try:
+                        progress_tracker.on_doc_complete(model_label)
+                    except Exception:
+                        pass
+
             # --- Transformer branch (label mode only; guarded at __init__) ---
             if model_config.type == "transformer":
                 result = await self._evaluate_transformer(
-                    model_config, documents, field_metrics_config, on_document_complete=_on_doc
+                    model_config, documents, field_metrics_config,
+                    on_document_complete=_on_doc_with_progress,
                 )
                 return index, result, model_label, [], None
 
@@ -1151,7 +1198,7 @@ class ModelEval(BaseRecipe):
                     post_extraction_filter=post_extraction_filter,
                     multi_pass=multi_pass,
                     _tqdm_bar=shared_bar,
-                    _on_document_complete=_on_doc,
+                    _on_document_complete=_on_doc_with_progress,
                 )
 
             # Propagate label to result objects when it differs from the model name
@@ -1161,6 +1208,14 @@ class ModelEval(BaseRecipe):
                     pred.model = model_label
                 if result.metrics:
                     result.metrics.model = model_label
+
+            # Safety net: ensure the model row is marked "done" in progress.json even
+            # for branches that don't emit per-doc callbacks (e.g., decomposed eval).
+            if progress_tracker is not None:
+                try:
+                    progress_tracker.mark_model_completed(model_label)
+                except Exception:
+                    pass
 
             return index, result, model_label, manipulations, updated_prompt
 
