@@ -8,7 +8,7 @@ import logging
 import os
 
 import litellm
-from litellm import completion
+from litellm import completion, completion_cost
 
 from valtron_core.evaluation.comparison_functions import (
     Comparator,
@@ -16,6 +16,7 @@ from valtron_core.evaluation.comparison_functions import (
     element_compare_category,
     element_compare_uses_third_party,
 )
+from valtron_core.evaluation.judge_cost import record_judge_cost
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +37,16 @@ def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tup
         ignore_spaces=params.get("ignore_spaces", False),
     )
     compare_result = comp.compare(expected, actual)
+
+    # Account for judge spend: the comparator computed the API cost of this
+    # comparison but is discarded here, so forward it to the run-level
+    # accumulator before it is lost. Only third-party (llm/embedding/cosine)
+    # comparisons incur cost and count as judge calls.
+    uses_api, _ = element_compare_uses_third_party(
+        params.get("element_compare", "exact"), params
+    )
+    if uses_api:
+        record_judge_cost(comp.total_comparison_cost, comp.comparison_count)
 
     if isinstance(compare_result, bool):
         return (1.0 if compare_result else 0.0), compare_result
@@ -731,6 +742,16 @@ class JsonEvaluator:
                     temperature=0.0,
                     response_format=_PerItemAlignment,
                 )
+
+                # Account for judge spend: each alignment call is a billable LLM
+                # request and is the dominant cost of unordered-list scoring.
+                # Record it before parsing so failed-parse retries are counted too.
+                # Best-effort — a cost-lookup failure must never block scoring.
+                try:
+                    record_judge_cost(completion_cost(completion_response=response), 1)
+                except Exception:  # noqa: BLE001
+                    logger.warning("judge_align_cost_tracking_failed at '%s'", path)
+
                 content = response.choices[0].message.content
                 parsed = _PerItemAlignment.model_validate_json(content)
 
