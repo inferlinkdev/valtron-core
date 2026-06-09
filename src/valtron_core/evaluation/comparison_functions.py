@@ -73,49 +73,70 @@ AggregationType = Literal["avg", "all", "any"]
 MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE = 10
 
 
-def element_compare_uses_third_party(element_compare: str, params: dict[str, str | float]) -> tuple[bool, str]:
-    """Return ``(uses_third_party, human_readable_description)`` for a given
-    element_compare strategy and its params.
+MetricCategory = Literal["local", "llm", "embedding"]
 
-    This is the **single source of truth** for whether a comparison type calls
-    a 3rd-party API.  It is used by the pre-flight safety check in the runner
-    to detect n²-cost list comparisons before any model is invoked.
+
+def element_compare_category(
+    element_compare: str, params: dict[str, str | float]
+) -> tuple[MetricCategory, str]:
+    """Return ``(category, human_readable_description)`` for an element_compare strategy.
+
+    ``category`` is one of ``"local"`` (no external API call), ``"llm"`` (calls a chat-LLM
+    judge), or ``"embedding"`` (calls an embedding API).  This is the **single source of
+    truth** used by the pre-flight safety check and the auto-LLM-alignment logic in
+    json_eval.py to decide how to evaluate unordered lists.
 
     DEVELOPER NOTE — when adding a new comparison strategy:
-      1. Add a branch here and return ``(True, "<description>")`` if it calls a
-         3rd-party API, or ``(False, "")`` if it runs entirely locally.
+      1. Add a branch here and return the correct category and a description.
       2. Add the new value to ``ElementCompareType``.
-    Omitting either step will raise ``NotImplementedError`` at pre-flight time,
-    making the gap impossible to ship silently.
+    Omitting either step will raise ``NotImplementedError`` at pre-flight time, making
+    the gap impossible to ship silently.
+
+    :param element_compare: The element comparison strategy name.
+    :param params: The metric params dict, used to look up model names for descriptions.
+    :return: A ``(category, description)`` tuple.
     """
     if element_compare == "exact":
-        return False, ""
+        return "local", ""
 
     if element_compare == "text_similarity":
         if params.get("text_similarity_metric") == "cosine":
             model = params.get("embedding_model", "text-embedding-3-small")
-            return True, (
+            return "embedding", (
                 f"text_similarity with cosine metric — calls the embedding API "
                 f"(model='{model}')"
             )
-        return False, ""
+        return "local", ""
 
     if element_compare == "llm":
         model = params.get("llm_model", "gpt-4o-mini")
-        return True, f"LLM comparison (element_compare='llm', model='{model}')"
+        return "llm", f"LLM comparison (element_compare='llm', model='{model}')"
 
     if element_compare == "embedding":
         model = params.get("embedding_model", "text-embedding-3-small")
-        return True, f"embedding comparison (element_compare='embedding', model='{model}')"
+        return "embedding", f"embedding comparison (element_compare='embedding', model='{model}')"
 
     raise NotImplementedError(
-        f"element_compare='{element_compare}' has no 3rd-party API declaration.\n"
+        f"element_compare='{element_compare}' has no category declaration.\n"
         "When adding a new comparison strategy you MUST:\n"
-        "  1. Add a branch in element_compare_uses_third_party() in comparison_functions.py\n"
-        "     and return (True, description) if it calls a 3rd-party API, or (False, '') if not.\n"
+        "  1. Add a branch in element_compare_category() in comparison_functions.py\n"
+        "     and return the correct category ('local' | 'llm' | 'embedding') and a description.\n"
         "  2. Add the value to ElementCompareType.\n"
         "This check exists to prevent accidental n²-cost list evaluations."
     )
+
+
+def element_compare_uses_third_party(element_compare: str, params: dict[str, str | float]) -> tuple[bool, str]:
+    """Return ``(uses_third_party, human_readable_description)`` for an element_compare strategy.
+
+    Thin wrapper over :func:`element_compare_category` preserved for backwards compatibility.
+
+    :param element_compare: The element comparison strategy name.
+    :param params: The metric params dict.
+    :return: A ``(is_third_party, description)`` tuple.
+    """
+    category, desc = element_compare_category(element_compare, params)
+    return category != "local", desc
 
 
 class _MatchResult(BaseModel):
@@ -357,6 +378,14 @@ Respond with only "YES" or "NO"."""
             bool if threshold is set, float (similarity score) if threshold is None
         """
         self.comparison_count += 1
+
+        # Cheap short-circuit: when normalised values are identical, every strategy would
+        # return a positive match.  Skip whatever expensive backend was configured (LLM
+        # round-trip, embedding API calls, BLEU/GLEU computation).  Return type matches
+        # what the configured strategy would have produced (bool vs float) so callers
+        # cannot tell the difference.
+        if self._exact_compare(predicted, expected):
+            return 1.0 if self.is_score_mode() else True
 
         if self.element_compare == "exact":
             return self._exact_compare(predicted, expected)
