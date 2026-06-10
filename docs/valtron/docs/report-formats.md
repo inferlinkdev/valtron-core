@@ -88,9 +88,41 @@ The PDF report is a single file `evaluation_report.pdf` containing all the same 
 |---|---|---|
 | `metadata.json` | Yes | Experiment metadata, documents, prompt |
 | `models/<label>.json` | Yes | Per-model metrics and predictions |
+| `progress.json` | During run only | Live progress state for external pollers (see below) |
 | `evaluation_report.html` | With `"html"` | Main interactive report |
 | `detailed_analysis.html` | With `"html"` | Per-document breakdown |
 | `evaluation_report.pdf` | With `"pdf"` | Full printable report (charts rendered internally via matplotlib, not written to disk) |
+
+### `progress.json`
+
+`progress.json` is written to `output_dir` while a run is in flight and is removed from consideration once the run completes (it is not cleaned up automatically, but its content becomes stale). It is intended for external systems such as a web dashboard that need to poll for live status without coupling to logs.
+
+The file goes through two phases:
+
+**Setup phase** (few-shot generation, prompt preparation, etc.):
+
+```json
+{
+  "started_at": "2026-05-29T15:41:48.996Z",
+  "last_update": "2026-05-29T15:42:01.123Z",
+  "status_message": "Preparing prompts..."
+}
+```
+
+**Evaluation phase** (once model evaluation begins):
+
+```json
+{
+  "started_at": "2026-05-29T15:41:48.996Z",
+  "last_update": "2026-05-29T15:42:10.456Z",
+  "models": [
+    {"name": "gpt-4o", "docs_done": 12, "docs_total": 50, "completed": false},
+    {"name": "gpt-4o-mini", "docs_done": 50, "docs_total": 50, "completed": true}
+  ]
+}
+```
+
+The `name` field for each model entry is the model's `label` if set, otherwise its `name`. The file is absent before the run starts; consumers should treat a missing file as "initialising" rather than an error. Writes are atomic to avoid partial writes.
 
 ---
 
