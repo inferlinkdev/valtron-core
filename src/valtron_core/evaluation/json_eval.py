@@ -4,15 +4,25 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator
 from concurrent.futures import ThreadPoolExecutor
 import json
 import copy
+import logging
 import warnings
 
-from valtron_core.evaluation.comparison_functions import Comparator, element_compare_uses_third_party
+from litellm import completion
+from valtron_core.evaluation.comparison_functions import (
+    Comparator,
+    MetricCategory,
+    element_compare_category,
+)
 from valtron_core.evaluation.comparisons import (
     _embedding_compare,
     _exact_compare,
     _llm_compare,
     _text_similarity_compare,
 )
+import os
+
+logger = logging.getLogger(__name__)
+
 
 MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE = 4
 DEFAULT_LLM_ALIGNER_MODEL = "gpt-4o-mini"
@@ -128,11 +138,11 @@ class ExpensiveListComparisonError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Built-in metric 3rd-party API declarations
+# Built-in metric category declarations
 # ---------------------------------------------------------------------------
 # Every metric in JsonEvaluator.metric_registry MUST be handled in
-# _check_builtin_metric_expensive() below.  When you add a new built-in
-# metric, add a branch there and declare whether it calls a 3rd-party API.
+# _check_builtin_metric_category() below.  When you add a new built-in
+# metric, add a branch there declaring its category.
 # Omitting it raises NotImplementedError at pre-flight time.
 
 _BUILTIN_METRIC_NAMES: frozenset[str] = frozenset({
@@ -159,7 +169,15 @@ def _check_builtin_metric_category(
     :param params: The metric's params dict.
     :return: A ``(category, description)`` tuple.
     """
-    if metric_name in ("exact", "threshold", "exact_compare", "text_similarity"):
+    if metric_name in ("exact", "threshold", "exact_compare"):
+        return "local", ""
+
+    if metric_name == "text_similarity":
+        if params.get("metric") == "cosine":
+            model = params.get("embedding_model", "text-embedding-3-small")
+            return "embedding", (
+                f"text_similarity with cosine metric calls the embedding API (model='{model}')"
+            )
         return "local", ""
 
     if metric_name == "comparator":
@@ -167,10 +185,12 @@ def _check_builtin_metric_category(
         return element_compare_category(element_compare, params)
 
     if metric_name == "llm":
-        return "llm"
-    
+        model = params.get("model", "gpt-4o-mini")
+        return "llm", f"LLM metric (model='{model}')"
+
     if metric_name == "embedding":
-        return "embedding"
+        model = params.get("model", "text-embedding-3-small")
+        return "embedding", f"embedding metric (model='{model}')"
     raise NotImplementedError(
         f"Built-in metric '{metric_name}' has no category declaration.\n"
         "When adding a new metric to JsonEvaluator.metric_registry you MUST:\n"
@@ -178,20 +198,6 @@ def _check_builtin_metric_category(
         "     returning the correct category ('local' | 'llm' | 'embedding').\n"
         "This check exists to prevent accidental n²-cost list evaluations."
     )
-
-
-def _check_builtin_metric_expensive(metric_name: str, params: dict[str, Any]) -> tuple[bool, str]:
-    """Return ``(is_expensive, description)`` for a built-in metric.
-
-    Thin wrapper over :func:`_check_builtin_metric_category` preserved for backwards
-    compatibility with callers that only care about the boolean.
-
-    :param metric_name: The built-in metric name.
-    :param params: The metric's params dict.
-    :return: A ``(is_expensive, description)`` tuple.
-    """
-    category, desc = _check_builtin_metric_category(metric_name, params)
-    return category != "local", desc
 
 
 def _scan_item_logic_for_expensive_metrics(

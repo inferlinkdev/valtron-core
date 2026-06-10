@@ -9,9 +9,7 @@ import pytest
 
 from valtron_core.evaluation.comparison_functions import (
     Comparator,
-    Grader,
     element_compare_category,
-    element_compare_uses_third_party,
 )
 
 
@@ -604,3 +602,110 @@ class TestComparatorStats:
 
         stats = comparator.get_stats()
         assert stats["comparison_count"] == 2
+
+class TestElementCompareCategory:
+    """Tests for the element_compare_category function."""
+
+    def test_exact_returns_local(self) -> None:
+        cat, desc = element_compare_category("exact", {})
+        assert cat == "local"
+        assert desc == ""
+
+    def test_text_similarity_fuzz_returns_local(self) -> None:
+        cat, desc = element_compare_category("text_similarity", {})
+        assert cat == "local"
+        assert desc == ""
+
+    def test_text_similarity_cosine_returns_embedding(self) -> None:
+        cat, desc = element_compare_category("text_similarity", {"text_similarity_metric": "cosine"})
+        assert cat == "embedding"
+        assert "embedding" in desc.lower()
+
+    def test_text_similarity_cosine_includes_model_in_desc(self) -> None:
+        _, desc = element_compare_category(
+            "text_similarity",
+            {"text_similarity_metric": "cosine", "embedding_model": "my-model"},
+        )
+        assert "my-model" in desc
+
+    def test_llm_returns_llm_category(self) -> None:
+        cat, desc = element_compare_category("llm", {})
+        assert cat == "llm"
+        assert "llm" in desc.lower() or "LLM" in desc
+
+    def test_embedding_returns_embedding_category(self) -> None:
+        cat, desc = element_compare_category("embedding", {})
+        assert cat == "embedding"
+        assert "embedding" in desc.lower()
+
+    def test_unknown_strategy_raises_not_implemented(self) -> None:
+        with pytest.raises(NotImplementedError, match="no category declaration"):
+            element_compare_category("unknown_strategy", {})
+
+
+
+@pytest.mark.unit
+class TestComparatorShortCircuit:
+    """Tests for the early-exit short-circuit when predicted matches expected."""
+
+    def test_matching_values_skip_llm_backend(self) -> None:
+        comp = Comparator(element_compare="llm")
+        with patch.object(comp, "_llm_compare") as mock_llm:
+            result = comp.compare("hello", "hello")
+        mock_llm.assert_not_called()
+        assert result is True
+
+    def test_matching_values_skip_embedding_backend(self) -> None:
+        comp = Comparator(element_compare="embedding")
+        with patch.object(comp, "_embedding_compare") as mock_embed:
+            comp.compare("hello", "hello")
+        mock_embed.assert_not_called()
+
+    def test_matching_values_skip_text_similarity_backend(self) -> None:
+        comp = Comparator(element_compare="text_similarity")
+        with patch.object(comp, "_text_similarity_compare") as mock_ts:
+            comp.compare("hello", "hello")
+        mock_ts.assert_not_called()
+
+    def test_non_matching_values_proceed_to_llm_backend(self) -> None:
+        comp = Comparator(element_compare="llm")
+        with patch.object(comp, "_llm_compare", return_value=True) as mock_llm:
+            comp.compare("hello", "world")
+        mock_llm.assert_called_once()
+
+    def test_short_circuit_returns_true_in_bool_mode(self) -> None:
+        comp = Comparator(element_compare="llm")
+        result = comp.compare("same", "same")
+        assert result is True
+
+    def test_short_circuit_returns_float_in_score_mode_embedding(self) -> None:
+        comp = Comparator(element_compare="embedding", embedding_threshold=None)
+        result = comp.compare("same", "same")
+        assert result == 1.0
+
+    def test_short_circuit_returns_float_in_score_mode_text_similarity(self) -> None:
+        comp = Comparator(
+            element_compare="text_similarity",
+            text_similarity_metric="cosine",
+            text_similarity_threshold=None,
+        )
+        result = comp.compare("same", "same")
+        assert result == 1.0
+
+    def test_short_circuit_uses_normalized_comparison(self) -> None:
+        comp = Comparator(element_compare="llm")
+        with patch.object(comp, "_llm_compare") as mock_llm:
+            result = comp.compare("  HELLO  ", "hello")
+        mock_llm.assert_not_called()
+        assert result is True
+
+    def test_short_circuit_case_sensitive_mode_no_skip_on_case_diff(self) -> None:
+        comp = Comparator(element_compare="llm", case_sensitive=True)
+        with patch.object(comp, "_llm_compare", return_value=False) as mock_llm:
+            comp.compare("HELLO", "hello")
+        mock_llm.assert_called_once()
+
+    def test_short_circuit_increments_comparison_count(self) -> None:
+        comp = Comparator(element_compare="llm")
+        comp.compare("same", "same")
+        assert comp.comparison_count == 1

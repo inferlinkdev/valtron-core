@@ -15,7 +15,6 @@ from valtron_core.evaluation.json_eval import (
     AlignmentItem,
     comparator_metric,
     find_expensive_unordered_list_fields,
-    _check_builtin_metric_expensive,
     _check_builtin_metric_category,
     _scan_item_logic_for_expensive_metrics,
     _item_logic_has_llm_judge_leaf,
@@ -659,42 +658,42 @@ class TestFieldConfigRouting:
         assert config.metric_config.allow_expensive_comparisons_for == ["$item"]
 
 
-class TestCheckBuiltinMetricExpensive:
-    """Tests for _check_builtin_metric_expensive."""
+class TestCheckBuiltinMetricCategory:
+    """Tests for _check_builtin_metric_category."""
 
-    def test_exact_is_not_expensive(self):
-        expensive, desc = _check_builtin_metric_expensive("exact", {})
-        assert expensive is False
+    def test_exact_is_local(self):
+        category, desc = _check_builtin_metric_category("exact", {})
+        assert category == "local"
         assert desc == ""
 
-    def test_threshold_is_not_expensive(self):
-        expensive, desc = _check_builtin_metric_expensive("threshold", {})
-        assert expensive is False
+    def test_threshold_is_local(self):
+        category, desc = _check_builtin_metric_category("threshold", {})
+        assert category == "local"
         assert desc == ""
 
-    def test_comparator_with_llm_is_expensive(self):
-        expensive, desc = _check_builtin_metric_expensive("comparator", {"element_compare": "llm"})
-        assert expensive is True
+    def test_comparator_with_llm_is_llm(self):
+        category, desc = _check_builtin_metric_category("comparator", {"element_compare": "llm"})
+        assert category == "llm"
         assert "llm" in desc.lower() or "LLM" in desc
 
-    def test_comparator_with_embedding_is_expensive(self):
-        expensive, desc = _check_builtin_metric_expensive("comparator", {"element_compare": "embedding"})
-        assert expensive is True
+    def test_comparator_with_embedding_is_embedding(self):
+        category, desc = _check_builtin_metric_category("comparator", {"element_compare": "embedding"})
+        assert category == "embedding"
         assert "embedding" in desc.lower()
 
-    def test_comparator_with_exact_is_not_expensive(self):
-        expensive, desc = _check_builtin_metric_expensive("comparator", {"element_compare": "exact"})
-        assert expensive is False
+    def test_comparator_with_exact_is_local(self):
+        category, desc = _check_builtin_metric_category("comparator", {"element_compare": "exact"})
+        assert category == "local"
         assert desc == ""
 
-    def test_comparator_default_element_compare_is_not_expensive(self):
+    def test_comparator_default_element_compare_is_local(self):
         # default element_compare is "exact"
-        expensive, desc = _check_builtin_metric_expensive("comparator", {})
-        assert expensive is False
+        category, desc = _check_builtin_metric_category("comparator", {})
+        assert category == "local"
 
     def test_unknown_metric_raises_not_implemented(self):
         with pytest.raises(NotImplementedError, match="no category declaration"):
-            _check_builtin_metric_expensive("unknown_metric", {})
+            _check_builtin_metric_category("unknown_metric", {})
 
 
 class TestScanItemLogicForExpensiveMetrics:
@@ -1155,52 +1154,52 @@ class TestComparatorMetricDeprecationWarning:
                 comparator_metric("a", "a", {})
 
 
-class TestCheckBuiltinMetricExpensiveNewMetrics:
-    """Tests for the new metric branches in _check_builtin_metric_expensive."""
+class TestCheckBuiltinMetricCategoryNewMetrics:
+    """Tests for the new metric branches in _check_builtin_metric_category."""
 
-    def test_exact_compare_not_expensive(self) -> None:
-        expensive, desc = _check_builtin_metric_expensive("exact_compare", {})
-        assert expensive is False
+    def test_exact_compare_is_local(self) -> None:
+        category, desc = _check_builtin_metric_category("exact_compare", {})
+        assert category == "local"
         assert desc == ""
 
-    def test_text_similarity_fuzz_not_expensive(self) -> None:
-        expensive, desc = _check_builtin_metric_expensive("text_similarity", {"metric": "fuzz_ratio"})
-        assert expensive is False
+    def test_text_similarity_fuzz_is_local(self) -> None:
+        category, desc = _check_builtin_metric_category("text_similarity", {"metric": "fuzz_ratio"})
+        assert category == "local"
 
-    def test_text_similarity_bleu_not_expensive(self) -> None:
-        expensive, desc = _check_builtin_metric_expensive("text_similarity", {"metric": "bleu"})
-        assert expensive is False
+    def test_text_similarity_bleu_is_local(self) -> None:
+        category, desc = _check_builtin_metric_category("text_similarity", {"metric": "bleu"})
+        assert category == "local"
 
-    def test_text_similarity_cosine_is_expensive(self) -> None:
-        expensive, desc = _check_builtin_metric_expensive("text_similarity", {"metric": "cosine"})
-        assert expensive is True
+    def test_text_similarity_cosine_is_embedding(self) -> None:
+        category, desc = _check_builtin_metric_category("text_similarity", {"metric": "cosine"})
+        assert category == "embedding"
         assert "embedding" in desc.lower()
 
     def test_text_similarity_cosine_includes_model(self) -> None:
-        expensive, desc = _check_builtin_metric_expensive(
+        category, desc = _check_builtin_metric_category(
             "text_similarity", {"metric": "cosine", "embedding_model": "my-embed-model"}
         )
-        assert expensive is True
+        assert category == "embedding"
         assert "my-embed-model" in desc
 
-    def test_llm_metric_is_expensive(self) -> None:
-        expensive, desc = _check_builtin_metric_expensive("llm", {})
-        assert expensive is True
+    def test_llm_metric_is_llm(self) -> None:
+        category, desc = _check_builtin_metric_category("llm", {})
+        assert category == "llm"
         assert "llm" in desc.lower() or "LLM" in desc
 
     def test_llm_metric_includes_model(self) -> None:
-        expensive, desc = _check_builtin_metric_expensive("llm", {"model": "claude-3"})
-        assert expensive is True
+        category, desc = _check_builtin_metric_category("llm", {"model": "claude-3"})
+        assert category == "llm"
         assert "claude-3" in desc
 
-    def test_embedding_metric_is_expensive(self) -> None:
-        expensive, desc = _check_builtin_metric_expensive("embedding", {})
-        assert expensive is True
+    def test_embedding_metric_is_embedding(self) -> None:
+        category, desc = _check_builtin_metric_category("embedding", {})
+        assert category == "embedding"
         assert "embedding" in desc.lower()
 
     def test_embedding_metric_includes_model(self) -> None:
-        expensive, desc = _check_builtin_metric_expensive("embedding", {"model": "my-embed"})
-        assert expensive is True
+        category, desc = _check_builtin_metric_category("embedding", {"model": "my-embed"})
+        assert category == "embedding"
         assert "my-embed" in desc
 
 

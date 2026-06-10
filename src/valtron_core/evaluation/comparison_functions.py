@@ -19,21 +19,7 @@ from rapidfuzz import fuzz
 
 ElementCompareType = Literal["exact", "text_similarity", "llm", "embedding"]
 TextSimilarityMetric = Literal["fuzz_ratio", "bleu", "gleu", "cosine"]
-
-
-<<<<<<< HEAD
 MetricCategory = Literal["local", "llm", "embedding"]
-=======
-def element_compare_uses_third_party(element_compare: str, params: dict[str, str | float]) -> tuple[bool, str]:  # noqa: E501
-    warnings.warn(
-        "element_compare_uses_third_party is deprecated; use _check_builtin_metric_expensive "
-        "in valtron_core.evaluation.json_eval instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
-    """Return ``(uses_third_party, human_readable_description)`` for a given
-    element_compare strategy and its params.
->>>>>>> d0beb09 ([refactor] replace Comparator class with standalone comparison functions)
 
 
 def element_compare_category(
@@ -85,18 +71,6 @@ def element_compare_category(
         "This check exists to prevent accidental n²-cost list evaluations."
     )
 
-
-def element_compare_uses_third_party(element_compare: str, params: dict[str, str | float]) -> tuple[bool, str]:
-    """Return ``(uses_third_party, human_readable_description)`` for an element_compare strategy.
-
-    Thin wrapper over :func:`element_compare_category` preserved for backwards compatibility.
-
-    :param element_compare: The element comparison strategy name.
-    :param params: The metric params dict.
-    :return: A ``(is_third_party, description)`` tuple.
-    """
-    category, desc = element_compare_category(element_compare, params)
-    return category != "local", desc
 
 
 class _MatchResult(BaseModel):

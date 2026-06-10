@@ -5,7 +5,7 @@ params. They are designed to be registered directly in JsonEvaluator.metric_regi
 
 To add a new comparison method:
   1. Add a function here following the same signature pattern.
-  2. In json_eval.py, add a branch in _check_builtin_metric_expensive, add the name to
+  2. In json_eval.py, add a branch in _check_builtin_metric_category, add the name to
      _BUILTIN_METRIC_NAMES, and register a lambda in JsonEvaluator.metric_registry.
 """
 
