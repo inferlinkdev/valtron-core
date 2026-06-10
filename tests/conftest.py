@@ -157,7 +157,7 @@ def sample_prediction_results() -> list[PredictionResult]:
             expected_value="positive",
             is_correct=True,
             response_time=0.5,
-            cost=0.0001,
+            llm_cost=0.0001,
             model="gpt-3.5-turbo",
             metadata={"content": "This product is amazing!"},
         ),
@@ -167,7 +167,7 @@ def sample_prediction_results() -> list[PredictionResult]:
             expected_value="negative",
             is_correct=True,
             response_time=0.4,
-            cost=0.0001,
+            llm_cost=0.0001,
             model="gpt-3.5-turbo",
             metadata={"content": "Terrible experience"},
         ),
@@ -177,7 +177,7 @@ def sample_prediction_results() -> list[PredictionResult]:
             expected_value="neutral",
             is_correct=False,
             response_time=0.6,
-            cost=0.0001,
+            llm_cost=0.0001,
             model="gpt-3.5-turbo",
             metadata={"content": "It's okay"},
         ),
@@ -232,7 +232,7 @@ def sample_evaluation_results() -> list[EvaluationResult]:
             expected_value="positive" if i % 2 == 0 else "negative",
             is_correct=True,
             response_time=0.3 + i * 0.1,
-            cost=0.00002,
+            llm_cost=0.00002,
             model="gpt-3.5-turbo",
         )
         for i in range(10)
@@ -265,7 +265,7 @@ def sample_evaluation_results() -> list[EvaluationResult]:
             expected_value="positive" if i % 2 == 0 else "negative",
             is_correct=i != 5,  # One incorrect
             response_time=0.5 + i * 0.1,
-            cost=0.0003,
+            llm_cost=0.0003,
             model="gpt-4",
         )
         for i in range(10)
@@ -298,7 +298,7 @@ def sample_evaluation_results() -> list[EvaluationResult]:
             expected_value="positive" if i % 2 == 0 else "negative",
             is_correct=True,
             response_time=0.8 + i * 0.1,
-            cost=0.0001,
+            llm_cost=0.0001,
             model="gemini/gemini-2.0-flash",
         )
         for i in range(10)
@@ -336,7 +336,7 @@ def sample_evaluation_result_with_field_metrics() -> EvaluationResult:
             expected_value='{"name": "John", "age": 30}',
             is_correct=True,
             response_time=0.5,
-            cost=0.0001,
+            llm_cost=0.0001,
             model="gpt-4",
         ),
     ]

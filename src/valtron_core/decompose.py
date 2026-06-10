@@ -842,7 +842,7 @@ class DecomposedEvaluator:
 
         for field_name, pred in field_predictions:
             sub_results[field_name] = pred.predicted_value
-            total_cost += pred.cost
+            total_cost += pred.llm_cost
             sub_metadata[field_name] = pred.predicted_value
 
         # Merge sub-results
@@ -865,6 +865,8 @@ class DecomposedEvaluator:
             is_correct = comparison_fn(merged_json, label.value, document.content)
             example_score = 1.0 if is_correct else 0.0
 
+        total_evaluation_cost = 0.0
+
         if field_metrics_config:
             try:
                 evaluator = JsonEvaluator(
@@ -876,6 +878,7 @@ class DecomposedEvaluator:
                     label.value,
                     merged_json,
                 )
+                total_evaluation_cost = evaluator.evaluation_cost
                 example_score = field_metrics.score
                 is_correct = field_metrics.is_correct
             except Exception as e:
@@ -895,7 +898,8 @@ class DecomposedEvaluator:
             is_correct=is_correct,
             example_score=example_score,
             response_time=response_time,
-            cost=total_cost,
+            llm_cost=total_cost,
+            evaluation_cost=total_evaluation_cost,
             model=model_name,
             field_metrics=field_metrics,
             metadata={

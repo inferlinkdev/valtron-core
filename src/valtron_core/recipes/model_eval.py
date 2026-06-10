@@ -28,7 +28,6 @@ from valtron_core.decompose import (
     inject_few_shot_into_sub_prompts,
 )
 from valtron_core.evaluation.json_eval import JsonEvaluator
-from valtron_core.evaluation.judge_cost import get_judge_cost, reset_judge_cost
 from valtron_core.few_shot_training_data_generator import (
     FewShotTrainingDataGenerator,
     LabeledExample,
@@ -513,7 +512,8 @@ class ModelEval(BaseRecipe):
                         example_score=p.get("example_score", 0.0),
                         response_time=p.get("response_time", 0.0),
                         original_cost=p.get("original_cost", 0.0),
-                        cost=p.get("cost", 0.0),
+                        llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
+                        evaluation_cost=p.get("evaluation_cost", 0.0),
                         model=model_label,
                         field_metrics=field_metrics,
                     )
@@ -644,9 +644,6 @@ class ModelEval(BaseRecipe):
 
         field_metrics_config = self._get_field_metrics_config()
 
-        # Track LLM-as-judge / embedding comparison spend incurred during scoring.
-        reset_judge_cost()
-
         if self.few_shot_config and self.few_shot_config.enabled:
             _status("Generating few-shot examples...")
             await self._generate_few_shot_data()
@@ -672,7 +669,6 @@ class ModelEval(BaseRecipe):
                 self.results = new_results
                 self._manipulations_applied = new_manipulations
 
-        self._judge_cost = get_judge_cost()
 
 
     async def arun(self, output_dir: "str | Path | None" = None) -> Path:
@@ -1034,7 +1030,7 @@ class ModelEval(BaseRecipe):
                 expected_value=expected_label,
                 is_correct=is_correct,
                 response_time=pred_time,
-                cost=0.0,
+                llm_cost=0.0,
                 model=model_name,
                 metadata={"content": doc.content},
             )
@@ -1045,7 +1041,7 @@ class ModelEval(BaseRecipe):
         if model_config.cost_rate is not None:
             unit_seconds = _parse_time_unit_to_seconds(model_config.cost_rate_time_unit)
             for p in result.predictions:
-                p.cost = float(model_config.cost_rate) * (p.response_time / unit_seconds)
+                p.llm_cost = float(model_config.cost_rate) * (p.response_time / unit_seconds)
             result.llm_config = result.llm_config or {}
             result.llm_config["cost_rate"] = model_config.cost_rate
             result.llm_config["cost_rate_time_unit"] = model_config.cost_rate_time_unit
@@ -1098,7 +1094,7 @@ class ModelEval(BaseRecipe):
         shared_bar = tqdm(total=total_docs, unit="doc", desc="Evaluating")
 
         def _on_doc(pred: PredictionResult) -> None:
-            running_cost[0] += pred.cost
+            running_cost[0] += pred.llm_cost + pred.evaluation_cost
             shared_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
 
         # Initialise the progress tracker so external pollers (e.g. the valtron

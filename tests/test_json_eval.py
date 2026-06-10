@@ -1569,3 +1569,86 @@ class TestEvalListUnorderedWithLlmAlignment:
                 )
         # Only A[1] has id="A" matching E[0].id="A"; A[0] has id="B" so it should be filtered
         assert captured_candidate_counts == [1]
+
+
+class TestEvaluationCostAccumulation:
+    """Tests for JsonEvaluator.evaluation_cost instance-level accumulation."""
+
+    # --- accumulator unit tests (no LLM calls) ---
+
+    @pytest.mark.unit
+    def test_evaluation_cost_starts_at_zero(self):
+        assert JsonEvaluator().evaluation_cost == 0.0
+
+    @pytest.mark.unit
+    def test_record_evaluation_cost_accumulates(self):
+        evaluator = JsonEvaluator()
+        evaluator._record_evaluation_cost(0.005)
+        evaluator._record_evaluation_cost(0.003)
+        assert evaluator.evaluation_cost == pytest.approx(0.008)
+
+    @pytest.mark.unit
+    def test_record_evaluation_cost_ignores_zero(self):
+        evaluator = JsonEvaluator()
+        evaluator._record_evaluation_cost(0.0)
+        assert evaluator.evaluation_cost == 0.0
+
+    @pytest.mark.unit
+    def test_evaluation_cost_isolated_per_instance(self):
+        evaluator_a = JsonEvaluator()
+        evaluator_b = JsonEvaluator()
+        evaluator_a._record_evaluation_cost(0.007)
+        assert evaluator_a.evaluation_cost == pytest.approx(0.007)
+        assert evaluator_b.evaluation_cost == 0.0
+
+    # --- _comparator_metric records cost from _run_comparator ---
+
+    @pytest.mark.unit
+    def test_comparator_metric_bound_method_records_cost(self):
+        evaluator = JsonEvaluator()
+        with patch(
+            "valtron_core.evaluation.json_eval._run_comparator",
+            return_value=(1.0, True, 0.002, 1),
+        ):
+            evaluator._comparator_metric("a", "a", {})
+        assert evaluator.evaluation_cost == pytest.approx(0.002)
+
+    @pytest.mark.unit
+    def test_comparator_metric_bound_method_zero_cost_not_recorded(self):
+        evaluator = JsonEvaluator()
+        with patch(
+            "valtron_core.evaluation.json_eval._run_comparator",
+            return_value=(1.0, True, 0.0, 0),
+        ):
+            evaluator._comparator_metric("a", "a", {})
+        assert evaluator.evaluation_cost == 0.0
+
+    # --- _llm_align_one_item calls _record_evaluation_cost ---
+
+    @pytest.mark.unit
+    def test_llm_align_one_item_records_cost(self):
+        evaluator = JsonEvaluator()
+        with patch(
+            "valtron_core.evaluation.json_eval.completion",
+            return_value=_make_completion_mock(0),
+        ):
+            with patch("valtron_core.evaluation.json_eval.completion_cost", return_value=0.005):
+                with patch.object(evaluator, "_record_evaluation_cost") as mock_record:
+                    evaluator._llm_align_one_item("a", ["a"], [0], "items[0]")
+        mock_record.assert_called_once_with(0.005)
+
+    @pytest.mark.unit
+    def test_llm_align_one_item_soft_fails_on_cost_error(self):
+        evaluator = JsonEvaluator()
+        with patch(
+            "valtron_core.evaluation.json_eval.completion",
+            return_value=_make_completion_mock(0),
+        ):
+            with patch(
+                "valtron_core.evaluation.json_eval.completion_cost",
+                side_effect=RuntimeError("billing unavailable"),
+            ):
+                # Should not raise; soft-fail means the result is still returned
+                result = evaluator._llm_align_one_item("a", ["a"], [0], "items[0]")
+        assert result == 0
+        assert evaluator.evaluation_cost == 0.0

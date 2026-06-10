@@ -6,6 +6,7 @@ import json
 import copy
 import logging
 import os
+import threading
 
 import litellm
 from litellm import completion, completion_cost
@@ -16,14 +17,21 @@ from valtron_core.evaluation.comparison_functions import (
     element_compare_category,
     element_compare_uses_third_party,
 )
-from valtron_core.evaluation.judge_cost import record_judge_cost
 
 logger = logging.getLogger(__name__)
 
 MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE = 4
 DEFAULT_LLM_ALIGNER_MODEL = "gpt-4o-mini"
 
-def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
+def _run_comparator(
+    expected: Any, actual: Any, params: dict[str, Any]
+) -> tuple[float, bool, float, int]:
+    """Run a Comparator and return (score, is_correct, cost_usd, call_count).
+
+    Pure function with no side effects. Both ``comparator_metric`` and
+    ``JsonEvaluator._comparator_metric`` delegate here so cost handling is not
+    duplicated.
+    """
     comp = Comparator(
         element_compare=params.get("element_compare", "exact"),
         text_similarity_threshold=params.get("text_similarity_threshold", None),
@@ -38,25 +46,24 @@ def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tup
     )
     compare_result = comp.compare(expected, actual)
 
-    # Account for judge spend: the comparator computed the API cost of this
-    # comparison but is discarded here, so forward it to the run-level
-    # accumulator before it is lost. Only third-party (llm/embedding/cosine)
-    # comparisons incur cost and count as judge calls.
-    uses_api, _ = element_compare_uses_third_party(
-        params.get("element_compare", "exact"), params
-    )
-    if uses_api:
-        record_judge_cost(comp.total_comparison_cost, comp.comparison_count)
+    uses_api, _ = element_compare_uses_third_party(params.get("element_compare", "exact"), params)
+    cost_usd = comp.total_comparison_cost if uses_api else 0.0
+    call_count = comp.comparison_count if uses_api else 0
 
     if isinstance(compare_result, bool):
-        return (1.0 if compare_result else 0.0), compare_result
+        return (1.0 if compare_result else 0.0), compare_result, cost_usd, call_count
 
     threshold = params.get("comparison_threshold", None) or params.get("text_similarity_threshold", None)
     if threshold is not None:
-        is_correct = compare_result >= threshold
-        return compare_result, is_correct
+        return compare_result, compare_result >= threshold, cost_usd, call_count
 
-    return compare_result, True
+    return compare_result, True, cost_usd, call_count
+
+
+def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
+    """Public comparator metric callable. Cost is not tracked; use JsonEvaluator for that."""
+    score, is_correct, _, _ = _run_comparator(expected, actual, params)
+    return score, is_correct
 
 
 class LeafMetricConfig(BaseModel):
@@ -405,12 +412,14 @@ class JsonEvaluator:
         custom_aggs: dict[str, callable] | None = None,
     ):
         self._template_vars: dict[str, Any] = {}
+        self._evaluation_cost_usd: float = 0.0
+        self._evaluation_cost_lock = threading.Lock()
 
         # Metric Registry: (expected, actual, params) -> tuple[float, bool]:
         self.metric_registry = {
             "exact": lambda e, a, p: 1.0 if e == a else 0.0,
             "threshold": lambda e, a, p: 1.0 if (a or 0) >= p.get("min", 0) else 0.0,
-            "comparator": comparator_metric,
+            "comparator": self._comparator_metric,
         }
         if custom_metrics:
             self.metric_registry.update(custom_metrics)
@@ -435,6 +444,21 @@ class JsonEvaluator:
         if total_weight == 0:
             return 0.0
         return sum(getattr(res, field) * res.weight for res in items) / total_weight
+
+    def _record_evaluation_cost(self, cost_usd: float) -> None:
+        with self._evaluation_cost_lock:
+            self._evaluation_cost_usd += float(cost_usd or 0.0)
+
+    @property
+    def evaluation_cost(self) -> float:
+        with self._evaluation_cost_lock:
+            return self._evaluation_cost_usd
+
+    def _comparator_metric(self, expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
+        score, is_correct, cost_usd, call_count = _run_comparator(expected, actual, params)
+        if cost_usd:
+            self._record_evaluation_cost(cost_usd)
+        return score, is_correct
 
     def evaluate(
         self,
@@ -748,9 +772,9 @@ class JsonEvaluator:
                 # Record it before parsing so failed-parse retries are counted too.
                 # Best-effort — a cost-lookup failure must never block scoring.
                 try:
-                    record_judge_cost(completion_cost(completion_response=response), 1)
+                    self._record_evaluation_cost(completion_cost(completion_response=response))
                 except Exception:  # noqa: BLE001
-                    logger.warning("judge_align_cost_tracking_failed at '%s'", path)
+                    logger.warning("evaluation_cost_tracking_failed at '%s'", path)
 
                 content = response.choices[0].message.content
                 parsed = _PerItemAlignment.model_validate_json(content)

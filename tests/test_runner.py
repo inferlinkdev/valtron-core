@@ -54,7 +54,7 @@ class TestSaveResultToRunDir:
                     expected_value="positive",
                     is_correct=True,
                     response_time=0.5,
-                    cost=0.001,
+                    llm_cost=0.001,
                     model="gpt-3.5-turbo",
                 )
             ],
@@ -160,7 +160,8 @@ class TestLoadResultsFromRunDir:
                     "document_id": "doc-1",
                     "predicted_value": "positive",
                     "original_cost": 0.001,
-                    "cost": 0.001,
+                    "llm_cost": 0.001,
+                    "evaluation_cost": 0.0,
                     "response_time": 0.5,
                     "is_correct": True,
                     "example_score": 1.0,

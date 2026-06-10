@@ -327,7 +327,8 @@ class DocumentLoader:
 
                         is_correct = item.get("is_correct", False) or _normalize(predicted) == _normalize(expected)
                         response_time = float(item.get("response_time", 0.0) or 0.0)
-                        cost = float(item.get("cost", 0.0) or 0.0)
+                        cost = float(item.get("llm_cost", item.get("cost", 0.0)) or 0.0)
+                        evaluation_cost = float(item.get("evaluation_cost", 0.0) or 0.0)
                         example_score = item.get("example_score", None)
 
                         # Load field metrics if available
@@ -358,7 +359,8 @@ class DocumentLoader:
                                 expected_value=expected,
                                 is_correct=is_correct,
                                 response_time=response_time,
-                                cost=cost,
+                                llm_cost=cost,
+                                evaluation_cost=evaluation_cost,
                                 example_score=example_score,
                                 model=model_name,
                                 metadata=metadata,

@@ -82,7 +82,7 @@ class BERTEvaluator:
                 is_correct=is_correct,
                 response_time=response_time,
                 original_cost=0.0,
-                cost=0.0,  # BERT inference is free
+                llm_cost=0.0,
                 model="bert-local",
                 metadata={"content": document.content},
             )
@@ -105,7 +105,7 @@ class BERTEvaluator:
                 is_correct=False,
                 response_time=response_time,
                 original_cost=0.0,
-                cost=0.0,
+                llm_cost=0.0,
                 model="bert-local",
                 metadata={"content": document.content, "error": str(e)},
             )
