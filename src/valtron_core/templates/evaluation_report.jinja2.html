@@ -1042,7 +1042,7 @@
             <th>Documents</th>
             <th>Model</th>
             <th>Prompt</th>
-            {% if has_field_metrics and all_field_names|length > 1 %}<th>Performance Rank <span class="field-info-icon" onclick="showPerformanceRankTooltip(this)">i</span></th>{% else %}<th>Accuracy</th>{% endif %}
+            {% if has_field_metrics and all_field_names|length > 1 %}<th>Avg. Score</th>{% else %}<th>Accuracy</th>{% endif %}
             <th>Total Cost</th>
             <th>Avg Cost/Doc</th>
             <th>Total Time</th>
@@ -1066,9 +1066,8 @@
             </td>
             <td>
               {% if has_field_metrics and all_field_names|length > 1 %}
-              {% set rank_info = performance_ranks[result.model] %}
-              <span class="{% if rank_info.rank == 1 %}metric-best{% else %}metric-value{% endif %}">
-                #{{ rank_info.rank }}{% if rank_info.delta_pct < 0 %} <span style="font-size:0.85em;opacity:0.7">{{ "%.2f"|format(rank_info.delta_pct) }}%</span>{% endif %}
+              <span class="metric-value">
+                {{ "%.2f"|format(result.metrics.average_example_score * 100) }}%
               </span>
               {% elif has_field_metrics and all_field_names|length == 1 %}
               {% set _sf = all_field_names | first %}
@@ -2096,7 +2095,6 @@
           event.stopPropagation();
       }
 
-      // Performance Rank column header tooltip for the summary table (shown when per-field metrics are used)
       function formatCostRate(costRate, timeUnit) {
           const m = timeUnit.match(/^(\d+(?:\.\d+)?)\s*(s|sec|seconds?|m|min|minutes?|h|hr|hours?)$/i);
           if (!m) return `$${costRate.toFixed(2)} per ${timeUnit}`;
@@ -2125,36 +2123,6 @@
 
           const rect = el.getBoundingClientRect();
           const popWidth = 380;
-          let left = rect.left + window.scrollX;
-          if (left + popWidth > window.innerWidth - 16) {
-              left = window.innerWidth - popWidth - 16 + window.scrollX;
-          }
-          popover.style.left = Math.max(8, left) + 'px';
-          popover.style.top = (rect.bottom + window.scrollY + 6) + 'px';
-          popover.style.display = 'block';
-
-          setTimeout(() => {
-              document.addEventListener('click', function hidePopover(e) {
-                  if (!popover.contains(e.target) && e.target !== el) {
-                      popover.style.display = 'none';
-                      document.removeEventListener('click', hidePopover);
-                  }
-              });
-          }, 100);
-
-          event.stopPropagation();
-      }
-
-      function showPerformanceRankTooltip(el) {
-          const popover = document.getElementById('fieldInfoPopover');
-
-          let html = '<div class="fip-title">Performance Rank</div>';
-          html += '<div class="fip-desc">Models are ranked by their mean per-document score — a continuous 0–100% value that averages each field\'s score across all documents. Unlike binary accuracy (all-or-nothing per document), this gives partial credit for partially correct results, making it a more sensitive indicator of true model quality. The delta shown below the rank is the percentage-point gap from the top-scoring model.</div>';
-
-          popover.innerHTML = html;
-
-          const rect = el.getBoundingClientRect();
-          const popWidth = 420;
           let left = rect.left + window.scrollX;
           if (left + popWidth > window.innerWidth - 16) {
               left = window.innerWidth - popWidth - 16 + window.scrollX;

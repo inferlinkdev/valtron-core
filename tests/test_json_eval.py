@@ -548,6 +548,100 @@ class TestJsonEvaluatorEdgeCases:
         assert result.score == 0.0
 
 
+class TestListSoftF1Scoring:
+    """Soft F1 scoring: list score uses continuous item scores; tp/fp/fn stay as hard counts.
+
+    To get fractional item scores without a threshold (which forces 0/1), we use
+    text_similarity with no threshold. To force all_correct=False (so the score=1.0
+    shortcut is skipped), we use unequal list lengths so some expected items go unmatched.
+    """
+
+    # No threshold: _text_similarity_compare returns raw float. all_correct=False because
+    # len(expected) != len(actual), so the list has unmatched items.
+    _ITEM_LOGIC = {
+        "type": "leaf",
+        "metric_config": {
+            "metric": "text_similarity",
+            "params": {"metric": "fuzz_ratio"},
+        },
+    }
+
+    def _config(self, ordered: bool) -> dict:
+        return {
+            "type": "object",
+            "fields": {
+                "items": {
+                    "type": "list",
+                    "metric_config": {"ordered": ordered, "item_logic": self._ITEM_LOGIC},
+                }
+            },
+        }
+
+    @pytest.mark.unit
+    def test_unordered_soft_f1_exceeds_hard_f1(self) -> None:
+        """Soft F1 > hard F1 when a near-match item gets partial credit."""
+        evaluator = JsonEvaluator()
+        # 3 expected, 2 actual: "apple" exact, "bananaa" near-matches "banana" (~0.92),
+        # "cherry" unmatched. Hard tp=1 (only exact "apple" is_correct=True via no threshold
+        # means is_correct=True for all, but "cherry" has no pair so a_idx=-1).
+        # Actually with no threshold is_correct=True always, so hard tp = len(matched_e).
+        # "bananaa" aligns with "banana" (score ~0.92 >= match_threshold 0.5) -> matched.
+        # "cherry" has no actual counterpart -> unmatched (a_idx=-1).
+        # matched_e={0,1}, len(exp)=3 -> all_correct=False (counts differ).
+        # hard tp=2, hard precision=2/2=1.0, hard recall=2/3, hard_f1=0.8
+        # soft_tp=1.0+0.92=1.92, soft_precision=1.92/2=0.96, soft_recall=1.92/3=0.64, soft_f1~0.77
+        # soft_f1 < hard_f1 here because recall drops. The key property: score < 1.0 and != 0.0.
+        result = evaluator.evaluate(
+            self._config(ordered=False),
+            {"items": ["apple", "banana", "cherry"]},
+            {"items": ["apple", "bananaa"]},
+        )
+        list_result = result.children["items"]
+        assert 0.0 < list_result.score < 1.0
+        assert list_result.tp == 2.0   # hard: both actual items aligned
+        assert list_result.fn == 1.0   # hard: "cherry" unmatched
+
+    @pytest.mark.unit
+    def test_ordered_soft_f1_partial_credit(self) -> None:
+        """Ordered: near-match item contributes fractional soft_tp, score is between 0 and 1."""
+        evaluator = JsonEvaluator()
+        # 3 expected, 2 actual: positions 0 and 1 compared, position 2 unmatched.
+        # "apple"/"apple" -> score=1.0; "banana"/"bananaa" -> score~0.92.
+        # matched=2 (both is_correct=True, no threshold), len(exp)=3 -> is_correct=False on list.
+        # soft_tp=1.0+~0.92=~1.92 vs hard tp=2.
+        result = evaluator.evaluate(
+            self._config(ordered=True),
+            {"items": ["apple", "banana", "cherry"]},
+            {"items": ["apple", "bananaa"]},
+        )
+        list_result = result.children["items"]
+        assert 0.0 < list_result.score < 1.0
+        assert list_result.tp == 2.0   # hard: both positional pairs have is_correct=True
+        assert list_result.fn == 1.0   # hard: "cherry" at index 2 unmatched
+
+    @pytest.mark.unit
+    def test_exact_match_returns_one(self) -> None:
+        """When all items match exactly, score is still 1.0."""
+        evaluator = JsonEvaluator()
+        result = evaluator.evaluate(
+            self._config(ordered=False),
+            {"items": ["apple", "banana"]},
+            {"items": ["banana", "apple"]},
+        )
+        assert result.children["items"].score == 1.0
+
+    @pytest.mark.unit
+    def test_ordered_exact_match_returns_one(self) -> None:
+        """Ordered exact match: score is 1.0."""
+        evaluator = JsonEvaluator()
+        result = evaluator.evaluate(
+            self._config(ordered=True),
+            {"items": ["apple", "banana"]},
+            {"items": ["apple", "banana"]},
+        )
+        assert result.children["items"].score == 1.0
+
+
 class TestComparatorMetric:
     """Tests for the comparator_metric function."""
 

@@ -690,10 +690,15 @@ class JsonEvaluator:
 
         precision = matched / len(act) if act else 0
         recall = matched / len(exp) if exp else 0
-        f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
+        soft_tp = sum(a.result.score for a in alignments if a.a_idx >= 0)
+        soft_precision = soft_tp / len(act) if act else 0.0
+        soft_recall = soft_tp / len(exp) if exp else 0.0
+        soft_f1 = (2 * soft_precision * soft_recall) / (soft_precision + soft_recall) if (soft_precision + soft_recall) > 0 else 0.0
+
         return EvalResult(
             path=path,
-            score=f1,
+            score=soft_f1,
             weight=config.weight,
             metric="list_ordered_f1",
             alignment=alignments,
@@ -758,11 +763,16 @@ class JsonEvaluator:
 
         precision = len(matched_a) / len(act) if act else 0
         recall = len(matched_e) / len(exp) if exp else 0
-        f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
+        soft_tp = sum(a.result.score for a in alignments if a.a_idx >= 0)
+        soft_precision = soft_tp / len(act) if act else 0.0
+        soft_recall = soft_tp / len(exp) if exp else 0.0
+        soft_f1 = (2 * soft_precision * soft_recall) / (soft_precision + soft_recall) if (soft_precision + soft_recall) > 0 else 0.0
+
         all_correct = len(matched_e) == len(exp) and len(matched_a) == len(act) and all(a.result.is_correct for a in alignments)
         return EvalResult(
             path=path,
-            score=1.0 if all_correct else f1,
+            score=1.0 if all_correct else soft_f1,
             weight=config.weight,
             metric="list_greedy_f1",
             alignment=alignments,
@@ -1002,7 +1012,12 @@ class JsonEvaluator:
 
         precision = len(matched_a) / len(act) if act else 0
         recall = len(matched_e) / len(exp) if exp else 0
-        f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
+        soft_tp = sum(a.result.score for a in alignments if a.a_idx >= 0)
+        soft_precision = soft_tp / len(act) if act else 0.0
+        soft_recall = soft_tp / len(exp) if exp else 0.0
+        soft_f1 = (2 * soft_precision * soft_recall) / (soft_precision + soft_recall) if (soft_precision + soft_recall) > 0 else 0.0
+
         all_correct = (
             len(matched_e) == len(exp)
             and len(matched_a) == len(act)
@@ -1011,7 +1026,7 @@ class JsonEvaluator:
 
         return EvalResult(
             path=path,
-            score=1.0 if all_correct else f1,
+            score=1.0 if all_correct else soft_f1,
             weight=config.weight,
             metric="list_llm_aligned_iter_f1",
             alignment=alignments,
