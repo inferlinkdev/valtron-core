@@ -1499,3 +1499,402 @@ class TestNewMetricsExpensiveListGuard:
                 result = evaluator.evaluate(config, ["a"], ["a"])
 
         assert result is not None
+
+
+class TestItemLogicHasLlmJudgeLeaf:
+    """Tests for _item_logic_has_llm_judge_leaf."""
+
+    def test_none_returns_false(self):
+        assert _item_logic_has_llm_judge_leaf(None) is False
+
+    def test_leaf_exact_returns_false(self):
+        config = FieldConfig(type="leaf", metric_config=LeafMetricConfig(metric="exact"))
+        assert _item_logic_has_llm_judge_leaf(config) is False
+
+    def test_leaf_comparator_llm_returns_true(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "comparator", "params": {"element_compare": "llm"}},
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is True
+
+    def test_leaf_llm_metric_returns_true(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "llm", "params": {}},
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is True
+
+    def test_leaf_comparator_embedding_returns_false(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "comparator", "params": {"element_compare": "embedding"}},
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is False
+
+    def test_object_with_llm_field_returns_true(self):
+        config = FieldConfig.model_validate({
+            "type": "object",
+            "fields": {
+                "name": {"type": "leaf", "metric_config": {"metric": "exact"}},
+                "description": {
+                    "type": "leaf",
+                    "metric_config": {"metric": "llm", "params": {}},
+                },
+            },
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is True
+
+    def test_object_without_llm_field_returns_false(self):
+        config = FieldConfig.model_validate({
+            "type": "object",
+            "fields": {
+                "name": {"type": "leaf", "metric_config": {"metric": "exact"}},
+                "score": {"type": "leaf"},
+            },
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is False
+
+    def test_nested_list_with_llm_leaf_returns_true(self):
+        config = FieldConfig.model_validate({
+            "type": "list",
+            "metric_config": {
+                "item_logic": {
+                    "type": "leaf",
+                    "metric_config": {"metric": "llm", "params": {}},
+                },
+            },
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is True
+
+    def test_nested_list_without_llm_leaf_returns_false(self):
+        config = FieldConfig.model_validate({
+            "type": "list",
+            "metric_config": {"item_logic": {"type": "leaf"}},
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is False
+
+
+class TestScanIssuesIncludeCategory:
+    """Tests that _scan_item_logic_for_expensive_metrics includes a 'category' key in issues."""
+
+    def test_builtin_llm_issue_has_category_llm(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "comparator", "params": {"element_compare": "llm"}},
+        })
+        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
+        assert len(issues) == 1
+        assert issues[0]["category"] == "llm"
+
+    def test_builtin_embedding_issue_has_category_embedding(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "comparator", "params": {"element_compare": "embedding"}},
+        })
+        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
+        assert len(issues) == 1
+        assert issues[0]["category"] == "embedding"
+
+    def test_new_llm_metric_issue_has_category_llm(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "llm", "params": {}},
+        })
+        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
+        assert len(issues) == 1
+        assert issues[0]["category"] == "llm"
+
+    def test_new_embedding_metric_issue_has_category_embedding(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "embedding", "params": {}},
+        })
+        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
+        assert len(issues) == 1
+        assert issues[0]["category"] == "embedding"
+
+    def test_custom_metric_issue_has_category_custom(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "my_custom"},
+        })
+        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset({"my_custom"}))
+        assert len(issues) == 1
+        assert issues[0]["category"] == "custom"
+
+    def test_cheap_metric_produces_no_issues(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "exact"},
+        })
+        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
+        assert issues == []
+
+
+def _make_alignment_mock(matched_a_idx: int | None) -> Mock:
+    """Return a mock litellm completion response for per-item alignment."""
+    idx_json = "null" if matched_a_idx is None else str(matched_a_idx)
+    msg = Mock()
+    msg.content = f'{{"matched_a_idx": {idx_json}}}'
+    choice = Mock()
+    choice.message = msg
+    response = Mock()
+    response.choices = [choice]
+    return response
+
+
+def _make_leaf_yes_mock() -> Mock:
+    """Return a mock litellm completion response that returns YES."""
+    response = Mock()
+    response.choices = [Mock()]
+    response.choices[0].message.content = "YES"
+    return response
+
+
+class TestLlmAlignmentRouting:
+    """Tests that _eval_list routes to the right path based on item_logic content."""
+
+    def _make_llm_list_config(self):
+        return {
+            "type": "object",
+            "fields": {
+                "items": {
+                    "type": "list",
+                    "metric_config": {
+                        "ordered": False,
+                        "allow_expensive_comparisons_for": ["$item"],
+                        "item_logic": {
+                            "type": "leaf",
+                            "metric_config": {"metric": "llm", "params": {}},
+                        },
+                    },
+                },
+            },
+        }
+
+    def test_llm_judge_leaf_routes_to_llm_alignment_metric(self):
+        evaluator = JsonEvaluator()
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    result = evaluator.evaluate(
+                        self._make_llm_list_config(), {"items": ["a"]}, {"items": ["a"]}
+                    )
+        assert result.children["items"].metric == "list_llm_aligned_iter_f1"
+
+    def test_no_llm_judge_leaf_uses_greedy_path(self):
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "object",
+            "fields": {
+                "items": {
+                    "type": "list",
+                    "metric_config": {
+                        "ordered": False,
+                        "item_logic": {"type": "leaf"},
+                    },
+                },
+            },
+        }
+        result = evaluator.evaluate(config, {"items": ["a"]}, {"items": ["a"]})
+        assert result.children["items"].metric == "list_greedy_f1"
+
+    def test_ordered_list_with_llm_leaf_uses_ordered_path(self):
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "object",
+            "fields": {
+                "items": {
+                    "type": "list",
+                    "metric_config": {
+                        "ordered": True,
+                        "item_logic": {
+                            "type": "leaf",
+                            "metric_config": {"metric": "llm", "params": {}},
+                        },
+                    },
+                },
+            },
+        }
+        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                result = evaluator.evaluate(config, {"items": ["a"]}, {"items": ["a"]})
+        assert result.children["items"].metric == "list_ordered_f1"
+
+
+@pytest.mark.unit
+class TestEvalListUnorderedWithLlmAlignment:
+    """Tests for _eval_list_unordered_with_llm_alignment."""
+
+    def _make_config(self, extra_fields: dict | None = None):
+        mc: dict = {
+            "ordered": False,
+            "allow_expensive_comparisons_for": ["$item"],
+            "item_logic": {
+                "type": "leaf",
+                "metric_config": {"metric": "llm", "params": {}},
+            },
+        }
+        if extra_fields:
+            mc.update(extra_fields)
+        return {
+            "type": "object",
+            "fields": {"items": {"type": "list", "metric_config": mc}},
+        }
+
+    def test_both_empty_returns_perfect_score(self):
+        evaluator = JsonEvaluator()
+        result = evaluator.evaluate(self._make_config(), {"items": []}, {"items": []})
+        items = result.children["items"]
+        assert items.score == 1.0
+        assert items.is_correct is True
+        assert items.details.get("aligner_used") is True
+
+    def test_empty_expected_nonempty_actual_returns_zero_score(self):
+        evaluator = JsonEvaluator()
+        result = evaluator.evaluate(self._make_config(), {"items": []}, {"items": ["a", "b"]})
+        items = result.children["items"]
+        assert items.score == 0.0
+        assert items.is_correct is False
+        assert items.fp == 2
+        assert items.fn == 0
+        assert items.tp == 0
+
+    def test_successful_alignment_perfect_match(self):
+        evaluator = JsonEvaluator()
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    result = evaluator.evaluate(
+                        self._make_config(), {"items": ["apple"]}, {"items": ["apple"]}
+                    )
+        items = result.children["items"]
+        assert items.tp == 1
+        assert items.fn == 0
+        assert items.fp == 0
+        assert items.is_correct is True
+
+    def test_aligner_returns_none_leaves_item_unmatched(self):
+        evaluator = JsonEvaluator()
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(None)):
+            result = evaluator.evaluate(self._make_config(), {"items": ["a"]}, {"items": ["b"]})
+        items = result.children["items"]
+        assert items.tp == 0
+        assert items.fn == 1
+
+    def test_details_include_aligner_metadata(self):
+        evaluator = JsonEvaluator()
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    result = evaluator.evaluate(
+                        self._make_config(), {"items": ["x", "y"]}, {"items": ["x", "y"]}
+                    )
+        details = result.children["items"].details
+        assert details["aligner_used"] is True
+        assert details["n_aligner_calls"] == 2
+        assert "aligner_model" in details
+
+    def test_conflict_resolution_lowest_e_idx_wins(self):
+        evaluator = JsonEvaluator()
+        # E[0] and E[1] both claim A[0] — E[0] wins, E[1] becomes unmatched
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    result = evaluator.evaluate(
+                        self._make_config(),
+                        {"items": ["a", "b"]},
+                        {"items": ["a"]},
+                    )
+        items = result.children["items"]
+        matched = [a for a in items.alignment if a.a_idx >= 0]
+        unmatched = [a for a in items.alignment if a.a_idx < 0]
+        assert len(matched) == 1
+        assert matched[0].e_idx == 0
+        assert len(unmatched) == 1
+        assert unmatched[0].e_idx == 1
+
+    def test_valtron_aligner_model_env_var_respected(self, monkeypatch):
+        monkeypatch.setenv("VALTRON_ALIGNER_MODEL", "gpt-4o")
+        evaluator = JsonEvaluator()
+        captured: list[str] = []
+
+        def capture(**kwargs):
+            captured.append(kwargs.get("model", ""))
+            return _make_alignment_mock(0)
+
+        with patch("valtron_core.evaluation.json_eval.completion", side_effect=capture):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    evaluator.evaluate(self._make_config(), {"items": ["x"]}, {"items": ["x"]})
+
+        assert captured and all(m == "gpt-4o" for m in captured)
+
+    def test_aligner_model_appears_in_details(self, monkeypatch):
+        monkeypatch.setenv("VALTRON_ALIGNER_MODEL", "gpt-4o-mini")
+        evaluator = JsonEvaluator()
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    result = evaluator.evaluate(
+                        self._make_config(), {"items": ["x"]}, {"items": ["x"]}
+                    )
+        assert result.children["items"].details["aligner_model"] == "gpt-4o-mini"
+
+    def test_aligner_soft_fail_on_bad_response(self):
+        evaluator = JsonEvaluator()
+        bad_response = Mock()
+        bad_response.choices = [Mock()]
+        bad_response.choices[0].message.content = "not-valid-json"
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=bad_response):
+            result = evaluator.evaluate(self._make_config(), {"items": ["a"]}, {"items": ["b"]})
+        assert result.children["items"].tp == 0
+
+    def test_required_fields_pre_filter_limits_candidates(self):
+        config = {
+            "type": "object",
+            "fields": {
+                "items": {
+                    "type": "list",
+                    "metric_config": {
+                        "ordered": False,
+                        "allow_expensive_comparisons_for": ["description"],
+                        "required_fields_to_match": ["id"],
+                        "item_logic": {
+                            "type": "object",
+                            "fields": {
+                                "id": {"type": "leaf"},
+                                "description": {
+                                    "type": "leaf",
+                                    "metric_config": {
+                                        "metric": "llm",
+                                        "params": {},
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        }
+        evaluator = JsonEvaluator()
+        captured_candidate_counts: list[int] = []
+
+        def recording_align(e_item, act, candidate_a_indices, path):
+            captured_candidate_counts.append(len(candidate_a_indices))
+            return candidate_a_indices[0] if candidate_a_indices else None
+
+        with patch.object(evaluator, "_llm_align_one_item", side_effect=recording_align):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    evaluator.evaluate(
+                        config,
+                        {"items": [{"id": "A", "description": "foo"}]},
+                        {"items": [
+                            {"id": "B", "description": "bar"},
+                            {"id": "A", "description": "baz"},
+                        ]},
+                    )
+        # Only A[1] has id="A" matching E[0].id="A"; A[0] has id="B" so it should be filtered
+        assert captured_candidate_counts == [1]
