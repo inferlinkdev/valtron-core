@@ -26,7 +26,7 @@ from valtron_core.recipes.config import (
     Manipulation,
     STRUCTURED_MANIPULATIONS,
 )
-from valtron_core.models import EvaluationResult, EvaluationMetrics, PredictionResult
+from valtron_core.models import EvaluationResult, EvaluationMetrics, FieldMetricsConfig, PredictionResult
 
 
 # ---------------------------------------------------------------------------
@@ -1789,3 +1789,274 @@ class TestSynthesizePydanticModel:
         split = find_split_point(model)
         assert split is not None
         assert set(split.list_field_names) == {"names", "scores"}
+
+
+# ---------------------------------------------------------------------------
+# Simple field config dict used across TestReevaluate
+# ---------------------------------------------------------------------------
+
+_SIMPLE_FIELD_CONFIG: dict = {
+    "config": {
+        "type": "object",
+        "fields": {"label": {"type": "leaf"}},
+    }
+}
+
+
+class TestReevaluate:
+    """Tests for ModelEval.reevaluate() and ModelEval._rescore_prediction()."""
+
+    # -------------------------------------------------------------------------
+    # Guard conditions
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.unit
+    def test_raises_if_no_results(self):
+        eval_ = ModelEval(
+            config={"models": [{"name": "gpt-4o-mini"}], "prompt": "Classify: {content}"},
+            data=[{"id": "d1", "content": "Hello", "label": "positive"}],
+        )
+        with pytest.raises(ValueError, match="No results to reevaluate"):
+            eval_.reevaluate()
+
+    # -------------------------------------------------------------------------
+    # Return value
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.unit
+    def test_returns_none_when_no_output_dir(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+        result = me.reevaluate()
+        assert result is None
+
+    @pytest.mark.unit
+    def test_returns_path_when_output_dir_given(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+        new_dir = tmp_path / "new_run"
+        result = me.reevaluate(output_dir=new_dir)
+        assert result is not None
+        assert isinstance(result, Path)
+
+    # -------------------------------------------------------------------------
+    # Metrics recomputation
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.unit
+    def test_recomputes_metrics_after_scoring(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+
+        # Force one prediction wrong so reevaluate can flip it back
+        pred = me.results[0].predictions[0]
+        me.results[0].predictions[0] = pred.model_copy(update={"predicted_value": "WRONG"})
+
+        me.reevaluate()
+
+        # "WRONG" != "positive" -> accuracy should now be 0.5 (1 of 2 correct)
+        assert me.results[0].metrics.accuracy == pytest.approx(0.5)
+
+    # -------------------------------------------------------------------------
+    # field_metrics_config updates
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.unit
+    def test_dict_config_updates_stored_config(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+
+        with patch("valtron_core.evaluator.JsonEvaluator.evaluate") as mock_eval:
+            mock_result = Mock()
+            mock_result.score = 1.0
+            mock_result.is_correct = True
+            mock_eval.return_value = mock_result
+
+            me.reevaluate(field_metrics_config=_SIMPLE_FIELD_CONFIG)
+
+        assert me.config.field_metrics_config == _SIMPLE_FIELD_CONFIG
+        assert me._field_metrics_config_raw == _SIMPLE_FIELD_CONFIG
+
+    @pytest.mark.unit
+    def test_field_metrics_config_object_updates_stored_config(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+
+        fmc = FieldMetricsConfig(config=_SIMPLE_FIELD_CONFIG["config"])
+
+        with patch("valtron_core.evaluator.JsonEvaluator.evaluate") as mock_eval:
+            mock_result = Mock()
+            mock_result.score = 1.0
+            mock_result.is_correct = True
+            mock_eval.return_value = mock_result
+
+            me.reevaluate(field_metrics_config=fmc)
+
+        expected_raw = {"config": _SIMPLE_FIELD_CONFIG["config"]}
+        assert me.config.field_metrics_config == expected_raw
+        assert me._field_metrics_config_raw == expected_raw
+
+    @pytest.mark.unit
+    def test_field_metrics_applied_to_predictions(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+
+        with patch("valtron_core.evaluator.JsonEvaluator.evaluate") as mock_eval:
+            mock_result = Mock()
+            mock_result.score = 0.75
+            mock_result.is_correct = True
+            mock_eval.return_value = mock_result
+
+            me.reevaluate(field_metrics_config=_SIMPLE_FIELD_CONFIG)
+
+        for p in me.results[0].predictions:
+            assert p.field_metrics is mock_result
+            assert p.example_score == pytest.approx(0.75)
+
+    # -------------------------------------------------------------------------
+    # Ground truth update via data parameter
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.unit
+    def test_data_updates_expected_values(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+
+        new_data = [
+            {"id": "d1", "content": "Hello", "label": "CHANGED"},
+            {"id": "d2", "content": "Bye", "label": "negative"},
+        ]
+        me.reevaluate(data=new_data)
+
+        predictions_by_id = {p.document_id: p for p in me.results[0].predictions}
+        # The mock run dir has _LABEL_SCHEMA (single label field), so auto_wrap is
+        # True and plain string labels are serialized as {"label": ...} JSON.
+        assert predictions_by_id["d1"].expected_value == '{"label": "CHANGED"}'
+        assert predictions_by_id["d2"].expected_value == '{"label": "negative"}'
+
+    @pytest.mark.unit
+    def test_data_updates_self_data(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+
+        new_data = [
+            {"id": "d1", "content": "Hello", "label": "X"},
+            {"id": "d2", "content": "Bye", "label": "Y"},
+        ]
+        me.reevaluate(data=new_data)
+        assert me.data is new_data
+
+    @pytest.mark.unit
+    def test_unknown_doc_id_in_data_warns(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+
+        new_data = [
+            {"id": "d1", "content": "Hello", "label": "positive"},
+            {"id": "UNKNOWN_ID", "content": "?", "label": "positive"},
+        ]
+        with patch("valtron_core.recipes.model_eval.logger.warning") as mock_warn:
+            me.reevaluate(data=new_data)
+
+        warn_events = [call.args[0] for call in mock_warn.call_args_list]
+        assert "reevaluate_unknown_doc_id" in warn_events
+
+    # -------------------------------------------------------------------------
+    # Saving
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.unit
+    def test_saves_to_new_output_dir(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+        new_dir = tmp_path / "new_run"
+
+        result = me.reevaluate(output_dir=new_dir)
+
+        assert (new_dir / "metadata.json").exists()
+        assert (new_dir / "models" / "gpt-4o-mini.json").exists()
+        assert result == new_dir
+
+    @pytest.mark.unit
+    def test_warns_when_metadata_already_exists_in_output_dir(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        me = ModelEval.load_experiment_results(run_dir)
+
+        with patch("valtron_core.recipes.model_eval.logger.warning") as mock_warn:
+            me.reevaluate(output_dir=run_dir)
+
+        warn_events = [call.args[0] for call in mock_warn.call_args_list]
+        assert "reevaluate_metadata_not_overwritten" in warn_events
+
+    # -------------------------------------------------------------------------
+    # _rescore_prediction static method (unit tests)
+    # -------------------------------------------------------------------------
+
+    @pytest.mark.unit
+    def test_rescore_no_config_match(self):
+        prediction = PredictionResult(
+            document_id="d1",
+            predicted_value="positive",
+            expected_value="positive",
+            is_correct=False,  # start wrong; rescore should flip it
+            example_score=0.0,
+            response_time=1.0,
+            model="gpt-4o-mini",
+        )
+        result = ModelEval._rescore_prediction(prediction, field_metrics_config=None)
+        assert result.is_correct is True
+        assert result.example_score == pytest.approx(1.0)
+        assert result.field_metrics is None
+
+    @pytest.mark.unit
+    def test_rescore_no_config_mismatch(self):
+        prediction = PredictionResult(
+            document_id="d1",
+            predicted_value="positive",
+            expected_value="negative",
+            is_correct=True,  # start wrong; rescore should flip it
+            example_score=1.0,
+            response_time=1.0,
+            model="gpt-4o-mini",
+        )
+        result = ModelEval._rescore_prediction(prediction, field_metrics_config=None)
+        assert result.is_correct is False
+        assert result.example_score == pytest.approx(0.0)
+
+    @pytest.mark.unit
+    def test_rescore_with_field_metrics_config(self):
+        prediction = PredictionResult(
+            document_id="d1",
+            predicted_value='{"label": "positive"}',
+            expected_value='{"label": "positive"}',
+            is_correct=False,
+            example_score=0.0,
+            response_time=1.0,
+            model="gpt-4o-mini",
+        )
+        fmc = FieldMetricsConfig(config=_SIMPLE_FIELD_CONFIG["config"])
+
+        mock_result = Mock()
+        mock_result.score = 0.9
+        mock_result.is_correct = True
+
+        with patch("valtron_core.evaluator.JsonEvaluator.evaluate", return_value=mock_result):
+            result = ModelEval._rescore_prediction(prediction, field_metrics_config=fmc)
+
+        assert result.field_metrics is mock_result
+        assert result.example_score == pytest.approx(0.9)
+        assert result.is_correct is True
+
+    @pytest.mark.unit
+    def test_rescore_case_insensitive_without_config(self):
+        prediction = PredictionResult(
+            document_id="d1",
+            predicted_value="POSITIVE",
+            expected_value="positive",
+            is_correct=False,
+            example_score=0.0,
+            response_time=1.0,
+            model="gpt-4o-mini",
+        )
+        result = ModelEval._rescore_prediction(prediction, field_metrics_config=None)
+        assert result.is_correct is True
