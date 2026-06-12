@@ -6,10 +6,8 @@ import json
 import copy
 import logging
 import os
-import warnings
 import threading
-
-import litellm
+import warnings
 from litellm import completion, completion_cost
 
 from valtron_core.evaluation.comparison_functions import (
@@ -42,13 +40,10 @@ def _score_to_result(result: bool | float, params: dict[str, Any]) -> tuple[floa
     return result, True
 
 
-def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
-    warnings.warn(
-        "The 'comparator' metric is deprecated; use 'exact_compare', 'text_similarity', "
-        "'llm', or 'embedding' metrics directly instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
+def _run_comparator(
+    expected: Any, actual: Any, params: dict[str, Any]
+) -> tuple[float, bool, float, int]:
+    """Run the legacy Comparator and return (score, is_correct, cost_usd, call_count)."""
     comp = Comparator(
         element_compare=params.get("element_compare", "exact"),
         text_similarity_threshold=params.get("text_similarity_threshold", None),
@@ -63,7 +58,8 @@ def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tup
     )
     compare_result = comp.compare(expected, actual)
 
-    uses_api, _ = element_compare_uses_third_party(params.get("element_compare", "exact"), params)
+    category, _ = element_compare_category(params.get("element_compare", "exact"), params)
+    uses_api = category != "local"
     cost_usd = comp.total_comparison_cost if uses_api else 0.0
     call_count = comp.comparison_count if uses_api else 0
 
@@ -79,6 +75,12 @@ def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tup
 
 def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
     """Public comparator metric callable. Cost is not tracked; use JsonEvaluator for that."""
+    warnings.warn(
+        "The 'comparator' metric is deprecated; use 'exact_compare', 'text_similarity', "
+        "'llm', or 'embedding' metrics directly instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     score, is_correct, _, _ = _run_comparator(expected, actual, params)
     return score, is_correct
 

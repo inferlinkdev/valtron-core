@@ -1632,6 +1632,18 @@ class TestScanIssuesIncludeCategory:
         assert issues == []
 
 
+def _make_completion_mock(matched_a_idx: int | None) -> Mock:
+    """Return a mock litellm completion response for per-item alignment (alias for _make_alignment_mock)."""
+    idx_json = "null" if matched_a_idx is None else str(matched_a_idx)
+    msg = Mock()
+    msg.content = f'{{"matched_a_idx": {idx_json}}}'
+    choice = Mock()
+    choice.message = msg
+    response = Mock()
+    response.choices = [choice]
+    return response
+
+
 def _make_alignment_mock(matched_a_idx: int | None) -> Mock:
     """Return a mock litellm completion response for per-item alignment."""
     idx_json = "null" if matched_a_idx is None else str(matched_a_idx)
