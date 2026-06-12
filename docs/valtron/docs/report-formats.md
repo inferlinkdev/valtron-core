@@ -49,7 +49,7 @@ The HTML report consists of two files:
   - Average cost per document
   - Average response time per document
 - Distribution histograms showing per-document cost, latency, and score spread across models
-- Rankings with delta from the top score
+- Avg Score per model (mean per-document score across all fields and examples)
 
 **Prompt optimization details** (shown when models have manipulations)
 - Lists applied manipulations per model

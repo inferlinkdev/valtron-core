@@ -374,7 +374,6 @@ Format your response as Markdown using headers, bullet points, and bold text whe
         field_max_values = self._compute_field_max_values(results, all_field_names)
         field_metrics_tree = self._build_field_metrics_tree(results, all_field_names)
         performance_best = self._compute_performance_best_values(results)
-        performance_ranks = self._compute_performance_ranks(results)
 
         has_optimizations = prompt_optimizations is not None and any(
             len(manipulations) > 0 for manipulations in prompt_optimizations.values()
@@ -408,7 +407,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
             field_metrics_tree=field_metrics_tree,
             root_list_field_key="[*]" if "[*]" in field_metrics_data else None,
             performance_best=performance_best,
-            performance_ranks=performance_ranks,
+            best_avg_score=performance_best["best_avg_score"],
             field_config_json=field_config_json,
         )
 
