@@ -19,16 +19,20 @@ The `config` value inside `field_metrics_config` mirrors the shape of your Pydan
 | `type` | `"leaf"` \| `"object"` \| `"list"` | `"leaf"` | Shape of this field |
 | `weight` | `float` | `1.0` | Weight when this field is rolled up into a parent score |
 | `optional` | `bool` | `false` | If true, missing values don't penalize the score |
-| `metric_config` | object | `null` | How to score this field (see below) |
+| `metric_config` | object | `null` | Scoring/matching/aggregation config. Shape depends on `type` -- see each section below. |
 | `fields` | object | `null` | Child field configs for `object` and `list` types |
 
 ---
 
-## Leaf fields
+The three node types -- `"leaf"`, `"object"`, and `"list"` -- each use `metric_config` differently. The sections below cover each in turn.
+
+---
+
+## Leaf nodes
 
 A `"leaf"` is a scalar value: a string, number, or boolean at the bottom of your schema.
 
-### `metric_config` for leaves
+Leaf nodes use `metric_config` to specify a comparison metric and its parameters:
 
 ```json
 {
@@ -196,9 +200,17 @@ Incurs one embedding API call per field per document.
 
 ---
 
-## Object fields
+## Object nodes
 
 An `"object"` node groups child fields. Its score is aggregated from its children.
+
+Object nodes use `metric_config` to specify how child scores are aggregated:
+
+```json
+{"metric_config": {"propagation": "weighted_avg"}}
+```
+
+The default propagation is `"weighted_avg"`. Full example:
 
 ```json
 {
@@ -221,9 +233,20 @@ An `"object"` node groups child fields. Its score is aggregated from its childre
 
 ---
 
-## List fields
+## List nodes
 
-A `"list"` node scores a predicted array against an expected array. Two matching modes:
+A `"list"` node scores a predicted array against an expected array.
+
+List nodes use `metric_config` to control matching behavior:
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `ordered` | bool | `false` | If true, compare positionally (`exp[i]` vs `act[i]`); if false, greedy best-match |
+| `match_threshold` | float | `0.5` | Minimum score for a pair to be considered a match |
+| `required_fields_to_match` | array | `null` | Fields that must match before a pair is even considered (pre-filter before expensive comparison) |
+| `allow_expensive_comparisons_for` | array | `null` | Fields allowed to use `"llm"` or `"embedding"` metrics in unordered mode (see below) |
+
+Two matching modes:
 
 ### Unordered (default)
 
@@ -242,13 +265,6 @@ Builds an N×M score matrix across all predicted/expected pairs, then greedily m
   }
 }
 ```
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `ordered` | bool | `false` | If true, compare positionally (exp[i] vs act[i]) |
-| `match_threshold` | float | `0.5` | Minimum score for a pair to be considered a match |
-| `required_fields_to_match` | array | `null` | Fields that must match before a pair is even considered (pre-filter before expensive comparison) |
-| `allow_expensive_comparisons_for` | array | `null` | Fields allowed to use `"llm"` or `"embedding"` metrics in unordered mode (see below) |
 
 ### Ordered mode
 
