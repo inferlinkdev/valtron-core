@@ -1016,7 +1016,7 @@
       <p><strong>Documents Tested:</strong> {{ num_documents }}</p>
       <p>
         <strong>Original Prompt Template:</strong>
-        <code>{{ prompt_template|e }}</code>
+        <code style="white-space: pre-wrap;">{{ prompt_template|e }}</code>
       </p>
       <a href="detailed_analysis.html" class="analysis-link"
         >View Detailed Input/Output Analysis</a
@@ -1042,7 +1042,7 @@
             <th>Documents</th>
             <th>Model</th>
             <th>Prompt</th>
-            {% if has_field_metrics and all_field_names|length > 1 %}<th>Avg. Score</th>{% else %}<th>Accuracy</th>{% endif %}
+            {% if has_field_metrics and all_field_names|length > 1 %}<th>Avg Score <span class="field-info-icon" onclick="showAvgScoreTooltip(this)">i</span></th>{% else %}<th>Accuracy</th>{% endif %}
             <th>Total Cost</th>
             <th>Avg Cost/Doc</th>
             <th>Total Time</th>
@@ -1066,7 +1066,7 @@
             </td>
             <td>
               {% if has_field_metrics and all_field_names|length > 1 %}
-              <span class="metric-value">
+              <span class="{% if result.metrics.average_example_score >= best_avg_score %}metric-best{% else %}metric-value{% endif %}">
                 {{ "%.2f"|format(result.metrics.average_example_score * 100) }}%
               </span>
               {% elif has_field_metrics and all_field_names|length == 1 %}
@@ -2092,6 +2092,32 @@
               });
           }, 100);
 
+          event.stopPropagation();
+      }
+
+      function showAvgScoreTooltip(el) {
+          const popover = document.getElementById('fieldInfoPopover');
+          popover.innerHTML = '<div class="fip-title">Avg Score</div>'
+              + '<div class="fip-desc">Mean per-document score across all evaluated examples. '
+              + 'Each document is scored as the weighted average of its field scores — leaf fields by their configured metric, objects by averaging subfields, and list fields by soft F1. '
+              + 'Higher is better; 100% means every field in every document matched perfectly.</div>';
+          const rect = el.getBoundingClientRect();
+          const popWidth = 400;
+          let left = rect.left + window.scrollX;
+          if (left + popWidth > window.innerWidth - 16) {
+              left = window.innerWidth - popWidth - 16 + window.scrollX;
+          }
+          popover.style.left = Math.max(8, left) + 'px';
+          popover.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+          popover.style.display = 'block';
+          setTimeout(() => {
+              document.addEventListener('click', function hidePopover(e) {
+                  if (!popover.contains(e.target) && e.target !== el) {
+                      popover.style.display = 'none';
+                      document.removeEventListener('click', hidePopover);
+                  }
+              });
+          }, 100);
           event.stopPropagation();
       }
 

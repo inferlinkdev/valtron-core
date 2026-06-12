@@ -407,6 +407,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
             field_metrics_tree=field_metrics_tree,
             root_list_field_key="[*]" if "[*]" in field_metrics_data else None,
             performance_best=performance_best,
+            best_avg_score=performance_best["best_avg_score"],
             field_config_json=field_config_json,
         )
 

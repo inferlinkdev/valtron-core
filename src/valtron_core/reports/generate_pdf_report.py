@@ -152,7 +152,6 @@ class PdfReportGenerator(_ReportBase):
                 }
 
         performance_best  = self._compute_performance_best_values(results)
-        performance_ranks = self._compute_performance_ranks(results)
         has_optimizations = (
             prompt_optimizations is not None
             and any(len(v) > 0 for v in prompt_optimizations.values())
@@ -180,7 +179,6 @@ class PdfReportGenerator(_ReportBase):
             "field_metrics_data": field_metrics_data,
             "field_max_values":   field_max_values,
             "performance_best":   performance_best,
-            "performance_ranks":  performance_ranks,
             "chart_paths":        chart_buffers,
         }
 
@@ -422,7 +420,6 @@ class PdfReportGenerator(_ReportBase):
     def _build_perf_table(self, data: dict) -> list[Any]:
         results          = data["results"]
         performance_best = data["performance_best"]
-        performance_ranks = data["performance_ranks"]
         has_field_metrics = data["has_field_metrics"]
         all_field_names  = data["all_field_names"]
         override_prompts = data["model_override_prompts"]
@@ -432,7 +429,7 @@ class PdfReportGenerator(_ReportBase):
         use_rank   = has_field_metrics and len(all_field_names) > 1
         use_single = has_field_metrics and len(all_field_names) == 1
 
-        rank_or_acc_header = "Performance Rank†" if use_rank else "Accuracy"
+        rank_or_acc_header = "Avg Score" if use_rank else "Accuracy"
         headers = ["Model", "Prompt*", rank_or_acc_header,
                    "Total Cost", "Avg Cost/Doc", "Total Time", "Avg Time/Doc"]
         if has_opts:
@@ -478,11 +475,9 @@ class PdfReportGenerator(_ReportBase):
 
             # Accuracy/rank cell
             if use_rank:
-                ri = performance_ranks.get(result.model, {"rank": "-", "delta_pct": 0.0})
-                acc_cell  = f"#{ri['rank']}"
-                if ri.get("delta_pct", 0) < 0:
-                    acc_cell += f" ({ri['delta_pct']:.2f}%)"
-                is_best_acc = ri.get("rank") == 1
+                avg_score = result.metrics.average_example_score
+                acc_cell = f"{avg_score * 100:.2f}%"
+                is_best_acc = avg_score >= performance_best["best_avg_score"]
             elif use_single:
                 sf  = all_field_names[0]
                 fm  = (result.metrics.aggregated_field_metrics or {}).get(sf)
@@ -529,8 +524,6 @@ class PdfReportGenerator(_ReportBase):
 
         elems: list[Any] = [t, Spacer(1, 4)]
         elems.append(Paragraph("* See Appendix A for prompt references.", _STYLES["note"]))
-        if use_rank:
-            elems.append(Paragraph("† See Appendix B for metric definitions.", _STYLES["note"]))
 
         for result in results:
             if result.llm_config and result.llm_config.get("cost_rate") is not None:
@@ -686,15 +679,29 @@ class PdfReportGenerator(_ReportBase):
 
         elems.extend(_subhead("Performance Metrics"))
         if use_rank:
-            elems.extend(_entry(
-                "Performance Rank", None,
-                "Models are ranked by their mean per-document score - a continuous 0–100% "
-                "value that averages each field's score across all documents. Unlike binary "
-                "accuracy (all-or-nothing per document), this gives partial credit for "
-                "partially correct results, making it a more sensitive indicator of true "
-                "model quality. The delta shown in parentheses is the percentage-point gap "
-                "from the top-scoring model.",
-            ))
+            elems.extend([
+                Paragraph("<b>Avg Score</b>", _STYLES["h4"]),
+                Paragraph(
+                    "The mean per-document score across all evaluated examples, expressed as "
+                    "a percentage. Each document is scored as the weighted average of its "
+                    "individual field scores, where weights are set in the field configuration. "
+                    "A score of 100% means every field in every document was extracted perfectly.",
+                    _STYLES["app_body"],
+                ),
+                Spacer(1, 4),
+                Paragraph(
+                    "How a field's score is computed depends on its type. A leaf field is "
+                    "scored by its configured metric - for example, exact match, fuzzy string "
+                    "similarity, or an LLM judge - returning a value between 0 and 1. An "
+                    "object field aggregates its subfield scores (weighted average by default). "
+                    "A list field uses soft F1: predicted and expected items are aligned, and "
+                    "each aligned pair contributes its continuous similarity score as its share "
+                    "of the true-positive count rather than a binary 0 or 1, so near-matches "
+                    "receive proportional credit instead of being treated as complete misses.",
+                    _STYLES["app_body"],
+                ),
+                Spacer(1, 10),
+            ])
         else:
             elems.extend(_entry(
                 "Accuracy", None,

@@ -26,6 +26,7 @@ class _ReportBase:
         Best = highest accuracy, lowest cost, lowest time.
         """
         best_accuracy = -1.0
+        best_avg_score = -1.0
         best_total_cost = float('inf')
         best_avg_cost = float('inf')
         best_total_time = float('inf')
@@ -35,6 +36,8 @@ class _ReportBase:
             if result.metrics:
                 if result.metrics.accuracy > best_accuracy:
                     best_accuracy = result.metrics.accuracy
+                if result.metrics.average_example_score > best_avg_score:
+                    best_avg_score = result.metrics.average_example_score
                 if result.metrics.total_cost < best_total_cost:
                     best_total_cost = result.metrics.total_cost
                 if result.metrics.average_cost_per_document < best_avg_cost:
@@ -46,6 +49,7 @@ class _ReportBase:
 
         return {
             "best_accuracy": best_accuracy,
+            "best_avg_score": best_avg_score,
             "best_total_cost": best_total_cost,
             "best_avg_cost": best_avg_cost,
             "best_total_time": best_total_time,
