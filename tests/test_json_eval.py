@@ -15,10 +15,11 @@ from valtron_core.evaluation.json_eval import (
     AlignmentItem,
     comparator_metric,
     find_expensive_unordered_list_fields,
-    _check_builtin_metric_expensive,
     _check_builtin_metric_category,
     _scan_item_logic_for_expensive_metrics,
     _item_logic_has_llm_judge_leaf,
+    _score_to_result,
+    collect_field_metric_llm_models,
 )
 
 
@@ -657,42 +658,42 @@ class TestFieldConfigRouting:
         assert config.metric_config.allow_expensive_comparisons_for == ["$item"]
 
 
-class TestCheckBuiltinMetricExpensive:
-    """Tests for _check_builtin_metric_expensive."""
+class TestCheckBuiltinMetricCategory:
+    """Tests for _check_builtin_metric_category."""
 
-    def test_exact_is_not_expensive(self):
-        expensive, desc = _check_builtin_metric_expensive("exact", {})
-        assert expensive is False
+    def test_exact_is_local(self):
+        category, desc = _check_builtin_metric_category("exact", {})
+        assert category == "local"
         assert desc == ""
 
-    def test_threshold_is_not_expensive(self):
-        expensive, desc = _check_builtin_metric_expensive("threshold", {})
-        assert expensive is False
+    def test_threshold_is_local(self):
+        category, desc = _check_builtin_metric_category("threshold", {})
+        assert category == "local"
         assert desc == ""
 
-    def test_comparator_with_llm_is_expensive(self):
-        expensive, desc = _check_builtin_metric_expensive("comparator", {"element_compare": "llm"})
-        assert expensive is True
+    def test_comparator_with_llm_is_llm(self):
+        category, desc = _check_builtin_metric_category("comparator", {"element_compare": "llm"})
+        assert category == "llm"
         assert "llm" in desc.lower() or "LLM" in desc
 
-    def test_comparator_with_embedding_is_expensive(self):
-        expensive, desc = _check_builtin_metric_expensive("comparator", {"element_compare": "embedding"})
-        assert expensive is True
+    def test_comparator_with_embedding_is_embedding(self):
+        category, desc = _check_builtin_metric_category("comparator", {"element_compare": "embedding"})
+        assert category == "embedding"
         assert "embedding" in desc.lower()
 
-    def test_comparator_with_exact_is_not_expensive(self):
-        expensive, desc = _check_builtin_metric_expensive("comparator", {"element_compare": "exact"})
-        assert expensive is False
+    def test_comparator_with_exact_is_local(self):
+        category, desc = _check_builtin_metric_category("comparator", {"element_compare": "exact"})
+        assert category == "local"
         assert desc == ""
 
-    def test_comparator_default_element_compare_is_not_expensive(self):
+    def test_comparator_default_element_compare_is_local(self):
         # default element_compare is "exact"
-        expensive, desc = _check_builtin_metric_expensive("comparator", {})
-        assert expensive is False
+        category, desc = _check_builtin_metric_category("comparator", {})
+        assert category == "local"
 
     def test_unknown_metric_raises_not_implemented(self):
         with pytest.raises(NotImplementedError, match="no category declaration"):
-            _check_builtin_metric_expensive("unknown_metric", {})
+            _check_builtin_metric_category("unknown_metric", {})
 
 
 class TestScanItemLogicForExpensiveMetrics:
@@ -1110,54 +1111,468 @@ class TestLLMPromptTemplate:
         assert result.children["name"].is_correct is True
 
 
-class TestCheckBuiltinMetricCategory:
-    """Tests for _check_builtin_metric_category."""
+class TestScoreToResult:
+    """Tests for the _score_to_result helper."""
 
-    def test_exact_returns_local(self):
-        cat, desc = _check_builtin_metric_category("exact", {})
-        assert cat == "local"
+    def test_bool_true(self) -> None:
+        score, is_correct = _score_to_result(True, {})
+        assert score == 1.0
+        assert is_correct is True
+
+    def test_bool_false(self) -> None:
+        score, is_correct = _score_to_result(False, {})
+        assert score == 0.0
+        assert is_correct is False
+
+    def test_float_with_threshold_met(self) -> None:
+        score, is_correct = _score_to_result(0.9, {"threshold": 0.8})
+        assert score == pytest.approx(0.9)
+        assert is_correct is True
+
+    def test_float_with_threshold_not_met(self) -> None:
+        score, is_correct = _score_to_result(0.5, {"threshold": 0.8})
+        assert score == pytest.approx(0.5)
+        assert is_correct is False
+
+    def test_float_with_comparison_threshold(self) -> None:
+        score, is_correct = _score_to_result(0.7, {"comparison_threshold": 0.8})
+        assert is_correct is False
+
+    def test_float_no_threshold_is_correct_true(self) -> None:
+        score, is_correct = _score_to_result(0.6, {})
+        assert score == pytest.approx(0.6)
+        assert is_correct is True
+
+
+class TestComparatorMetricDeprecationWarning:
+    """Verifies that the deprecated comparator_metric emits DeprecationWarning."""
+
+    def test_comparator_metric_warns(self) -> None:
+        with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
+            MockComp.return_value.compare.return_value = True
+            with pytest.warns(DeprecationWarning, match="'comparator' metric is deprecated"):
+                comparator_metric("a", "a", {})
+
+
+class TestCheckBuiltinMetricCategoryNewMetrics:
+    """Tests for the new metric branches in _check_builtin_metric_category."""
+
+    def test_exact_compare_is_local(self) -> None:
+        category, desc = _check_builtin_metric_category("exact_compare", {})
+        assert category == "local"
         assert desc == ""
 
-    def test_threshold_returns_local(self):
-        cat, desc = _check_builtin_metric_category("threshold", {})
-        assert cat == "local"
-        assert desc == ""
+    def test_text_similarity_fuzz_is_local(self) -> None:
+        category, desc = _check_builtin_metric_category("text_similarity", {"metric": "fuzz_ratio"})
+        assert category == "local"
 
-    def test_comparator_llm_returns_llm(self):
-        cat, desc = _check_builtin_metric_category("comparator", {"element_compare": "llm"})
-        assert cat == "llm"
-        assert "llm" in desc.lower() or "LLM" in desc
+    def test_text_similarity_bleu_is_local(self) -> None:
+        category, desc = _check_builtin_metric_category("text_similarity", {"metric": "bleu"})
+        assert category == "local"
 
-    def test_comparator_embedding_returns_embedding(self):
-        cat, desc = _check_builtin_metric_category("comparator", {"element_compare": "embedding"})
-        assert cat == "embedding"
+    def test_text_similarity_cosine_is_embedding(self) -> None:
+        category, desc = _check_builtin_metric_category("text_similarity", {"metric": "cosine"})
+        assert category == "embedding"
         assert "embedding" in desc.lower()
 
-    def test_comparator_exact_returns_local(self):
-        cat, desc = _check_builtin_metric_category("comparator", {"element_compare": "exact"})
-        assert cat == "local"
-        assert desc == ""
+    def test_text_similarity_cosine_includes_model(self) -> None:
+        category, desc = _check_builtin_metric_category(
+            "text_similarity", {"metric": "cosine", "embedding_model": "my-embed-model"}
+        )
+        assert category == "embedding"
+        assert "my-embed-model" in desc
 
-    def test_comparator_default_element_compare_returns_local(self):
-        cat, _ = _check_builtin_metric_category("comparator", {})
-        assert cat == "local"
+    def test_llm_metric_is_llm(self) -> None:
+        category, desc = _check_builtin_metric_category("llm", {})
+        assert category == "llm"
+        assert "llm" in desc.lower() or "LLM" in desc
 
-    def test_unknown_metric_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError, match="no category declaration"):
-            _check_builtin_metric_category("some_new_metric", {})
+    def test_llm_metric_includes_model(self) -> None:
+        category, desc = _check_builtin_metric_category("llm", {"model": "claude-3"})
+        assert category == "llm"
+        assert "claude-3" in desc
 
-    def test_check_builtin_metric_expensive_wrapper_consistent(self):
-        for metric, params, expected_cat in [
-            ("exact", {}, "local"),
-            ("threshold", {}, "local"),
-            ("comparator", {"element_compare": "llm"}, "llm"),
-            ("comparator", {"element_compare": "embedding"}, "embedding"),
-        ]:
-            cat, _ = _check_builtin_metric_category(metric, params)
-            expensive, _ = _check_builtin_metric_expensive(metric, params)
-            assert expensive == (cat != "local"), (
-                f"Wrapper inconsistent for metric={metric!r}, params={params!r}"
-            )
+    def test_embedding_metric_is_embedding(self) -> None:
+        category, desc = _check_builtin_metric_category("embedding", {})
+        assert category == "embedding"
+        assert "embedding" in desc.lower()
+
+    def test_embedding_metric_includes_model(self) -> None:
+        category, desc = _check_builtin_metric_category("embedding", {"model": "my-embed"})
+        assert category == "embedding"
+        assert "my-embed" in desc
+
+
+class TestNewMetricsInRegistry:
+    """Tests that the four new metrics are callable via evaluate()."""
+
+    def test_exact_compare_metric_match(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "object",
+            "fields": {
+                "name": {"metric_config": {"metric": "exact_compare", "params": {}}},
+            },
+        }
+        result = evaluator.evaluate(config, {"name": "Alice"}, {"name": "Alice"})
+        assert result.children["name"].is_correct is True
+
+    def test_exact_compare_metric_case_insensitive(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "object",
+            "fields": {
+                "name": {"metric_config": {"metric": "exact_compare", "params": {"case_sensitive": False}}},
+            },
+        }
+        result = evaluator.evaluate(config, {"name": "ALICE"}, {"name": "alice"})
+        assert result.children["name"].is_correct is True
+
+    def test_exact_compare_metric_mismatch(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "object",
+            "fields": {
+                "name": {"metric_config": {"metric": "exact_compare", "params": {}}},
+            },
+        }
+        result = evaluator.evaluate(config, {"name": "Alice"}, {"name": "Bob"})
+        assert result.children["name"].is_correct is False
+
+    def test_text_similarity_metric_match(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "object",
+            "fields": {
+                "text": {
+                    "metric_config": {
+                        "metric": "text_similarity",
+                        "params": {"metric": "fuzz_ratio", "threshold": 0.9},
+                    }
+                },
+            },
+        }
+        result = evaluator.evaluate(config, {"text": "hello"}, {"text": "hello"})
+        assert result.children["text"].is_correct is True
+
+    def test_text_similarity_metric_no_threshold_returns_score(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "object",
+            "fields": {
+                "text": {
+                    "metric_config": {
+                        "metric": "text_similarity",
+                        "params": {"metric": "fuzz_ratio"},
+                    }
+                },
+            },
+        }
+        result = evaluator.evaluate(config, {"text": "hello"}, {"text": "hallo"})
+        assert 0.0 < result.children["text"].score < 1.0
+
+    def test_llm_metric_match(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "object",
+            "fields": {
+                "city": {
+                    "metric_config": {
+                        "metric": "llm",
+                        "params": {"model": "gpt-4o-mini"},
+                    }
+                },
+            },
+        }
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "YES"
+
+        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+                result = evaluator.evaluate(config, {"city": "NYC"}, {"city": "New York"})
+
+        assert result.children["city"].is_correct is True
+
+    def test_llm_metric_passes_template_vars(self) -> None:
+        """_template_vars from evaluate() flow into _llm_compare as prompt_extra_vars."""
+        evaluator = JsonEvaluator()
+        template = "Context: {ctx}\n'{predicted}' == '{expected}'? YES or NO."
+        config = {
+            "type": "object",
+            "fields": {
+                "val": {
+                    "metric_config": {
+                        "metric": "llm",
+                        "params": {"model": "gpt-4o-mini", "prompt_template": template},
+                    }
+                },
+            },
+        }
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "YES"
+
+        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response) as mock_comp:
+                evaluator.evaluate(
+                    config,
+                    {"val": "a"},
+                    {"val": "a"},
+                    extra_template_vars={"ctx": "some context"},
+                )
+
+        sent = mock_comp.call_args[1]["messages"][0]["content"]
+        assert "some context" in sent
+
+    def test_embedding_metric_match(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "object",
+            "fields": {
+                "text": {
+                    "metric_config": {
+                        "metric": "embedding",
+                        "params": {"threshold": 0.9},
+                    }
+                },
+            },
+        }
+        mock_resp1 = Mock()
+        mock_resp1.data = [{"embedding": [1.0, 0.0, 0.0]}]
+        mock_resp2 = Mock()
+        mock_resp2.data = [{"embedding": [1.0, 0.0, 0.0]}]
+
+        with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
+            mock_emb.side_effect = [mock_resp1, mock_resp2]
+            result = evaluator.evaluate(config, {"text": "hello"}, {"text": "hello"})
+
+        assert result.children["text"].is_correct is True
+
+    def test_embedding_metric_no_threshold_returns_score(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "object",
+            "fields": {
+                "text": {
+                    "metric_config": {
+                        "metric": "embedding",
+                        "params": {},
+                    }
+                },
+            },
+        }
+        mock_resp1 = Mock()
+        mock_resp1.data = [{"embedding": [1.0, 0.5, 0.0]}]
+        mock_resp2 = Mock()
+        mock_resp2.data = [{"embedding": [0.5, 1.0, 0.0]}]
+
+        with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
+            mock_emb.side_effect = [mock_resp1, mock_resp2]
+            result = evaluator.evaluate(config, {"text": "hello"}, {"text": "world"})
+
+        assert 0.0 < result.children["text"].score < 1.0
+
+
+class TestCollectFieldMetricLLMModels:
+    """Tests for collect_field_metric_llm_models with the new 'llm' metric."""
+
+    def test_llm_metric_model_collected(self) -> None:
+        config = {
+            "type": "object",
+            "fields": {
+                "city": {
+                    "metric_config": {
+                        "metric": "llm",
+                        "params": {"model": "gpt-4"},
+                    }
+                },
+            },
+        }
+        models = collect_field_metric_llm_models(config)
+        assert "gpt-4" in models
+
+    def test_llm_metric_default_model_collected(self) -> None:
+        config = {
+            "type": "object",
+            "fields": {
+                "city": {"metric_config": {"metric": "llm", "params": {}}},
+            },
+        }
+        models = collect_field_metric_llm_models(config)
+        assert "gpt-4o-mini" in models
+
+    def test_legacy_comparator_llm_model_still_collected(self) -> None:
+        config = {
+            "type": "object",
+            "fields": {
+                "city": {
+                    "metric_config": {
+                        "metric": "comparator",
+                        "params": {"element_compare": "llm", "llm_model": "gpt-4"},
+                    }
+                },
+            },
+        }
+        models = collect_field_metric_llm_models(config)
+        assert "gpt-4" in models
+
+    def test_non_llm_metrics_not_collected(self) -> None:
+        config = {
+            "type": "object",
+            "fields": {
+                "a": {"metric_config": {"metric": "exact", "params": {}}},
+                "b": {"metric_config": {"metric": "embedding", "params": {}}},
+            },
+        }
+        models = collect_field_metric_llm_models(config)
+        assert len(models) == 0
+
+
+class TestNewMetricsExpensiveListGuard:
+    """Tests that the new metrics trigger the expensive-list guard correctly."""
+
+    def test_llm_metric_unordered_list_raises(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "list",
+            "metric_config": {
+                "ordered": False,
+                "item_logic": {
+                    "type": "leaf",
+                    "metric_config": {"metric": "llm", "params": {}},
+                },
+            },
+        }
+        with pytest.raises(ValueError, match="3rd-party metric"):
+            evaluator.evaluate(config, ["a"], ["a"])
+
+    def test_embedding_metric_unordered_list_raises(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "list",
+            "metric_config": {
+                "ordered": False,
+                "item_logic": {
+                    "type": "leaf",
+                    "metric_config": {"metric": "embedding", "params": {}},
+                },
+            },
+        }
+        with pytest.raises(ValueError, match="3rd-party metric"):
+            evaluator.evaluate(config, ["a"], ["a"])
+
+    def test_text_similarity_fuzz_unordered_list_does_not_raise(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "list",
+            "metric_config": {
+                "ordered": False,
+                "item_logic": {
+                    "type": "leaf",
+                    "metric_config": {"metric": "text_similarity", "params": {"metric": "fuzz_ratio"}},
+                },
+            },
+        }
+        result = evaluator.evaluate(config, ["hello"], ["hello"])
+        assert result is not None
+
+    def test_llm_metric_unordered_list_allowed(self) -> None:
+        evaluator = JsonEvaluator()
+        config = {
+            "type": "list",
+            "metric_config": {
+                "ordered": False,
+                "allow_expensive_comparisons_for": ["$item"],
+                "item_logic": {
+                    "type": "leaf",
+                    "metric_config": {"metric": "llm", "params": {}},
+                },
+            },
+        }
+        mock_response = Mock()
+        mock_response.choices = [Mock()]
+        mock_response.choices[0].message.content = "YES"
+
+        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+                result = evaluator.evaluate(config, ["a"], ["a"])
+
+        assert result is not None
+
+
+class TestItemLogicHasLlmJudgeLeaf:
+    """Tests for _item_logic_has_llm_judge_leaf."""
+
+    def test_none_returns_false(self):
+        assert _item_logic_has_llm_judge_leaf(None) is False
+
+    def test_leaf_exact_returns_false(self):
+        config = FieldConfig(type="leaf", metric_config=LeafMetricConfig(metric="exact"))
+        assert _item_logic_has_llm_judge_leaf(config) is False
+
+    def test_leaf_comparator_llm_returns_true(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "comparator", "params": {"element_compare": "llm"}},
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is True
+
+    def test_leaf_llm_metric_returns_true(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "llm", "params": {}},
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is True
+
+    def test_leaf_comparator_embedding_returns_false(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "comparator", "params": {"element_compare": "embedding"}},
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is False
+
+    def test_object_with_llm_field_returns_true(self):
+        config = FieldConfig.model_validate({
+            "type": "object",
+            "fields": {
+                "name": {"type": "leaf", "metric_config": {"metric": "exact"}},
+                "description": {
+                    "type": "leaf",
+                    "metric_config": {"metric": "llm", "params": {}},
+                },
+            },
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is True
+
+    def test_object_without_llm_field_returns_false(self):
+        config = FieldConfig.model_validate({
+            "type": "object",
+            "fields": {
+                "name": {"type": "leaf", "metric_config": {"metric": "exact"}},
+                "score": {"type": "leaf"},
+            },
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is False
+
+    def test_nested_list_with_llm_leaf_returns_true(self):
+        config = FieldConfig.model_validate({
+            "type": "list",
+            "metric_config": {
+                "item_logic": {
+                    "type": "leaf",
+                    "metric_config": {"metric": "llm", "params": {}},
+                },
+            },
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is True
+
+    def test_nested_list_without_llm_leaf_returns_false(self):
+        config = FieldConfig.model_validate({
+            "type": "list",
+            "metric_config": {"item_logic": {"type": "leaf"}},
+        })
+        assert _item_logic_has_llm_judge_leaf(config) is False
 
 
 class TestScanIssuesIncludeCategory:
@@ -1181,6 +1596,24 @@ class TestScanIssuesIncludeCategory:
         assert len(issues) == 1
         assert issues[0]["category"] == "embedding"
 
+    def test_new_llm_metric_issue_has_category_llm(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "llm", "params": {}},
+        })
+        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
+        assert len(issues) == 1
+        assert issues[0]["category"] == "llm"
+
+    def test_new_embedding_metric_issue_has_category_embedding(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "embedding", "params": {}},
+        })
+        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
+        assert len(issues) == 1
+        assert issues[0]["category"] == "embedding"
+
     def test_custom_metric_issue_has_category_custom(self):
         config = FieldConfig.model_validate({
             "type": "leaf",
@@ -1199,74 +1632,7 @@ class TestScanIssuesIncludeCategory:
         assert issues == []
 
 
-class TestItemLogicHasLlmJudgeLeaf:
-    """Tests for _item_logic_has_llm_judge_leaf."""
-
-    def test_none_returns_false(self):
-        assert _item_logic_has_llm_judge_leaf(None) is False
-
-    def test_leaf_exact_returns_false(self):
-        config = FieldConfig(type="leaf", metric_config=LeafMetricConfig(metric="exact"))
-        assert _item_logic_has_llm_judge_leaf(config) is False
-
-    def test_leaf_comparator_llm_returns_true(self):
-        config = FieldConfig.model_validate({
-            "type": "leaf",
-            "metric_config": {"metric": "comparator", "params": {"element_compare": "llm"}},
-        })
-        assert _item_logic_has_llm_judge_leaf(config) is True
-
-    def test_leaf_comparator_embedding_returns_false(self):
-        config = FieldConfig.model_validate({
-            "type": "leaf",
-            "metric_config": {"metric": "comparator", "params": {"element_compare": "embedding"}},
-        })
-        assert _item_logic_has_llm_judge_leaf(config) is False
-
-    def test_object_with_llm_field_returns_true(self):
-        config = FieldConfig.model_validate({
-            "type": "object",
-            "fields": {
-                "name": {"type": "leaf", "metric_config": {"metric": "exact"}},
-                "description": {
-                    "type": "leaf",
-                    "metric_config": {"metric": "comparator", "params": {"element_compare": "llm"}},
-                },
-            },
-        })
-        assert _item_logic_has_llm_judge_leaf(config) is True
-
-    def test_object_without_llm_field_returns_false(self):
-        config = FieldConfig.model_validate({
-            "type": "object",
-            "fields": {
-                "name": {"type": "leaf", "metric_config": {"metric": "exact"}},
-                "score": {"type": "leaf"},
-            },
-        })
-        assert _item_logic_has_llm_judge_leaf(config) is False
-
-    def test_nested_list_with_llm_leaf_returns_true(self):
-        config = FieldConfig.model_validate({
-            "type": "list",
-            "metric_config": {
-                "item_logic": {
-                    "type": "leaf",
-                    "metric_config": {"metric": "comparator", "params": {"element_compare": "llm"}},
-                },
-            },
-        })
-        assert _item_logic_has_llm_judge_leaf(config) is True
-
-    def test_nested_list_without_llm_leaf_returns_false(self):
-        config = FieldConfig.model_validate({
-            "type": "list",
-            "metric_config": {"item_logic": {"type": "leaf"}},
-        })
-        assert _item_logic_has_llm_judge_leaf(config) is False
-
-
-def _make_completion_mock(matched_a_idx: int | None) -> Mock:
+def _make_alignment_mock(matched_a_idx: int | None) -> Mock:
     """Return a mock litellm completion response for per-item alignment."""
     idx_json = "null" if matched_a_idx is None else str(matched_a_idx)
     msg = Mock()
@@ -1275,6 +1641,14 @@ def _make_completion_mock(matched_a_idx: int | None) -> Mock:
     choice.message = msg
     response = Mock()
     response.choices = [choice]
+    return response
+
+
+def _make_leaf_yes_mock() -> Mock:
+    """Return a mock litellm completion response that returns YES."""
+    response = Mock()
+    response.choices = [Mock()]
+    response.choices[0].message.content = "YES"
     return response
 
 
@@ -1292,10 +1666,7 @@ class TestLlmAlignmentRouting:
                         "allow_expensive_comparisons_for": ["$item"],
                         "item_logic": {
                             "type": "leaf",
-                            "metric_config": {
-                                "metric": "comparator",
-                                "params": {"element_compare": "llm"},
-                            },
+                            "metric_config": {"metric": "llm", "params": {}},
                         },
                     },
                 },
@@ -1304,17 +1675,12 @@ class TestLlmAlignmentRouting:
 
     def test_llm_judge_leaf_routes_to_llm_alignment_metric(self):
         evaluator = JsonEvaluator()
-        with patch(
-            "valtron_core.evaluation.json_eval.completion",
-            return_value=_make_completion_mock(0),
-        ):
-            with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
-                MockComp.return_value.compare.return_value = True
-                result = evaluator.evaluate(
-                    self._make_llm_list_config(),
-                    {"items": ["a"]},
-                    {"items": ["a"]},
-                )
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    result = evaluator.evaluate(
+                        self._make_llm_list_config(), {"items": ["a"]}, {"items": ["a"]}
+                    )
         assert result.children["items"].metric == "list_llm_aligned_iter_f1"
 
     def test_no_llm_judge_leaf_uses_greedy_path(self):
@@ -1345,18 +1711,15 @@ class TestLlmAlignmentRouting:
                         "ordered": True,
                         "item_logic": {
                             "type": "leaf",
-                            "metric_config": {
-                                "metric": "comparator",
-                                "params": {"element_compare": "llm"},
-                            },
+                            "metric_config": {"metric": "llm", "params": {}},
                         },
                     },
                 },
             },
         }
-        with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
-            MockComp.return_value.compare.return_value = True
-            result = evaluator.evaluate(config, {"items": ["a"]}, {"items": ["a"]})
+        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                result = evaluator.evaluate(config, {"items": ["a"]}, {"items": ["a"]})
         assert result.children["items"].metric == "list_ordered_f1"
 
 
@@ -1370,10 +1733,7 @@ class TestEvalListUnorderedWithLlmAlignment:
             "allow_expensive_comparisons_for": ["$item"],
             "item_logic": {
                 "type": "leaf",
-                "metric_config": {
-                    "metric": "comparator",
-                    "params": {"element_compare": "llm"},
-                },
+                "metric_config": {"metric": "llm", "params": {}},
             },
         }
         if extra_fields:
@@ -1403,15 +1763,12 @@ class TestEvalListUnorderedWithLlmAlignment:
 
     def test_successful_alignment_perfect_match(self):
         evaluator = JsonEvaluator()
-        with patch(
-            "valtron_core.evaluation.json_eval.completion",
-            return_value=_make_completion_mock(0),
-        ):
-            with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
-                MockComp.return_value.compare.return_value = True
-                result = evaluator.evaluate(
-                    self._make_config(), {"items": ["apple"]}, {"items": ["apple"]}
-                )
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    result = evaluator.evaluate(
+                        self._make_config(), {"items": ["apple"]}, {"items": ["apple"]}
+                    )
         items = result.children["items"]
         assert items.tp == 1
         assert items.fn == 0
@@ -1420,30 +1777,20 @@ class TestEvalListUnorderedWithLlmAlignment:
 
     def test_aligner_returns_none_leaves_item_unmatched(self):
         evaluator = JsonEvaluator()
-        with patch(
-            "valtron_core.evaluation.json_eval.completion",
-            return_value=_make_completion_mock(None),
-        ):
-            with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
-                MockComp.return_value.compare.return_value = True
-                result = evaluator.evaluate(
-                    self._make_config(), {"items": ["a"]}, {"items": ["b"]}
-                )
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(None)):
+            result = evaluator.evaluate(self._make_config(), {"items": ["a"]}, {"items": ["b"]})
         items = result.children["items"]
         assert items.tp == 0
         assert items.fn == 1
 
     def test_details_include_aligner_metadata(self):
         evaluator = JsonEvaluator()
-        with patch(
-            "valtron_core.evaluation.json_eval.completion",
-            return_value=_make_completion_mock(0),
-        ):
-            with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
-                MockComp.return_value.compare.return_value = True
-                result = evaluator.evaluate(
-                    self._make_config(), {"items": ["x", "y"]}, {"items": ["x", "y"]}
-                )
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    result = evaluator.evaluate(
+                        self._make_config(), {"items": ["x", "y"]}, {"items": ["x", "y"]}
+                    )
         details = result.children["items"].details
         assert details["aligner_used"] is True
         assert details["n_aligner_calls"] == 2
@@ -1452,17 +1799,14 @@ class TestEvalListUnorderedWithLlmAlignment:
     def test_conflict_resolution_lowest_e_idx_wins(self):
         evaluator = JsonEvaluator()
         # E[0] and E[1] both claim A[0] — E[0] wins, E[1] becomes unmatched
-        with patch(
-            "valtron_core.evaluation.json_eval.completion",
-            return_value=_make_completion_mock(0),
-        ):
-            with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
-                MockComp.return_value.compare.return_value = True
-                result = evaluator.evaluate(
-                    self._make_config(),
-                    {"items": ["a", "b"]},
-                    {"items": ["a"]},
-                )
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    result = evaluator.evaluate(
+                        self._make_config(),
+                        {"items": ["a", "b"]},
+                        {"items": ["a"]},
+                    )
         items = result.children["items"]
         matched = [a for a in items.alignment if a.a_idx >= 0]
         unmatched = [a for a in items.alignment if a.a_idx < 0]
@@ -1478,42 +1822,33 @@ class TestEvalListUnorderedWithLlmAlignment:
 
         def capture(**kwargs):
             captured.append(kwargs.get("model", ""))
-            return _make_completion_mock(0)
+            return _make_alignment_mock(0)
 
         with patch("valtron_core.evaluation.json_eval.completion", side_effect=capture):
-            with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
-                MockComp.return_value.compare.return_value = True
-                evaluator.evaluate(self._make_config(), {"items": ["x"]}, {"items": ["x"]})
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    evaluator.evaluate(self._make_config(), {"items": ["x"]}, {"items": ["x"]})
 
         assert captured and all(m == "gpt-4o" for m in captured)
 
     def test_aligner_model_appears_in_details(self, monkeypatch):
         monkeypatch.setenv("VALTRON_ALIGNER_MODEL", "gpt-4o-mini")
         evaluator = JsonEvaluator()
-        with patch(
-            "valtron_core.evaluation.json_eval.completion",
-            return_value=_make_completion_mock(0),
-        ):
-            with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
-                MockComp.return_value.compare.return_value = True
-                result = evaluator.evaluate(
-                    self._make_config(), {"items": ["x"]}, {"items": ["x"]}
-                )
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    result = evaluator.evaluate(
+                        self._make_config(), {"items": ["x"]}, {"items": ["x"]}
+                    )
         assert result.children["items"].details["aligner_model"] == "gpt-4o-mini"
 
     def test_aligner_soft_fail_on_bad_response(self):
         evaluator = JsonEvaluator()
-        # Return malformed JSON — aligner should soft-fail and return no match
         bad_response = Mock()
         bad_response.choices = [Mock()]
         bad_response.choices[0].message.content = "not-valid-json"
         with patch("valtron_core.evaluation.json_eval.completion", return_value=bad_response):
-            with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
-                MockComp.return_value.compare.return_value = True
-                result = evaluator.evaluate(
-                    self._make_config(), {"items": ["a"]}, {"items": ["b"]}
-                )
-        # Soft fail: aligner returns None, item is treated as unmatched
+            result = evaluator.evaluate(self._make_config(), {"items": ["a"]}, {"items": ["b"]})
         assert result.children["items"].tp == 0
 
     def test_required_fields_pre_filter_limits_candidates(self):
@@ -1533,8 +1868,8 @@ class TestEvalListUnorderedWithLlmAlignment:
                                 "description": {
                                     "type": "leaf",
                                     "metric_config": {
-                                        "metric": "comparator",
-                                        "params": {"element_compare": "llm"},
+                                        "metric": "llm",
+                                        "params": {},
                                     },
                                 },
                             },
@@ -1546,26 +1881,20 @@ class TestEvalListUnorderedWithLlmAlignment:
         evaluator = JsonEvaluator()
         captured_candidate_counts: list[int] = []
 
-        original_align = evaluator._llm_align_one_item
-
         def recording_align(e_item, act, candidate_a_indices, path):
             captured_candidate_counts.append(len(candidate_a_indices))
-            return _make_completion_mock(
-                candidate_a_indices[0] if candidate_a_indices else None
-            ).choices[0].message.content and (
-                candidate_a_indices[0] if candidate_a_indices else None
-            )
+            return candidate_a_indices[0] if candidate_a_indices else None
 
         with patch.object(evaluator, "_llm_align_one_item", side_effect=recording_align):
-            with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
-                MockComp.return_value.compare.return_value = True
-                evaluator.evaluate(
-                    config,
-                    {"items": [{"id": "A", "description": "foo"}]},
-                    {"items": [
-                        {"id": "B", "description": "bar"},
-                        {"id": "A", "description": "baz"},
-                    ]},
-                )
+            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+                    evaluator.evaluate(
+                        config,
+                        {"items": [{"id": "A", "description": "foo"}]},
+                        {"items": [
+                            {"id": "B", "description": "bar"},
+                            {"id": "A", "description": "baz"},
+                        ]},
+                    )
         # Only A[1] has id="A" matching E[0].id="A"; A[0] has id="B" so it should be filtered
         assert captured_candidate_counts == [1]
