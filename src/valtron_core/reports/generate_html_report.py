@@ -278,7 +278,8 @@ Format your response as Markdown using headers, bullet points, and bold text whe
                     "predicted_value": prediction.predicted_value,
                     "is_correct": prediction.is_correct,
                     "response_time": prediction.response_time,
-                    "cost": prediction.cost,
+                    "llm_cost": prediction.llm_cost,
+                    "evaluation_cost": prediction.evaluation_cost,
                     "example_score": prediction.example_score,
                     "field_metrics": field_metrics_model_dump
                 })

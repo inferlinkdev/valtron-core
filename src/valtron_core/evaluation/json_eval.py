@@ -1,14 +1,49 @@
 from __future__ import annotations
 from typing import Literal, Any
 from pydantic import BaseModel, Field, ConfigDict, model_validator
+from concurrent.futures import ThreadPoolExecutor
 import json
 import copy
+import logging
+import os
+import threading
+import warnings
+from litellm import completion, completion_cost
 
-from valtron_core.evaluation.comparison_functions import Comparator, element_compare_uses_third_party
+from valtron_core.evaluation.comparison_functions import (
+    Comparator,
+    MetricCategory,
+    element_compare_category,
+)
+from valtron_core.evaluation.comparisons import (
+    _embedding_compare,
+    _exact_compare,
+    _llm_compare,
+    _text_similarity_compare,
+)
+import os
+
+logger = logging.getLogger(__name__)
+
 
 MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE = 4
+DEFAULT_LLM_ALIGNER_MODEL = "gpt-4o-mini"
 
-def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
+
+def _score_to_result(result: bool | float, params: dict[str, Any]) -> tuple[float, bool]:
+    """Convert a comparison function's return value to a (score, is_correct) tuple."""
+    if isinstance(result, bool):
+        return (1.0 if result else 0.0), result
+    threshold = params.get("comparison_threshold") or params.get("threshold")
+    if threshold is not None:
+        return result, result >= float(threshold)
+    return result, True
+
+
+def _run_comparator(
+    expected: Any, actual: Any, params: dict[str, Any]
+) -> tuple[float, bool, float, int]:
+    """Run the legacy Comparator and return (score, is_correct, cost_usd, call_count)."""
     comp = Comparator(
         element_compare=params.get("element_compare", "exact"),
         text_similarity_threshold=params.get("text_similarity_threshold", None),
@@ -23,15 +58,31 @@ def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tup
     )
     compare_result = comp.compare(expected, actual)
 
+    category, _ = element_compare_category(params.get("element_compare", "exact"), params)
+    uses_api = category != "local"
+    cost_usd = comp.total_comparison_cost if uses_api else 0.0
+    call_count = comp.comparison_count if uses_api else 0
+
     if isinstance(compare_result, bool):
-        return (1.0 if compare_result else 0.0), compare_result
+        return (1.0 if compare_result else 0.0), compare_result, cost_usd, call_count
 
     threshold = params.get("comparison_threshold", None) or params.get("text_similarity_threshold", None)
     if threshold is not None:
-        is_correct = compare_result >= threshold
-        return compare_result, is_correct
+        return compare_result, compare_result >= threshold, cost_usd, call_count
 
-    return compare_result, True
+    return compare_result, True, cost_usd, call_count
+
+
+def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
+    """Public comparator metric callable. Cost is not tracked; use JsonEvaluator for that."""
+    warnings.warn(
+        "The 'comparator' metric is deprecated; use 'exact_compare', 'text_similarity', "
+        "'llm', or 'embedding' metrics directly instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    score, is_correct, _, _ = _run_comparator(expected, actual, params)
+    return score, is_correct
 
 
 class LeafMetricConfig(BaseModel):
@@ -102,37 +153,64 @@ class ExpensiveListComparisonError(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Built-in metric 3rd-party API declarations
+# Built-in metric category declarations
 # ---------------------------------------------------------------------------
 # Every metric in JsonEvaluator.metric_registry MUST be handled in
-# _check_builtin_metric_expensive() below.  When you add a new built-in
-# metric, add a branch there and declare whether it calls a 3rd-party API.
+# _check_builtin_metric_category() below.  When you add a new built-in
+# metric, add a branch there declaring its category.
 # Omitting it raises NotImplementedError at pre-flight time.
 
-_BUILTIN_METRIC_NAMES: frozenset[str] = frozenset({"exact", "threshold", "comparator"})
+_BUILTIN_METRIC_NAMES: frozenset[str] = frozenset({
+    # legacy (deprecated)
+    "exact", "threshold", "comparator",
+    # standalone metrics
+    "exact_compare", "text_similarity", "llm", "embedding",
+})
 
 
-def _check_builtin_metric_expensive(metric_name: str, params: dict[str, Any]) -> tuple[bool, str]:
-    """Return ``(is_expensive, description)`` for a built-in metric.
+def _check_builtin_metric_category(
+    metric_name: str, params: dict[str, Any]
+) -> tuple[MetricCategory, str]:
+    """Return ``(category, description)`` for a built-in metric.
+
+    ``category`` is one of ``"local"``, ``"llm"``, or ``"embedding"`` and is used by both
+    the pre-flight safety check and the auto-LLM-alignment routing for unordered lists.
 
     DEVELOPER NOTE — when adding a new metric to ``JsonEvaluator.metric_registry``:
-      1. Add a branch here.
-      2. Return ``(True, "<description>")`` if it calls a 3rd-party API,
-         ``(False, "")`` if it is entirely local.
+      1. Add a branch here returning the correct category.
     Omitting this raises ``NotImplementedError`` at pre-flight time.
+
+    :param metric_name: The built-in metric name.
+    :param params: The metric's params dict.
+    :return: A ``(category, description)`` tuple.
     """
-    if metric_name in ("exact", "threshold"):
-        return False, ""
+    if metric_name in ("exact", "threshold", "exact_compare"):
+        return "local", ""
+
+    if metric_name == "text_similarity":
+        if params.get("metric") == "cosine":
+            model = params.get("embedding_model", "text-embedding-3-small")
+            return "embedding", (
+                f"text_similarity with cosine metric calls the embedding API (model='{model}')"
+            )
+        return "local", ""
 
     if metric_name == "comparator":
         element_compare = params.get("element_compare", "exact")
-        return element_compare_uses_third_party(element_compare, params)
+        return element_compare_category(element_compare, params)
 
+    if metric_name == "llm":
+        model = params.get("model", "gpt-4o-mini")
+        return "llm", f"LLM metric (model='{model}')"
+
+    if metric_name == "embedding":
+        model = params.get("model", "text-embedding-3-small")
+        return "embedding", f"embedding metric (model='{model}')"
     raise NotImplementedError(
-        f"Built-in metric '{metric_name}' has no 3rd-party API declaration.\n"
+        f"Built-in metric '{metric_name}' has no category declaration.\n"
         "When adding a new metric to JsonEvaluator.metric_registry you MUST:\n"
-        "  1. Add a branch in _check_builtin_metric_expensive() in json_eval.py\n"
-        "     and return (True, description) if it calls a 3rd-party API, or (False, '') if not.\n"
+        "  1. Add a branch in _check_builtin_metric_category() in json_eval.py\n"
+        "     returning the correct category ('local' | 'llm' | 'embedding').\n"
         "This check exists to prevent accidental n²-cost list evaluations."
     )
 
@@ -166,19 +244,21 @@ def _scan_item_logic_for_expensive_metrics(
                 "relative_path": display_rel,
                 "type": "custom",
                 "metric": mc.metric,
+                "category": "custom",
                 "description": (
                     f"custom metric '{mc.metric}' — its implementation is user-defined "
                     "and may call a 3rd-party service"
                 ),
             })
         elif mc.metric in _BUILTIN_METRIC_NAMES:
-            expensive, desc = _check_builtin_metric_expensive(mc.metric, mc.params)
-            if expensive:
+            category, desc = _check_builtin_metric_category(mc.metric, mc.params)
+            if category != "local":
                 issues.append({
                     "metric_path": path,
                     "relative_path": display_rel,
                     "type": "builtin",
                     "metric": mc.metric,
+                    "category": category,
                     "description": desc,
                 })
         else:
@@ -242,9 +322,14 @@ def _find_expensive_lists_recursive(
 def _collect_llm_models_recursive(config: "FieldConfig") -> set[str]:
     models: set[str] = set()
     if config.type == "leaf" and config.metric_config is not None:
-        params: dict[str, Any] = getattr(config.metric_config, "params", {})
+        mc = config.metric_config
+        params: dict[str, Any] = getattr(mc, "params", {})
+        # Legacy: comparator metric with element_compare="llm"
         if params.get("element_compare") == "llm":
             models.add(params.get("llm_model", "gpt-4o-mini"))
+        # New: llm metric registered directly
+        if getattr(mc, "metric", None) == "llm":
+            models.add(params.get("model", "gpt-4o-mini"))
     elif config.type == "object" and config.fields:
         for fc in config.fields.values():
             models.update(_collect_llm_models_recursive(fc))
@@ -260,9 +345,29 @@ def collect_field_metric_llm_models(config_dict: dict[str, Any]) -> set[str]:
 
     Walks the FieldConfig tree and collects every model name where
     element_compare='llm' is set in a leaf metric's params.
+
+    :param config_dict: A serialized FieldConfig dict.
+    :return: Set of LLM model names referenced by LLM-judge leaves.
     """
     config = FieldConfig.model_validate(config_dict)
     return _collect_llm_models_recursive(config)
+
+
+def _item_logic_has_llm_judge_leaf(item_logic: "FieldConfig | None") -> bool:
+    """Return True if any leaf below ``item_logic`` uses an LLM-judge metric.
+
+    Walks the nested FieldConfig subtree of a list's item_logic and reports whether
+    at least one reachable leaf has ``metric == "comparator"`` with
+    ``params.element_compare == "llm"``.  Nested lists are descended into so a deeply
+    buried LLM-judge leaf still triggers the auto-alignment path on its enclosing list.
+
+    :param item_logic: The list's ``item_logic`` FieldConfig, or None.
+    :return: True if any leaf below uses an LLM judge.
+    """
+    if item_logic is None:
+        return False
+
+    return bool(_collect_llm_models_recursive(item_logic))
 
 
 def find_expensive_unordered_list_fields(
@@ -286,6 +391,19 @@ def find_expensive_unordered_list_fields(
         config, "root", frozenset(custom_metric_names or set()), issues
     )
     return issues
+
+
+class _PerItemAlignment(BaseModel):
+    """LLM response for one expected item's alignment.
+
+    Tiny one-field schema designed to be trivially reliable under OpenAI structured-output
+    strict mode.  Leaf-level judging is intentionally NOT collapsed into this call; it runs
+    afterwards through the regular leaf-judge code path on each matched pair.
+
+    :param matched_a_idx: Index into the candidate actual list, or None if no actual item
+        plausibly matches the expected item.
+    """
+    matched_a_idx: int | None
 
 
 class AlignmentItem(BaseModel):
@@ -324,12 +442,52 @@ class JsonEvaluator:
         custom_aggs: dict[str, callable] | None = None,
     ):
         self._template_vars: dict[str, Any] = {}
+        self._evaluation_cost_usd: float = 0.0
+        self._evaluation_cost_lock = threading.Lock()
 
         # Metric Registry: (expected, actual, params) -> tuple[float, bool]:
         self.metric_registry = {
+            # legacy (deprecated) metrics
             "exact": lambda e, a, p: 1.0 if e == a else 0.0,
             "threshold": lambda e, a, p: 1.0 if (a or 0) >= p.get("min", 0) else 0.0,
             "comparator": comparator_metric,
+            # standalone metrics -- register by strategy name directly
+            "exact_compare": lambda e, a, p: _score_to_result(
+                _exact_compare(
+                    str(e), str(a),
+                    case_sensitive=p.get("case_sensitive", False),
+                    ignore_spaces=p.get("ignore_spaces", False),
+                ),
+                p,
+            ),
+            "text_similarity": lambda e, a, p: _score_to_result(
+                _text_similarity_compare(
+                    str(e), str(a),
+                    metric=p.get("metric", "fuzz_ratio"),
+                    threshold=p.get("threshold"),
+                    case_sensitive=p.get("case_sensitive", False),
+                    ignore_spaces=p.get("ignore_spaces", False),
+                    embedding_model=p.get("embedding_model", "text-embedding-3-small"),
+                ),
+                p,
+            ),
+            "llm": lambda e, a, p: _score_to_result(
+                _llm_compare(
+                    str(e), str(a),
+                    model=p.get("model", "gpt-4o-mini"),
+                    prompt_template=p.get("prompt_template"),
+                    prompt_extra_vars=p.get("_template_vars"),
+                ),
+                p,
+            ),
+            "embedding": lambda e, a, p: _score_to_result(
+                _embedding_compare(
+                    str(e), str(a),
+                    model=p.get("model", "text-embedding-3-small"),
+                    threshold=p.get("threshold"),
+                ),
+                p,
+            ),
         }
         if custom_metrics:
             self.metric_registry.update(custom_metrics)
@@ -354,6 +512,21 @@ class JsonEvaluator:
         if total_weight == 0:
             return 0.0
         return sum(getattr(res, field) * res.weight for res in items) / total_weight
+
+    def _record_evaluation_cost(self, cost_usd: float) -> None:
+        with self._evaluation_cost_lock:
+            self._evaluation_cost_usd += float(cost_usd or 0.0)
+
+    @property
+    def evaluation_cost(self) -> float:
+        with self._evaluation_cost_lock:
+            return self._evaluation_cost_usd
+
+    def _comparator_metric(self, expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
+        score, is_correct, cost_usd, call_count = _run_comparator(expected, actual, params)
+        if cost_usd:
+            self._record_evaluation_cost(cost_usd)
+        return score, is_correct
 
     def evaluate(
         self,
@@ -482,14 +655,24 @@ class JsonEvaluator:
                 fields = ", ".join(f'"{i["relative_path"]}"' for i in unallowed_expensive)
                 raise ValueError(
                     f"Unordered list at '{path}' uses 3rd-party metric(s) on [{fields}] without "
-                    f"explicit opt-in. This causes n^2 API calls per document. "
-                    f"Add these paths to allow_expensive_comparisons_for on the list's metric_config if you accept the fact that n^2 comparisons will be made per document. Otherwise, replace the metric(s) with ones that don't invoked 3rd party APIs.\n\n"
+                    f"explicit opt-in. These comparisons call an external API and add cost per document. "
+                    f"Add these paths to allow_expensive_comparisons_for on the list's metric_config if "
+                    f"you accept the extra cost, or replace the metric(s) with ones that don't call "
+                    f"3rd-party APIs.\n\n"
                 )
 
         if m_cfg.ordered:
             return self._eval_list_ordered(config, exp, act, path, m_cfg)
-        else:
-            return self._eval_list_unordered(config, exp, act, path, m_cfg)
+
+        if _item_logic_has_llm_judge_leaf(m_cfg.item_logic):
+            logger.info(
+                "Unordered list at '%s': using LLM-based alignment because at least one leaf "
+                "below uses an LLM-judge metric. This converts O(k^2) judge calls into O(k+1).",
+                path,
+            )
+            return self._eval_list_unordered_with_llm_alignment(config, exp, act, path, m_cfg)
+
+        return self._eval_list_unordered(config, exp, act, path, m_cfg)
 
     def _eval_list_ordered(self, config: FieldConfig, exp: list[Any], act: list[Any], path: str, m_cfg: "ListMetricConfig") -> EvalResult:
         alignments: list[AlignmentItem] = []
@@ -589,5 +772,259 @@ class JsonEvaluator:
             fn=len(exp) - len(matched_e),
             tp=len(matched_e),
             details={"matched_items": len(matched_e)},
+            is_correct=all_correct,
+        )
+
+    def _llm_align_one_item(
+        self,
+        e_item: Any,
+        act: list[Any],
+        candidate_a_indices: list[int],
+        path: str,
+    ) -> int | None:
+        """One LLM call: pick which actual item (if any) corresponds to a given expected
+        item.  Returns just ``matched_a_idx`` or None.
+
+        Each call is a single local decision over a trivial one-field schema, so it does
+        not suffer the global-consistency failures of one-shot full-list alignment.
+        Retries once on schema/parse failure; on second failure returns None (soft fail)
+        so the surrounding document is not blocked.
+
+        :param e_item: The expected item being aligned.
+        :param act: Full list of actual items (used to read candidate items by index).
+        :param candidate_a_indices: Indices into ``act`` that are eligible matches (after
+            the ``required_fields_to_match`` pre-filter is applied).
+        :param path: Evaluation path used in log messages.
+        :return: The chosen index from ``candidate_a_indices``, or None.
+        """
+        if not candidate_a_indices:
+            return None
+
+        model = os.environ.get("VALTRON_ALIGNER_MODEL", DEFAULT_LLM_ALIGNER_MODEL)
+
+        expected_repr = json.dumps(e_item, default=str, ensure_ascii=False, indent=2)
+        actuals_repr = "\n".join(
+            f"[A{j}]\n{json.dumps(act[j], default=str, ensure_ascii=False, indent=2)}"
+            for j in candidate_a_indices
+        )
+        valid_indices_str = ", ".join(str(j) for j in candidate_a_indices)
+
+        base_prompt = (
+            "You are aligning one expected item against a list of candidate actual items, "
+            "as part of an automated evaluation pipeline.\n\n"
+            "Decide which (if any) of the candidate ACTUAL items corresponds to the EXPECTED "
+            "item below.\n"
+            f"- matched_a_idx must be one of: [{valid_indices_str}] (the integer after the `A` "
+            "tag), or null if no candidate plausibly matches.\n"
+            "- Be strict: prefer null over a doubtful match.\n\n"
+            f"EXPECTED:\n{expected_repr}\n\n"
+            f"ACTUAL CANDIDATES ({len(candidate_a_indices)}):\n{actuals_repr}\n\n"
+            "Return JSON only, matching the schema."
+        )
+
+        last_err: Exception | None = None
+        prompt = base_prompt
+        valid_set = set(candidate_a_indices)
+
+        for attempt in range(2):
+            try:
+                response = completion(
+                    model=model,
+                    messages=[{"role": "user", "content": prompt}],
+                    temperature=0.0,
+                    response_format=_PerItemAlignment,
+                )
+
+                # Account for judge spend: each alignment call is a billable LLM
+                # request and is the dominant cost of unordered-list scoring.
+                # Record it before parsing so failed-parse retries are counted too.
+                # Best-effort — a cost-lookup failure must never block scoring.
+                try:
+                    self._record_evaluation_cost(completion_cost(completion_response=response))
+                except Exception:  # noqa: BLE001
+                    logger.warning("evaluation_cost_tracking_failed at '%s'", path)
+
+                content = response.choices[0].message.content
+                parsed = _PerItemAlignment.model_validate_json(content)
+
+                if parsed.matched_a_idx is not None and parsed.matched_a_idx not in valid_set:
+                    raise ValueError(
+                        f"matched_a_idx={parsed.matched_a_idx} not in candidate set "
+                        f"{candidate_a_indices}"
+                    )
+
+                return parsed.matched_a_idx
+
+            except Exception as e:
+                last_err = e
+                logger.warning(
+                    "Per-item aligner attempt %d/2 failed at '%s' (model=%s): %s",
+                    attempt + 1, path, model, e,
+                )
+                prompt = (
+                    base_prompt
+                    + f"\n\nYour previous response was invalid: {e}\nTry again, strictly "
+                    "obeying the schema and the rules above."
+                )
+
+        logger.warning(
+            "Per-item aligner failed at '%s' after 2 attempts (model=%s); treating as no "
+            "match: %s",
+            path, model, last_err,
+        )
+        return None
+
+    def _eval_list_unordered_with_llm_alignment(
+        self,
+        config: FieldConfig,
+        exp: list[Any],
+        act: list[Any],
+        path: str,
+        m_cfg: "ListMetricConfig",
+    ) -> EvalResult:
+        """Evaluate an unordered list whose items contain LLM-judge leaves, using per-item
+        iterative LLM alignment followed by the regular leaf-judge code path.
+
+        For each expected item, issues one LLM call to pick the matching actual item (or
+        none) — a tiny one-field decision that gpt-4o-mini handles reliably.  Calls run
+        in parallel.  Once alignment is decided, each matched pair is evaluated by
+        recursing ``item_logic`` so every leaf (LLM-judge, embedding, or local) runs
+        through its own configured metric with its own prompt template.
+
+        Conflict resolution: when multiple expected items claim the same actual item, the
+        lowest e_idx wins; the others fall through to unmatched.  (We don't have a
+        confidence signal from the alignment call, so the tiebreaker is just deterministic.)
+
+        :param config: The list's :class:`FieldConfig`.
+        :param exp: Expected list of items.
+        :param act: Actual (predicted) list of items.
+        :param path: Current evaluation path.
+        :param m_cfg: The list's metric config.
+        :return: An :class:`EvalResult` for the list.
+        """
+        if not exp and not act:
+            return EvalResult(
+                path=path, score=1.0, weight=config.weight,
+                metric="list_llm_aligned_iter_f1",
+                alignment=[], precision=0.0, recall=0.0,
+                tp=0, fp=0, fn=0,
+                details={"matched_items": 0, "aligner_used": True},
+                is_correct=True,
+            )
+
+        if not exp:
+            return EvalResult(
+                path=path, score=0.0, weight=config.weight,
+                metric="list_llm_aligned_iter_f1",
+                alignment=[], precision=0.0, recall=0.0,
+                fp=len(act), fn=0, tp=0,
+                details={"matched_items": 0, "aligner_used": True},
+                is_correct=False,
+            )
+
+        item_logic = m_cfg.item_logic
+        required_fields = m_cfg.required_fields_to_match or []
+
+        # Per-E candidate filtering by required_fields_to_match.  Skipping a candidate
+        # here is functionally identical to the LLM returning matched_a_idx=null for it,
+        # but cheaper and deterministic.
+        candidates_per_e: list[list[int]] = []
+        for i, e_item in enumerate(exp):
+            if (
+                required_fields
+                and item_logic
+                and item_logic.fields
+                and isinstance(e_item, dict)
+            ):
+                cands: list[int] = []
+                for j, a_item in enumerate(act):
+                    if not isinstance(a_item, dict):
+                        continue
+                    ok = True
+                    for rf in required_fields:
+                        rf_cfg = item_logic.fields.get(rf, FieldConfig())
+                        rf_res = self._recurse(
+                            rf_cfg, e_item.get(rf), a_item.get(rf),
+                            f"{path}[{i}].{rf}",
+                        )
+                        if not rf_res.is_correct:
+                            ok = False
+                            break
+                    if ok:
+                        cands.append(j)
+                candidates_per_e.append(cands)
+            else:
+                candidates_per_e.append(list(range(len(act))))
+
+        # Fan out one LLM call per expected item — each is a one-field decision, immune
+        # to the global-consistency failures of one-shot full-list alignment.
+        max_workers = min(32, max(1, len(exp)))
+        proposed_a_per_e: dict[int, int | None] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            future_to_idx = {
+                ex.submit(
+                    self._llm_align_one_item,
+                    exp[i], act, candidates_per_e[i], f"{path}[{i}]",
+                ): i
+                for i in range(len(exp))
+            }
+            for fut, i in future_to_idx.items():
+                proposed_a_per_e[i] = fut.result()
+
+        # Conflict resolution: each actual item can be claimed at most once; lowest e_idx
+        # wins.  Losing claimants fall through to unmatched.
+        e_assignment: dict[int, int | None] = {i: None for i in range(len(exp))}
+        a_taken: set[int] = set()
+        for i in range(len(exp)):
+            proposed = proposed_a_per_e.get(i)
+            if proposed is not None and proposed not in a_taken:
+                e_assignment[i] = proposed
+                a_taken.add(proposed)
+
+        # Run the leaf-judging recursion for every expected item in parallel.  Each
+        # _recurse call makes its own LLM-judge / embedding / local-metric calls
+        # internally; running 32 of them concurrently lets the API round-trips overlap
+        # rather than blocking serially on the main thread.  Output order is preserved
+        # by ex.map() so the alignments list stays e_idx-ordered.
+        def _judge_one(i: int) -> AlignmentItem:
+            a_idx = e_assignment[i]
+            if a_idx is not None:
+                res = self._recurse(item_logic, exp[i], act[a_idx], f"{path}[{i}]")
+                return AlignmentItem(e_idx=i, a_idx=a_idx, score=res.score, result=res)
+            res = self._recurse(item_logic, exp[i], None, f"{path}[{i}]")
+            return AlignmentItem(e_idx=i, a_idx=-1, score=0.0, result=res)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            alignments: list[AlignmentItem] = list(ex.map(_judge_one, range(len(exp))))
+
+        matched_e: set[int] = {a.e_idx for a in alignments if a.a_idx >= 0}
+        matched_a: set[int] = {a.a_idx for a in alignments if a.a_idx >= 0}
+
+        precision = len(matched_a) / len(act) if act else 0
+        recall = len(matched_e) / len(exp) if exp else 0
+        f1 = (2 * precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+        all_correct = (
+            len(matched_e) == len(exp)
+            and len(matched_a) == len(act)
+            and all(a.result.is_correct for a in alignments)
+        )
+
+        return EvalResult(
+            path=path,
+            score=1.0 if all_correct else f1,
+            weight=config.weight,
+            metric="list_llm_aligned_iter_f1",
+            alignment=alignments,
+            precision=precision,
+            recall=recall,
+            fp=len(act) - len(matched_a),
+            fn=len(exp) - len(matched_e),
+            tp=len(matched_e),
+            details={
+                "matched_items": len(matched_e),
+                "aligner_used": True,
+                "aligner_model": os.environ.get("VALTRON_ALIGNER_MODEL", DEFAULT_LLM_ALIGNER_MODEL),
+                "n_aligner_calls": len(exp),
+            },
             is_correct=all_correct,
         )

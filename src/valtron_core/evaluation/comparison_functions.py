@@ -1,60 +1,13 @@
 """Comparison functions for evaluating LLM predictions against ground truth.
 
-This module provides two classes:
-- **Comparator**: Low-level element comparison (exact, text_similarity, llm, embedding)
-- **Grader**: High-level orchestration with list handling and score aggregation
-
-Uses LiteLLM for unified access to multiple AI providers.
-
-Example usage:
-    from evaltron_core.comparison_functions import Comparator, Grader
-
-    # Create comparator for element-level comparison
-    comparator = Comparator(
-        element_compare="embedding",
-        embedding_model="text-embedding-3-large",
-        embedding_threshold=0.85,  # or None for raw scores
-    )
-
-    # Create grader for list/aggregation logic
-    grader = Grader(comparator=comparator)
-
-    # Single string comparison
-    score = grader.grade_str("NYC", "New York")  # True or 0.92
-
-    # List comparisons - returns list of scores
-    scores = grader.grade_list(["a", "b"], ["A", "B"])  # [True, True]
-
-    # List comparisons - order doesn't matter (sort first, then compare)
-    scores = grader.grade_list(["b", "a"], ["A", "B"], order_matters=False, aggregation="avg")
-
-    # With aggregation
-    avg = grader.grade_list(["a", "b"], ["A", "B"], aggregation="avg")  # 1.0
-    passed = grader.grade_list(["a", "b"], ["A", "B"], aggregation="all")  # True
-
-    # JSON grading - returns per-key scores
-    predicted = '{"name": "John", "city": "NYC"}'
-    expected = '{"name": "John", "city": "New York"}'
-    scores = grader.grade_json(predicted, expected)
-    # Returns: {"name": True, "city": False}
-
-    # Nested JSON with lists
-    predicted = '{"person": {"name": "John"}, "tags": ["dev", "py"]}'
-    expected = '{"person": {"name": "John"}, "tags": ["developer", "python"]}'
-    scores = grader.grade_json(predicted, expected, aggregation="avg")
-    # Returns: {"person": {"name": True}, "tags": 0.5}
-
-    # Use with PromptEvaluator
-    from evaltron_core.evaluator import PromptEvaluator
-    evaluator = PromptEvaluator()
-    result = await evaluator.evaluate(
-        eval_input=my_input,
-        comparison_fn=grader.grade_str,
-    )
+DEPRECATED: This module is deprecated. Use the standalone functions in
+`valtron_core.evaluation.comparisons` instead, and register them directly in
+`JsonEvaluator.metric_registry`. This file will be removed in a future release.
 """
 
 import json
 import math
+import warnings
 from typing import Any, Literal
 
 import litellm
@@ -66,56 +19,58 @@ from rapidfuzz import fuzz
 
 ElementCompareType = Literal["exact", "text_similarity", "llm", "embedding"]
 TextSimilarityMetric = Literal["fuzz_ratio", "bleu", "gleu", "cosine"]
-AggregationType = Literal["avg", "all", "any"]
-
-# Maximum list length for expensive comparisons (embedding, llm)
-# With N×M comparisons, 10 elements = 100 API calls max
-MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE = 10
+MetricCategory = Literal["local", "llm", "embedding"]
 
 
-def element_compare_uses_third_party(element_compare: str, params: dict[str, str | float]) -> tuple[bool, str]:
-    """Return ``(uses_third_party, human_readable_description)`` for a given
-    element_compare strategy and its params.
+def element_compare_category(
+    element_compare: str, params: dict[str, str | float]
+) -> tuple[MetricCategory, str]:
+    """Return ``(category, human_readable_description)`` for an element_compare strategy.
 
-    This is the **single source of truth** for whether a comparison type calls
-    a 3rd-party API.  It is used by the pre-flight safety check in the runner
-    to detect n²-cost list comparisons before any model is invoked.
+    ``category`` is one of ``"local"`` (no external API call), ``"llm"`` (calls a chat-LLM
+    judge), or ``"embedding"`` (calls an embedding API).  This is the **single source of
+    truth** used by the pre-flight safety check and the auto-LLM-alignment logic in
+    json_eval.py to decide how to evaluate unordered lists.
 
     DEVELOPER NOTE — when adding a new comparison strategy:
-      1. Add a branch here and return ``(True, "<description>")`` if it calls a
-         3rd-party API, or ``(False, "")`` if it runs entirely locally.
+      1. Add a branch here and return the correct category and a description.
       2. Add the new value to ``ElementCompareType``.
-    Omitting either step will raise ``NotImplementedError`` at pre-flight time,
-    making the gap impossible to ship silently.
+    Omitting either step will raise ``NotImplementedError`` at pre-flight time, making
+    the gap impossible to ship silently.
+
+    :param element_compare: The element comparison strategy name.
+    :param params: The metric params dict, used to look up model names for descriptions.
+    :return: A ``(category, description)`` tuple.
     """
     if element_compare == "exact":
-        return False, ""
+        return "local", ""
 
     if element_compare == "text_similarity":
         if params.get("text_similarity_metric") == "cosine":
             model = params.get("embedding_model", "text-embedding-3-small")
-            return True, (
+            return "embedding", (
                 f"text_similarity with cosine metric — calls the embedding API "
                 f"(model='{model}')"
             )
-        return False, ""
+        return "local", ""
 
     if element_compare == "llm":
         model = params.get("llm_model", "gpt-4o-mini")
-        return True, f"LLM comparison (element_compare='llm', model='{model}')"
+        return "llm", f"LLM comparison (element_compare='llm', model='{model}')"
 
     if element_compare == "embedding":
         model = params.get("embedding_model", "text-embedding-3-small")
-        return True, f"embedding comparison (element_compare='embedding', model='{model}')"
+        return "embedding", f"embedding comparison (element_compare='embedding', model='{model}')"
 
     raise NotImplementedError(
-        f"element_compare='{element_compare}' has no 3rd-party API declaration.\n"
+        f"element_compare='{element_compare}' has no category declaration.\n"
         "When adding a new comparison strategy you MUST:\n"
-        "  1. Add a branch in element_compare_uses_third_party() in comparison_functions.py\n"
-        "     and return (True, description) if it calls a 3rd-party API, or (False, '') if not.\n"
+        "  1. Add a branch in element_compare_category() in comparison_functions.py\n"
+        "     and return the correct category ('local' | 'llm' | 'embedding') and a description.\n"
         "  2. Add the value to ElementCompareType.\n"
         "This check exists to prevent accidental n²-cost list evaluations."
     )
+
 
 
 class _MatchResult(BaseModel):
@@ -164,6 +119,13 @@ class Comparator:
             case_sensitive: Whether comparison should be case sensitive
             ignore_spaces: Whether comparison should ignore spaces
         """
+        warnings.warn(
+            "Comparator is deprecated; use the standalone functions in "
+            "valtron_core.evaluation.comparisons and register them in "
+            "JsonEvaluator.metric_registry instead.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.element_compare = element_compare
         self.text_similarity_threshold = text_similarity_threshold
         self.text_similarity_metric = text_similarity_metric
@@ -358,6 +320,14 @@ Respond with only "YES" or "NO"."""
         """
         self.comparison_count += 1
 
+        # Cheap short-circuit: when normalised values are identical, every strategy would
+        # return a positive match.  Skip whatever expensive backend was configured (LLM
+        # round-trip, embedding API calls, BLEU/GLEU computation).  Return type matches
+        # what the configured strategy would have produced (bool vs float) so callers
+        # cannot tell the difference.
+        if self._exact_compare(predicted, expected):
+            return 1.0 if self.is_score_mode() else True
+
         if self.element_compare == "exact":
             return self._exact_compare(predicted, expected)
         elif self.element_compare == "text_similarity":
@@ -382,271 +352,3 @@ Respond with only "YES" or "NO"."""
             "comparison_count": self.comparison_count,
             "total_comparison_cost": self.total_comparison_cost,
         }
-
-
-class Grader:
-    """High-level grader that orchestrates comparisons and aggregates scores.
-
-    Uses a Comparator for element-level comparisons and provides methods for
-    list comparisons and score aggregation.
-    """
-
-    def __init__(
-        self,
-        comparator: Comparator,
-        order_matters: bool = True,
-        threshold: float = 0.5,
-    ) -> None:
-        """
-        Initialize the grader.
-
-        Args:
-            comparator: Comparator instance for element comparisons
-            order_matters: Default setting for whether list element order matters
-            threshold: Default threshold for converting scores to booleans in all/any methods
-        """
-        self.comparator = comparator
-        self.order_matters = order_matters
-        self.threshold = threshold
-
-    def grade_str(self, predicted: str, expected: str, context: str | None = None) -> bool | float:
-        """
-        Grade a single string prediction.
-
-        Args:
-            predicted: The predicted value
-            expected: The expected ground truth value
-            context: Optional source document text for LLM comparison context
-
-        Returns:
-            bool or float depending on comparator configuration
-        """
-        return self.comparator.compare(predicted, expected, context)
-
-    def grade_list(
-        self,
-        predicted: list[str],
-        expected: list[str],
-        order_matters: bool | None = None,
-        aggregation: AggregationType | None = None,
-        context: str | None = None,
-        threshold: float | None = None,
-    ) -> list[bool] | list[float] | float | bool:
-        """
-        Grade a list of predictions against expected values.
-
-        When order_matters=True: Compares elements 1-1 positionally (L1[i] vs L2[i]).
-        When order_matters=False: Computes N×M similarity matrix and uses greedy
-        1-to-1 matching (best scores first). Requires aggregation.
-
-        Args:
-            predicted: List of predicted values
-            expected: List of expected ground truth values
-            order_matters: If True, compare L1[i] to L2[i] directly (lists must be same length).
-                          If False, use N×M greedy matching (aggregation required).
-                          If None, uses the instance default.
-            aggregation: How to aggregate results:
-                        - None: return list of scores (only valid when order_matters=True)
-                        - "avg": return average score (float)
-                        - "all": return True if all meet threshold (bool)
-                        - "any": return True if any meets threshold (bool)
-            threshold: Threshold for "all"/"any" aggregation (default: instance threshold)
-
-        Returns:
-            - list[bool] or list[float] when aggregation is None (order_matters=True only)
-            - float when aggregation is "avg"
-            - bool when aggregation is "all" or "any"
-
-        Raises:
-            ValueError: If lists have different lengths when order_matters=True
-            ValueError: If aggregation is None when order_matters=False
-            ValueError: If list length > 10 for embedding/llm comparison with order_matters=False
-        """
-        # Use instance defaults
-        if order_matters is None:
-            order_matters = self.order_matters
-        if threshold is None:
-            threshold = self.threshold
-
-        # Length check only applies when order matters (1-to-1 positional)
-        if len(predicted) != len(expected) and order_matters:
-            raise ValueError(
-                f"Lists must have same length when order_matters=True: {len(predicted)} != {len(expected)}"
-            )
-
-        # Enforce aggregation when order doesn't matter
-        if not order_matters and aggregation is None:
-            raise ValueError(
-                "aggregation is required when order_matters=False "
-                "(positional scores are meaningless with greedy matching)"
-            )
-
-        # Limit list length for expensive comparison types (N×M can be costly)
-        if not order_matters and self.comparator.element_compare in ("embedding", "llm"):
-            max_len = max(len(predicted), len(expected))
-            if max_len > MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE:
-                raise ValueError(
-                    f"List too long for {self.comparator.element_compare} comparison: "
-                    f"{max_len} > {MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE}. "
-                    f"N×M comparisons would require {len(predicted) * len(expected)} API calls. "
-                    f"Use exact or text_similarity comparison for long lists."
-                )
-
-        # Get element-wise scores
-        if order_matters:
-            scores = [self.comparator.compare(p, e, context) for p, e in zip(predicted, expected)]
-        else:
-            # N×M comparisons with greedy 1-to-1 matching
-            all_pairs = []
-            for i, p in enumerate(predicted):
-                for j, e in enumerate(expected):
-                    score = self.comparator.compare(p, e, context)
-                    score_num = float(score) if isinstance(score, bool) else score
-                    all_pairs.append((score_num, i, j))
-
-            # Sort by score descending (best matches first)
-            all_pairs.sort(key=lambda x: x[0], reverse=True)
-
-            # Greedy 1-to-1 assignment
-            matched_pred: set[int] = set()
-            matched_exp: set[int] = set()
-            scores = []
-
-            for score, i, j in all_pairs:
-                if i not in matched_pred and j not in matched_exp:
-                    scores.append(score)
-                    matched_pred.add(i)
-                    matched_exp.add(j)
-
-            # Unmatched items get score 0 (for length mismatch)
-            max_len = max(len(predicted), len(expected))
-            while len(scores) < max_len:
-                scores.append(0.0)
-
-        # Return raw scores if no aggregation
-        if aggregation is None:
-            return scores
-
-        # Convert to numeric for aggregation
-        numeric = [float(s) if isinstance(s, bool) else s for s in scores]
-
-        if aggregation == "avg":
-            return sum(numeric) / len(numeric) if numeric else 0.0
-        elif aggregation == "all":
-            return all(s >= threshold for s in numeric)
-        elif aggregation == "any":
-            return any(s >= threshold for s in numeric)
-
-        return scores
-
-    def grade_json(
-        self,
-        predicted: str | dict[str, Any],
-        expected: str | dict[str, Any],
-        order_matters: bool | None = None,
-        aggregation: AggregationType | None = None,
-        threshold: float | None = None,
-        context: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Grade JSON predictions recursively, returning per-key scores.
-
-        Traverses the JSON structure and grades each value based on its type:
-        - str: uses grade_str()
-        - list: uses grade_list() with the provided parameters
-        - dict: recurses into the nested structure
-
-        Args:
-            predicted: Predicted JSON (string or already parsed dict)
-            expected: Expected JSON (string or already parsed dict)
-            order_matters: For list comparisons - whether order matters
-            aggregation: For list comparisons - how to aggregate ("avg", "all", "any", or None)
-            threshold: For list comparisons with "all"/"any" aggregation
-
-        Returns:
-            Dict with same structure as expected, containing scores per key:
-            - str values → bool | float
-            - list values → list[bool|float] | float | bool (depending on aggregation)
-            - dict values → nested dict of scores
-        """
-        # Parse JSON strings if needed
-        if isinstance(predicted, str):
-            predicted = json.loads(predicted.strip())
-        if isinstance(expected, str):
-            expected = json.loads(expected.strip())
-
-        return self._grade_json_recursive(
-            predicted, expected, order_matters, aggregation, threshold, context
-        )
-
-    def _grade_json_recursive(
-        self,
-        predicted: dict[str, Any],
-        expected: dict[str, Any],
-        order_matters: bool | None,
-        aggregation: AggregationType | None,
-        threshold: float | None,
-        context: str | None = None,
-    ) -> dict[str, Any]:
-        """Recursively grade JSON structure."""
-        results = {}
-
-        for key, exp_value in expected.items():
-            pred_value = predicted.get(key)
-
-            # Handle missing key in predicted
-            if pred_value is None:
-                if isinstance(exp_value, dict):
-                    # Recurse with empty dict
-                    results[key] = self._grade_json_recursive(
-                        {}, exp_value, order_matters, aggregation, threshold, context
-                    )
-                elif isinstance(exp_value, list):
-                    # Return appropriate failure value for missing list
-                    if aggregation in ("all", "any"):
-                        results[key] = False
-                    elif aggregation == "avg":
-                        results[key] = 0.0
-                    else:
-                        is_score_mode = self.comparator.is_score_mode()
-                        results[key] = [0.0 if is_score_mode else False] * len(exp_value)
-                else:
-                    # String comparison with empty
-                    results[key] = self.grade_str("", str(exp_value), context)
-                continue
-
-            # Grade based on expected value type
-            if isinstance(exp_value, dict):
-                # Recurse for nested dict
-                pred_dict = pred_value if isinstance(pred_value, dict) else {}
-                results[key] = self._grade_json_recursive(
-                    pred_dict, exp_value, order_matters, aggregation, threshold, context
-                )
-            elif isinstance(exp_value, list):
-                # Grade list
-                pred_list = pred_value if isinstance(pred_value, list) else []
-                # Convert all elements to strings for comparison
-                pred_strs = [str(x) for x in pred_list]
-                exp_strs = [str(x) for x in exp_value]
-                try:
-                    results[key] = self.grade_list(
-                        pred_strs, exp_strs, order_matters, aggregation, context, threshold
-                    )
-                except ValueError:
-                    # Length mismatch - return appropriate failure value
-                    if aggregation in ("all", "any"):
-                        results[key] = False
-                    elif aggregation == "avg":
-                        results[key] = 0.0
-                    else:
-                        is_score_mode = self.comparator.is_score_mode()
-                        results[key] = [0.0 if is_score_mode else False] * len(exp_value)
-            else:
-                # Grade string
-                results[key] = self.grade_str(str(pred_value), str(exp_value), context)
-
-        return results
-
-    def get_stats(self) -> dict[str, int | float]:
-        """Get grader and comparator statistics."""
-        return self.comparator.get_stats()

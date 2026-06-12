@@ -142,7 +142,7 @@ class OptimizedPromptEvaluator:
                     is_correct=is_correct,
                     response_time=response_time,
                     original_cost=0.0,
-                    cost=0.0,  # Will be estimated based on model
+                    llm_cost=0.0,
                     model=f"{model}-decomposed",
                     metadata={
                         "content": doc.content,
@@ -171,7 +171,7 @@ class OptimizedPromptEvaluator:
                     is_correct=False,
                     response_time=response_time,
                     original_cost=0.0,
-                    cost=0.0,
+                    llm_cost=0.0,
                     model=f"{model}-decomposed",
                     metadata={"content": doc.content, "error": str(e), "num_steps": len(chained_prompts)},
                 )

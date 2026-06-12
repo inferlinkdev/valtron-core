@@ -79,6 +79,14 @@ def save_run_dir(
 
     metadata_path = run_dir / "metadata.json"
     if not metadata_path.exists():
+        model_costs = {
+            result.model: {
+                "llm_cost": sum(p.llm_cost for p in result.predictions),
+                "evaluation_cost": sum(p.evaluation_cost for p in result.predictions),
+            }
+            for result in results
+        }
+        total_cost = sum(v["llm_cost"] + v["evaluation_cost"] for v in model_costs.values())
         metadata = {
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
             "use_case": use_case,
@@ -86,6 +94,8 @@ def save_run_dir(
             "field_metrics_config": {"config": field_config} if field_config else None,
             "response_format_schema": response_format_schema,
             "documents": documents,
+            "total_cost": total_cost,
+            "cost": model_costs,
         }
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2, default=str)
@@ -99,7 +109,8 @@ def save_run_dir(
                 "predicted_value": p.predicted_value,
                 "expected_value": p.expected_value,
                 "original_cost": p.original_cost,
-                "cost": p.cost,
+                "llm_cost": p.llm_cost,
+                "evaluation_cost": p.evaluation_cost,
                 "response_time": p.response_time,
                 "is_correct": p.is_correct,
                 "example_score": p.example_score,
@@ -270,16 +281,28 @@ class EvaluationRunner:
             },
             indent=2,
         )
+        has_llm = any(i.get("category") == "llm" for i in issues)
+        has_embedding = any(i.get("category") == "embedding" for i in issues)
+
+        cost_lines = ""
+        if has_embedding:
+            cost_lines += (
+                "  - For semantic similarity, every expected item is compared against every actual\n"
+                "    item, so the number of API calls grows quickly as your lists grow.\n"
+            )
+        if has_llm:
+            cost_lines += (
+                "  - For LLM grading, the engine makes about one API call per item in each list,\n"
+                "    plus one extra call to match items between expected and actual.\n"
+            )
+
         console.print(
             f"\n[bold red]Pre-flight check failed:[/bold red] your field config contains unordered list field(s) whose\n"
-            f"item comparison calls a 3rd-party service (LLM or embedding API).\n\n"
+            f"item comparison calls an external service (an LLM or an embedding service).\n\n"
             f"[bold yellow]Why this is a problem[/bold yellow]\n"
-            f"  Unordered list matching works by comparing EVERY expected item against EVERY\n"
-            f"  actual item to find the best alignment.  For a list with k items that means\n"
-            f"  k\u00b2 comparisons per document.  Each comparison here triggers an external API call.\n"
-            f"  With [bold]{num_documents}[/bold] document(s) and [bold]{num_models}[/bold] model(s) being evaluated,\n"
-            f"  total API calls \u2248  {num_documents} x k\u00b2 x {num_models}  =  [bold]{num_documents * num_models}[/bold] x k\u00b2\n"
-            f"  (where k is the number of items in the list for each document).\n\n"
+            f"  These comparisons call external APIs and add cost to every document evaluated.\n"
+            f"{cost_lines}"
+            f"  You're evaluating [bold]{num_documents}[/bold] document(s) with [bold]{num_models}[/bold] model(s), so cost scales with both.\n\n"
             f"[bold yellow]Affected fields:[/bold yellow]\n"
             f"{escape(affected_lines)}"
             f"[bold yellow]How to fix this:[/bold yellow]\n"
@@ -388,7 +411,8 @@ class EvaluationRunner:
                         example_score=p.get("example_score", 0.0),
                         response_time=p.get("response_time", 0.0),
                         original_cost=p.get("original_cost", 0.0),
-                        cost=p.get("cost", 0.0),
+                        llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
+                        evaluation_cost=p.get("evaluation_cost", 0.0),
                         model=model_name,
                         field_metrics=field_metrics,
                     )
@@ -439,7 +463,7 @@ class EvaluationRunner:
         labels: list[Label],
         prompt_template: str,
         model: str | dict[str, Any],
-        response_format: "type[BaseModel] | dict | None" = None,
+        response_format: "type[BaseModel] | None" = None,
         field_metrics_config: FieldMetricsConfig | None = None,
         post_extraction_filter: Callable | None = None,
         multi_pass: int = 1,
@@ -484,7 +508,7 @@ class EvaluationRunner:
         running_cost = [0.0]
 
         def _on_doc(pred: PredictionResult) -> None:
-            running_cost[0] += pred.cost
+            running_cost[0] += pred.llm_cost + pred.evaluation_cost
             if _tqdm_bar is not None:
                 _tqdm_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
                 _tqdm_bar.update(1)
@@ -657,6 +681,11 @@ class EvaluationRunner:
         if output_formats is None:
             output_formats = ["html", "pdf"]
 
+        if not any(fmt in output_formats for fmt in ("html", "pdf")):
+            raise ValueError(
+                f"output_formats must contain at least one of 'html' or 'pdf', got: {output_formats}"
+            )
+
         from valtron_core.reports import ReportGenerator
 
         # Initialize metadata dict
@@ -760,4 +789,5 @@ class EvaluationRunner:
             if report_path is None:
                 report_path = pdf_path
 
+        assert report_path is not None
         return report_path

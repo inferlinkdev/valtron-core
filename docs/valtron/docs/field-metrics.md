@@ -19,16 +19,20 @@ The `config` value inside `field_metrics_config` mirrors the shape of your Pydan
 | `type` | `"leaf"` \| `"object"` \| `"list"` | `"leaf"` | Shape of this field |
 | `weight` | `float` | `1.0` | Weight when this field is rolled up into a parent score |
 | `optional` | `bool` | `false` | If true, missing values don't penalize the score |
-| `metric_config` | object | `null` | How to score this field (see below) |
+| `metric_config` | object | `null` | Scoring/matching/aggregation config. Shape depends on `type` -- see each section below. |
 | `fields` | object | `null` | Child field configs for `object` and `list` types |
 
 ---
 
-## Leaf fields
+The three node types -- `"leaf"`, `"object"`, and `"list"` -- each use `metric_config` differently. The sections below cover each in turn.
+
+---
+
+## Leaf nodes
 
 A `"leaf"` is a scalar value: a string, number, or boolean at the bottom of your schema.
 
-### `metric_config` for leaves
+Leaf nodes use `metric_config` to specify a comparison metric and its parameters:
 
 ```json
 {
@@ -37,13 +41,13 @@ A `"leaf"` is a scalar value: a string, number, or boolean at the bottom of your
 }
 ```
 
-There are three built-in leaf metrics:
+There are six built-in leaf metrics:
 
 ---
 
 ### `"exact"`
 
-Exact string equality after whitespace normalization. No params.
+Strict equality check (`predicted == expected`). No params. No normalization is applied.
 
 ```json
 {"metric": "exact"}
@@ -65,78 +69,72 @@ Returns `1.0` if `actual >= min`, `0.0` otherwise. Useful for confidence scores 
 
 ---
 
-### `"comparator"`
+### `"exact_compare"`
 
-The flexible comparison metric. Wraps the `Comparator` class and supports four comparison strategies controlled by `element_compare`.
+Normalized string comparison with optional case and whitespace handling.
 
 ```json
 {
-  "metric": "comparator",
+  "metric": "exact_compare",
   "params": {
-    "element_compare": "text_similarity",
-    "text_similarity_metric": "fuzz_ratio",
-    "text_similarity_threshold": 0.8,
     "case_sensitive": false,
     "ignore_spaces": false
   }
 }
 ```
 
-#### `element_compare` strategies
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `case_sensitive` | bool | `false` | Whether to preserve case when comparing |
+| `ignore_spaces` | bool | `false` | Whether to strip all spaces before comparing |
 
-**`"exact"`**: Same as the standalone `exact` metric but with normalization options.
-
-```json
-{
-  "metric": "comparator",
-  "params": {
-    "element_compare": "exact",
-    "case_sensitive": false,
-    "ignore_spaces": true
-  }
-}
-```
+Returns `1.0` if the normalized strings match, `0.0` otherwise.
 
 ---
 
-**`"text_similarity"`**: Fuzzy string similarity.
+### `"text_similarity"`
+
+Fuzzy string similarity using your choice of algorithm.
 
 ```json
 {
-  "metric": "comparator",
+  "metric": "text_similarity",
   "params": {
-    "element_compare": "text_similarity",
-    "text_similarity_metric": "fuzz_ratio",
-    "text_similarity_threshold": 0.8
+    "metric": "fuzz_ratio",
+    "threshold": 0.8
   }
 }
 ```
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `text_similarity_metric` | string | `"fuzz_ratio"` | `"fuzz_ratio"` (rapidfuzz), `"bleu"`, `"gleu"`, or `"cosine"` |
-| `text_similarity_threshold` | float | `null` | If set, score becomes a bool (pass/fail at this threshold); if null, score is the raw similarity float |
+| `metric` | string | `"fuzz_ratio"` | `"fuzz_ratio"` (rapidfuzz), `"bleu"`, `"gleu"`, or `"cosine"` |
+| `threshold` | float | `null` | If set, score becomes a bool (pass/fail at this threshold); if null, score is the raw similarity float |
+| `case_sensitive` | bool | `false` | Whether to preserve case when comparing |
+| `ignore_spaces` | bool | `false` | Whether to strip all spaces before comparing |
+| `embedding_model` | string | `"text-embedding-3-small"` | Embedding model used when `metric` is `"cosine"` |
 
 `"cosine"` calls an embedding API and counts as an expensive comparison. See [List fields](#list-fields) for implications.
 
 ---
 
-**`"llm"`**: Uses an LLM to judge whether the two values refer to the same entity or concept. Returns a boolean.
+### `"llm"`
+
+Uses an LLM to judge whether the two values refer to the same entity or concept. Returns a boolean.
 
 ```json
 {
-  "metric": "comparator",
+  "metric": "llm",
   "params": {
-    "element_compare": "llm",
-    "llm_model": "gpt-4o-mini"
+    "model": "gpt-4o-mini"
   }
 }
 ```
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `llm_model` | string | `"gpt-4o-mini"` | Any [LiteLLM-supported model string](https://docs.litellm.ai/docs/providers). Controls which model is called for the comparison. |
-| `llm_prompt_template` | string | `null` | Custom prompt template. Must contain `{predicted}` and `{expected}` placeholders and end with an instruction to respond with only `YES` or `NO`. When omitted, the built-in entity-matching prompt is used. |
+| `model` | string | `"gpt-4o-mini"` | Any [LiteLLM-supported model string](https://docs.litellm.ai/docs/providers) |
+| `prompt_template` | string | `null` | Custom prompt template. Must contain `{predicted}` and `{expected}` placeholders and end with an instruction to respond with only `YES` or `NO`. When omitted, the built-in entity-matching prompt is used. |
 
 **Custom prompt templates**
 
@@ -151,7 +149,7 @@ Value 2: <expected>
 Respond with only "YES" or "NO".
 ```
 
-Set `llm_prompt_template` to replace it with a prompt suited to your domain. The template supports the following placeholders, which are filled in automatically at evaluation time:
+Set `prompt_template` to replace it with a prompt suited to your domain. The template supports the following placeholders, which are filled in automatically at evaluation time:
 
 | Placeholder | Value |
 |---|---|
@@ -165,65 +163,62 @@ Your template must end with an instruction to respond with only `YES` or `NO`.
 
 ```json
 {
-  "metric": "comparator",
+  "metric": "llm",
   "params": {
-    "element_compare": "llm",
-    "llm_model": "claude-sonnet-4-6",
-    "llm_prompt_template": "Source document:\n{example_content}\n\nDoes '{predicted}' refer to the same entity as '{expected}'?\nRespond with only YES or NO."
+    "model": "claude-sonnet-4-6",
+    "prompt_template": "Source document:\n{example_content}\n\nDoes '{predicted}' refer to the same entity as '{expected}'?\nRespond with only YES or NO."
   }
 }
 ```
 
 When the model supports structured outputs (e.g. GPT-4o, Claude 3.5+), Valtron uses a JSON schema response format to enforce a boolean `match` field, making the result reliable regardless of how the model phrases its answer. For models that do not support structured outputs, the response must start with `YES` or `NO` (case insensitive).
 
-Incurs one LLM call per field per document. Costs are tracked.
+Incurs one LLM call per field per document.
 
 ---
 
-**`"embedding"`**: Computes cosine similarity between embedding vectors.
+### `"embedding"`
+
+Computes cosine similarity between embedding vectors.
 
 ```json
 {
-  "metric": "comparator",
+  "metric": "embedding",
   "params": {
-    "element_compare": "embedding",
-    "embedding_model": "text-embedding-3-small",
-    "embedding_threshold": 0.85
+    "model": "text-embedding-3-small",
+    "threshold": 0.85
   }
 }
 ```
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `embedding_model` | string | `"text-embedding-3-small"` | Embedding model to use |
-| `embedding_threshold` | float | `null` | If set, score becomes a bool; if null, score is raw cosine similarity float |
+| `model` | string | `"text-embedding-3-small"` | Any [LiteLLM-supported embedding model](https://docs.litellm.ai/docs/embedding/supported_providers) |
+| `threshold` | float | `null` | If set, score becomes a bool; if null, score is raw cosine similarity float |
 
-Incurs one embedding API call per field per document. Costs are tracked.
-
----
-
-#### Shared `comparator` params
-
-These apply to any `element_compare` strategy:
-
-| Param | Type | Default | Description |
-|---|---|---|---|
-| `case_sensitive` | bool | `false` | Whether to preserve case when comparing |
-| `ignore_spaces` | bool | `false` | Whether to strip all spaces before comparing |
+Incurs one embedding API call per field per document.
 
 ---
 
-## Object fields
+## Object nodes
 
 An `"object"` node groups child fields. Its score is aggregated from its children.
+
+Object nodes use `metric_config` to specify how child scores are aggregated:
+
+```json
+{"metric_config": {"propagation": "weighted_avg"}}
+```
+
+The default propagation is `"weighted_avg"`. Full example:
 
 ```json
 {
   "type": "object",
   "metric_config": {"propagation": "weighted_avg"},
   "fields": {
-    "name": {"type": "leaf", "metric_config": {"metric": "exact"}},
-    "city": {"type": "leaf", "metric_config": {"metric": "exact"}, "weight": 2.0}
+    "name": {"type": "leaf", "metric_config": {"metric": "exact_compare"}},
+    "city": {"type": "leaf", "metric_config": {"metric": "exact_compare"}, "weight": 2.0}
   }
 }
 ```
@@ -238,9 +233,20 @@ An `"object"` node groups child fields. Its score is aggregated from its childre
 
 ---
 
-## List fields
+## List nodes
 
-A `"list"` node scores a predicted array against an expected array. Two matching modes:
+A `"list"` node scores a predicted array against an expected array.
+
+List nodes use `metric_config` to control matching behavior:
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `ordered` | bool | `false` | If true, compare positionally (`exp[i]` vs `act[i]`); if false, greedy best-match |
+| `match_threshold` | float | `0.5` | Minimum score for a pair to be considered a match |
+| `required_fields_to_match` | array | `null` | Fields that must match before a pair is even considered (pre-filter before expensive comparison) |
+| `allow_expensive_comparisons_for` | array | `null` | Fields allowed to use `"llm"` or `"embedding"` metrics in unordered mode (see below) |
+
+Two matching modes:
 
 ### Unordered (default)
 
@@ -254,18 +260,11 @@ Builds an N×M score matrix across all predicted/expected pairs, then greedily m
     "match_threshold": 0.5
   },
   "fields": {
-    "name": {"type": "leaf", "metric_config": {"metric": "exact"}},
-    "city": {"type": "leaf", "metric_config": {"metric": "exact"}}
+    "name": {"type": "leaf", "metric_config": {"metric": "exact_compare"}},
+    "city": {"type": "leaf", "metric_config": {"metric": "exact_compare"}}
   }
 }
 ```
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `ordered` | bool | `false` | If true, compare positionally (exp[i] vs act[i]) |
-| `match_threshold` | float | `0.5` | Minimum score for a pair to be considered a match |
-| `required_fields_to_match` | array | `null` | Fields that must match before a pair is even considered (pre-filter before expensive comparison) |
-| `allow_expensive_comparisons_for` | array | `null` | Fields allowed to use LLM/embedding comparison in unordered mode (see below) |
 
 ### Ordered mode
 
@@ -277,7 +276,7 @@ Compares element by element positionally: `expected[i]` vs `actual[i]`. Score is
 
 ### Expensive comparisons in lists
 
-`"llm"` and `"embedding"` comparators in unordered list fields trigger a warning at config validation time because they run N×M calls (one per pair). You must explicitly opt in per field:
+The `"llm"` and `"embedding"` metrics in unordered list fields trigger an error at evaluation time because they run N×M API calls (one per pair). You must explicitly opt in per field path:
 
 ```json
 {
@@ -286,13 +285,29 @@ Compares element by element positionally: `expected[i]` vs `actual[i]`. Score is
     "allow_expensive_comparisons_for": ["description"]
   },
   "fields": {
-    "name": {"type": "leaf", "metric_config": {"metric": "exact"}},
+    "name": {"type": "leaf", "metric_config": {"metric": "exact_compare"}},
     "description": {
       "type": "leaf",
       "metric_config": {
-        "metric": "comparator",
-        "params": {"element_compare": "llm"}
+        "metric": "llm",
+        "params": {"model": "gpt-4o-mini"}
       }
+    }
+  }
+}
+```
+
+For a flat list of primitives, use `"$item"` as the path:
+
+```json
+{
+  "type": "list",
+  "metric_config": {
+    "ordered": false,
+    "allow_expensive_comparisons_for": ["$item"],
+    "item_logic": {
+      "type": "leaf",
+      "metric_config": {"metric": "llm", "params": {}}
     }
   }
 }
@@ -399,11 +414,10 @@ field_metrics = FieldMetricsConfig(
                 "type": "leaf",
                 "weight": 2.0,
                 "metric_config": {
-                    "metric": "comparator",
+                    "metric": "text_similarity",
                     "params": {
-                        "element_compare": "text_similarity",
-                        "text_similarity_metric": "fuzz_ratio",
-                        "text_similarity_threshold": 0.85
+                        "metric": "fuzz_ratio",
+                        "threshold": 0.85
                     }
                 }
             },
@@ -417,11 +431,14 @@ field_metrics = FieldMetricsConfig(
                 "fields": {
                     "first_name": {
                         "type": "leaf",
-                        "metric_config": {"metric": "comparator", "params": {"element_compare": "exact"}}
+                        "metric_config": {
+                            "metric": "exact_compare",
+                            "params": {"case_sensitive": false}
+                        }
                     },
                     "last_name": {
                         "type": "leaf",
-                        "metric_config": {"metric": "exact"}
+                        "metric_config": {"metric": "exact_compare"}
                     }
                 }
             },

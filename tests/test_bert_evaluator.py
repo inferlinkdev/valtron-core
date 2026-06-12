@@ -40,7 +40,7 @@ class TestEvaluateSingle:
         assert result.predicted_value == "positive"
         assert result.expected_value == "positive"
         assert result.is_correct is True
-        assert result.cost == 0.0
+        assert result.llm_cost == 0.0
         assert result.model == "bert-local"
         mock_trainer.predict_single.assert_called_once_with("Great product!")
 

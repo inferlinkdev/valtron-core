@@ -113,7 +113,7 @@ class _ReportBase:
                         score = 100 if pred.is_correct else 0
                     doc_data.append({
                         'id': doc_id,
-                        'cost': round(pred.cost, 6),
+                        'cost': round(pred.llm_cost, 6),
                         'time': round(pred.response_time, 3),
                         'score': score
                     })

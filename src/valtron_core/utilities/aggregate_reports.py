@@ -48,12 +48,12 @@ def _apply_cost_rates(results: list[EvaluationResult]) -> None:
             time_unit_str = llm_config.get("cost_rate_time_unit", "1hr")
             unit_seconds = _parse_time_unit_to_seconds(time_unit_str)
             for p in result.predictions:
-                p.cost = float(cost_rate) * (p.response_time / unit_seconds)
-        elif all(p.cost == 0.0 for p in result.predictions):
+                p.llm_cost = float(cost_rate) * (p.response_time / unit_seconds)
+        elif all(p.llm_cost == 0.0 for p in result.predictions):
             fallback = _get_fallback_rate_info(llm_config.get("model", result.model))
             if fallback:
                 for p in result.predictions:
-                    p.cost = _fallback_cost(llm_config.get("model", result.model), p.response_time)
+                    p.llm_cost = _fallback_cost(llm_config.get("model", result.model), p.response_time)
                 result.llm_config = {**llm_config, **fallback}
         result.compute_metrics()
 
@@ -100,7 +100,8 @@ def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], 
                 example_score=p.get("example_score", 0.0),
                 response_time=p.get("response_time", 0.0),
                 original_cost=p.get("original_cost", 0.0),
-                cost=p.get("cost", 0.0),
+                llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
+                evaluation_cost=p.get("evaluation_cost", 0.0),
                 model=model_name,
                 field_metrics=field_metrics,
             ))

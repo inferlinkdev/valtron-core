@@ -46,15 +46,17 @@ def _score_prediction(
     field_metrics_config: FieldMetricsConfig | None,
     extra_template_vars: dict[str, Any] | None = None,
     document_id: str = "",
-) -> tuple[Any, float, bool]:
-    """Compute (field_metrics, example_score, is_correct) without making any LLM calls.
+) -> tuple[Any, float, bool, float]:
+    """Compute (field_metrics, example_score, is_correct, evaluation_cost).
 
     Uses JsonEvaluator when field_metrics_config is provided; falls back to
-    case-insensitive string comparison otherwise.
+    case-insensitive string comparison otherwise. evaluation_cost is non-zero
+    only when JsonEvaluator makes LLM-as-judge calls.
     """
     is_correct = predicted_value.strip().lower() == expected_value.strip().lower()
     example_score = 1.0 if is_correct else 0.0
     field_metrics = None
+    evaluation_cost = 0.0
 
     if field_metrics_config:
         try:
@@ -68,6 +70,7 @@ def _score_prediction(
                 predicted_value,
                 extra_template_vars=extra_template_vars or {},
             )
+            evaluation_cost = evaluator.evaluation_cost
             field_metrics = result
             example_score = result.score
             is_correct = result.is_correct
@@ -78,7 +81,7 @@ def _score_prediction(
                 error=str(e),
             )
 
-    return field_metrics, example_score, is_correct
+    return field_metrics, example_score, is_correct, evaluation_cost
 
 
 class PromptEvaluator:
@@ -433,7 +436,7 @@ class PromptEvaluator:
             extra_template_vars = {"prompt_used": prompt, **doc_vars}
 
             # Score prediction (string comparison + optional JsonEvaluator)
-            field_metrics, example_score, is_correct = _score_prediction(
+            field_metrics, example_score, is_correct, evaluation_cost = _score_prediction(
                 predicted_value=predicted_value,
                 expected_value=label.value,
                 field_metrics_config=field_metrics_config,
@@ -449,7 +452,8 @@ class PromptEvaluator:
                 example_score=example_score,
                 response_time=response_time,
                 original_cost=original_cost,
-                cost=cost,
+                llm_cost=cost,
+                evaluation_cost=evaluation_cost,
                 model=model_name,
                 field_metrics=field_metrics,
                 metadata={"content": document.content, "attachments": document.attachments},
@@ -474,7 +478,7 @@ class PromptEvaluator:
                 is_correct=False,
                 response_time=response_time,
                 original_cost=0.0,
-                cost=0.0,
+                llm_cost=0.0,
                 model=model_name,
                 metadata={"error": str(e), "content": document.content},
             )
@@ -560,7 +564,7 @@ class PromptEvaluator:
                             not _fallback_warning_logged
                             and not _has_user_cost_rate
                             and pred.original_cost == 0.0
-                            and pred.cost > 0.0
+                            and pred.llm_cost > 0.0
                         ):
                             logger.warning(
                                 "using_estimated_cost",
