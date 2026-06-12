@@ -519,7 +519,7 @@ class TestEvaluateTransformer:
 
         assert isinstance(result, EvaluationResult)
         assert len(result.predictions) == 1
-        assert result.predictions[0].cost == 0.0
+        assert result.predictions[0].llm_cost == 0.0
 
 
 # ===========================================================================
@@ -927,7 +927,8 @@ def _write_mock_run_dir(tmp_path, override_prompt=None):
                 "document_id": "d1",
                 "predicted_value": "positive",
                 "original_cost": 0.0005,
-                "cost": 0.0005,
+                "llm_cost": 0.0005,
+                "evaluation_cost": 0.0,
                 "response_time": 1.0,
                 "is_correct": True,
                 "example_score": 1.0,
@@ -936,7 +937,8 @@ def _write_mock_run_dir(tmp_path, override_prompt=None):
                 "document_id": "d2",
                 "predicted_value": "negative",
                 "original_cost": 0.0005,
-                "cost": 0.0005,
+                "llm_cost": 0.0005,
+                "evaluation_cost": 0.0,
                 "response_time": 1.0,
                 "is_correct": True,
                 "example_score": 1.0,

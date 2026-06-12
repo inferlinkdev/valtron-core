@@ -106,7 +106,8 @@ class PredictionResult(BaseModel):
     )
     response_time: float = Field(..., description="Time taken for prediction in seconds")
     original_cost: float = Field(default=0.0, description="Cost as reported by litellm; never overwritten by cost_rate")
-    cost: float = Field(default=0.0, description="Effective cost; initially equals original_cost, overwritten when cost_rate is applied")
+    llm_cost: float = Field(default=0.0, description="Effective inference cost; initially equals original_cost, overwritten when cost_rate is applied")
+    evaluation_cost: float = Field(default=0.0, description="LLM-as-judge / embedding comparison cost incurred while scoring this prediction")
     model: str = Field(..., description="Model used for prediction")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     field_metrics: EvalResult | None = Field(default=None, description="Per-field accuracy metrics")
@@ -119,7 +120,11 @@ class EvaluationMetrics(BaseModel):
     correct_predictions: int = Field(..., description="Number of correct predictions")
     accuracy: float = Field(..., description="Accuracy score (0-1)")
     average_example_score: float = Field(0.0, description="Mean per-document score (0-1), using continuous field scores when available")
-    total_cost: float = Field(..., description="Total cost of all API calls")
+    total_cost: float = Field(..., description="Total cost of all API calls (LLM inference + evaluation)")
+    cost: dict[str, float] = Field(
+        default_factory=dict,
+        description="Cost breakdown: total_llm_cost (inference) and total_evaluation_cost (judge/embedding)",
+    )
     total_time: float = Field(..., description="Total time in seconds")
     average_time_per_document: float = Field(
         ..., description="Average time per document in seconds"
@@ -167,7 +172,9 @@ class EvaluationResult(BaseModel):
 
         total_docs = len(self.predictions)
         correct = sum(1 for p in self.predictions if p.is_correct)
-        total_cost = sum(p.cost for p in self.predictions)
+        total_llm_cost = sum(p.llm_cost for p in self.predictions)
+        total_evaluation_cost = sum(p.evaluation_cost for p in self.predictions)
+        total_cost = total_llm_cost + total_evaluation_cost
         total_time = sum(p.response_time for p in self.predictions)
 
         # Aggregate field-level metrics across all predictions
@@ -185,6 +192,10 @@ class EvaluationResult(BaseModel):
             accuracy=correct / total_docs if total_docs > 0 else 0.0,
             average_example_score=avg_example_score,
             total_cost=total_cost,
+            cost={
+                "total_llm_cost": total_llm_cost,
+                "total_evaluation_cost": total_evaluation_cost,
+            },
             total_time=total_time,
             average_time_per_document=total_time / total_docs if total_docs > 0 else 0.0,
             average_cost_per_document=total_cost / total_docs if total_docs > 0 else 0.0,

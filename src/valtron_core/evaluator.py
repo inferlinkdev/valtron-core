@@ -388,6 +388,7 @@ class PromptEvaluator:
 
             # Compute field-level metrics if config is provided
             field_metrics = None
+            evaluation_cost = 0.0
 
             if field_metrics_config:
                 try:
@@ -411,6 +412,7 @@ class PromptEvaluator:
                         predicted_value,
                         extra_template_vars=extra_template_vars,
                     )
+                    evaluation_cost = evaluator.evaluation_cost
 
                     field_metrics = result
                     example_score = result.score
@@ -431,7 +433,8 @@ class PromptEvaluator:
                 example_score=example_score,
                 response_time=response_time,
                 original_cost=original_cost,
-                cost=cost,
+                llm_cost=cost,
+                evaluation_cost=evaluation_cost,
                 model=model_name,
                 field_metrics=field_metrics,
                 metadata={"content": document.content, "attachments": document.attachments},
@@ -456,7 +459,7 @@ class PromptEvaluator:
                 is_correct=False,
                 response_time=response_time,
                 original_cost=0.0,
-                cost=0.0,
+                llm_cost=0.0,
                 model=model_name,
                 metadata={"error": str(e), "content": document.content},
             )
@@ -542,7 +545,7 @@ class PromptEvaluator:
                             not _fallback_warning_logged
                             and not _has_user_cost_rate
                             and pred.original_cost == 0.0
-                            and pred.cost > 0.0
+                            and pred.llm_cost > 0.0
                         ):
                             logger.warning(
                                 "using_estimated_cost",

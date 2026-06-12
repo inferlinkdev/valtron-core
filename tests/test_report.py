@@ -156,7 +156,7 @@ class TestPrepareChartData:
                         expected_value="positive",
                         is_correct=True,
                         response_time=0.5,
-                        cost=0.001,
+                        llm_cost=0.001,
                         model="gpt-3.5-turbo",
                     ),
                     PredictionResult(
@@ -165,7 +165,7 @@ class TestPrepareChartData:
                         expected_value="negative",
                         is_correct=True,
                         response_time=0.3,
-                        cost=0.0008,
+                        llm_cost=0.0008,
                         model="gpt-3.5-turbo",
                     ),
                 ],

@@ -58,8 +58,9 @@ After evaluation, each model has an `EvaluationMetrics` object:
 | `average_example_score` | `float` | Mean continuous score across documents (0–1); uses field-level scores if available |
 | `total_documents` | `int` | Total number of documents evaluated |
 | `correct_predictions` | `int` | Number of exact matches |
-| `total_cost` | `float` | Total API cost in USD |
-| `average_cost_per_document` | `float` | Mean cost per document |
+| `total_cost` | `float` | Total API cost in USD (LLM inference + evaluation) |
+| `cost` | `dict` | Cost breakdown: `total_llm_cost` (inference) and `total_evaluation_cost` (LLM-as-judge / embedding) |
+| `average_cost_per_document` | `float` | Mean cost per document (inference + evaluation) |
 | `total_time` | `float` | Total response time in seconds |
 | `average_time_per_document` | `float` | Mean latency per document |
 | `aggregated_field_metrics` | `dict` | Per-field `EvalResult` (structured mode only) |
@@ -141,6 +142,10 @@ One file per model. Contains the full evaluation result:
     "accuracy": 0.92,
     "average_example_score": 0.92,
     "total_cost": 0.0043,
+    "cost": {
+      "total_llm_cost": 0.0041,
+      "total_evaluation_cost": 0.0002
+    },
     "total_time": 12.4,
     "average_time_per_document": 1.24,
     "average_cost_per_document": 0.00043,
@@ -153,7 +158,8 @@ One file per model. Contains the full evaluation result:
       "document_id": "1",
       "predicted_value": "positive",
       "original_cost": 0.000041,
-      "cost": 0.000041,
+      "llm_cost": 0.000041,
+      "evaluation_cost": 0.000002,
       "response_time": 1.1,
       "is_correct": true,
       "example_score": 1.0,

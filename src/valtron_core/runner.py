@@ -79,6 +79,14 @@ def save_run_dir(
 
     metadata_path = run_dir / "metadata.json"
     if not metadata_path.exists():
+        model_costs = {
+            result.model: {
+                "llm_cost": sum(p.llm_cost for p in result.predictions),
+                "evaluation_cost": sum(p.evaluation_cost for p in result.predictions),
+            }
+            for result in results
+        }
+        total_cost = sum(v["llm_cost"] + v["evaluation_cost"] for v in model_costs.values())
         metadata = {
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
             "use_case": use_case,
@@ -86,6 +94,8 @@ def save_run_dir(
             "field_metrics_config": {"config": field_config} if field_config else None,
             "response_format_schema": response_format_schema,
             "documents": documents,
+            "total_cost": total_cost,
+            "cost": model_costs,
         }
         with open(metadata_path, "w") as f:
             json.dump(metadata, f, indent=2, default=str)
@@ -99,7 +109,8 @@ def save_run_dir(
                 "predicted_value": p.predicted_value,
                 "expected_value": p.expected_value,
                 "original_cost": p.original_cost,
-                "cost": p.cost,
+                "llm_cost": p.llm_cost,
+                "evaluation_cost": p.evaluation_cost,
                 "response_time": p.response_time,
                 "is_correct": p.is_correct,
                 "example_score": p.example_score,
@@ -400,7 +411,8 @@ class EvaluationRunner:
                         example_score=p.get("example_score", 0.0),
                         response_time=p.get("response_time", 0.0),
                         original_cost=p.get("original_cost", 0.0),
-                        cost=p.get("cost", 0.0),
+                        llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
+                        evaluation_cost=p.get("evaluation_cost", 0.0),
                         model=model_name,
                         field_metrics=field_metrics,
                     )
@@ -496,7 +508,7 @@ class EvaluationRunner:
         running_cost = [0.0]
 
         def _on_doc(pred: PredictionResult) -> None:
-            running_cost[0] += pred.cost
+            running_cost[0] += pred.llm_cost + pred.evaluation_cost
             if _tqdm_bar is not None:
                 _tqdm_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
                 _tqdm_bar.update(1)

@@ -5,9 +5,11 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import copy
 import logging
+import os
+import threading
 import warnings
+from litellm import completion, completion_cost
 
-from litellm import completion
 from valtron_core.evaluation.comparison_functions import (
     Comparator,
     MetricCategory,
@@ -38,13 +40,10 @@ def _score_to_result(result: bool | float, params: dict[str, Any]) -> tuple[floa
     return result, True
 
 
-def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
-    warnings.warn(
-        "The 'comparator' metric is deprecated; use 'exact_compare', 'text_similarity', "
-        "'llm', or 'embedding' metrics directly instead.",
-        DeprecationWarning,
-        stacklevel=2,
-    )
+def _run_comparator(
+    expected: Any, actual: Any, params: dict[str, Any]
+) -> tuple[float, bool, float, int]:
+    """Run the legacy Comparator and return (score, is_correct, cost_usd, call_count)."""
     comp = Comparator(
         element_compare=params.get("element_compare", "exact"),
         text_similarity_threshold=params.get("text_similarity_threshold", None),
@@ -59,15 +58,31 @@ def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tup
     )
     compare_result = comp.compare(expected, actual)
 
+    category, _ = element_compare_category(params.get("element_compare", "exact"), params)
+    uses_api = category != "local"
+    cost_usd = comp.total_comparison_cost if uses_api else 0.0
+    call_count = comp.comparison_count if uses_api else 0
+
     if isinstance(compare_result, bool):
-        return (1.0 if compare_result else 0.0), compare_result
+        return (1.0 if compare_result else 0.0), compare_result, cost_usd, call_count
 
     threshold = params.get("comparison_threshold", None) or params.get("text_similarity_threshold", None)
     if threshold is not None:
-        is_correct = compare_result >= threshold
-        return compare_result, is_correct
+        return compare_result, compare_result >= threshold, cost_usd, call_count
 
-    return compare_result, True
+    return compare_result, True, cost_usd, call_count
+
+
+def comparator_metric(expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
+    """Public comparator metric callable. Cost is not tracked; use JsonEvaluator for that."""
+    warnings.warn(
+        "The 'comparator' metric is deprecated; use 'exact_compare', 'text_similarity', "
+        "'llm', or 'embedding' metrics directly instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    score, is_correct, _, _ = _run_comparator(expected, actual, params)
+    return score, is_correct
 
 
 class LeafMetricConfig(BaseModel):
@@ -427,6 +442,8 @@ class JsonEvaluator:
         custom_aggs: dict[str, callable] | None = None,
     ):
         self._template_vars: dict[str, Any] = {}
+        self._evaluation_cost_usd: float = 0.0
+        self._evaluation_cost_lock = threading.Lock()
 
         # Metric Registry: (expected, actual, params) -> tuple[float, bool]:
         self.metric_registry = {
@@ -495,6 +512,21 @@ class JsonEvaluator:
         if total_weight == 0:
             return 0.0
         return sum(getattr(res, field) * res.weight for res in items) / total_weight
+
+    def _record_evaluation_cost(self, cost_usd: float) -> None:
+        with self._evaluation_cost_lock:
+            self._evaluation_cost_usd += float(cost_usd or 0.0)
+
+    @property
+    def evaluation_cost(self) -> float:
+        with self._evaluation_cost_lock:
+            return self._evaluation_cost_usd
+
+    def _comparator_metric(self, expected: Any, actual: Any, params: dict[str, Any]) -> tuple[float, bool]:
+        score, is_correct, cost_usd, call_count = _run_comparator(expected, actual, params)
+        if cost_usd:
+            self._record_evaluation_cost(cost_usd)
+        return score, is_correct
 
     def evaluate(
         self,
@@ -802,6 +834,16 @@ class JsonEvaluator:
                     temperature=0.0,
                     response_format=_PerItemAlignment,
                 )
+
+                # Account for judge spend: each alignment call is a billable LLM
+                # request and is the dominant cost of unordered-list scoring.
+                # Record it before parsing so failed-parse retries are counted too.
+                # Best-effort — a cost-lookup failure must never block scoring.
+                try:
+                    self._record_evaluation_cost(completion_cost(completion_response=response))
+                except Exception:  # noqa: BLE001
+                    logger.warning("evaluation_cost_tracking_failed at '%s'", path)
+
                 content = response.choices[0].message.content
                 parsed = _PerItemAlignment.model_validate_json(content)
 
