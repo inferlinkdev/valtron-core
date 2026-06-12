@@ -56,36 +56,6 @@ class _ReportBase:
             "best_avg_time": best_avg_time,
         }
 
-    def _compute_performance_ranks(
-        self, results: list[EvaluationResult]
-    ) -> dict[str, dict[str, int | float]]:
-        """
-        Compute dense performance ranks based on average_example_score (descending).
-        Ties receive the same rank. Each entry includes the delta in percentage
-        points from the top score, so near-ties are visually distinguishable.
-        """
-        model_scores = [
-            (r.model, r.metrics.average_example_score)
-            for r in results
-            if r.metrics
-        ]
-        if not model_scores:
-            return {}
-
-        sorted_models = sorted(model_scores, key=lambda x: x[1], reverse=True)
-        best_score = sorted_models[0][1]
-
-        ranks: dict[str, dict[str, int | float]] = {}
-        current_rank = 1
-        for i, (model, score) in enumerate(sorted_models):
-            if i > 0 and score < sorted_models[i - 1][1]:
-                current_rank += 1
-            ranks[model] = {
-                "rank": current_rank,
-                "delta_pct": round((score - best_score) * 100, 2),
-            }
-
-        return ranks
 
     def _prepare_chart_data(self, results: list[EvaluationResult]) -> dict[str, Any]:
         """Prepare data for ECharts visualizations."""

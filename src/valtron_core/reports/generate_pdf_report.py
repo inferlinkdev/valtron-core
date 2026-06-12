@@ -367,9 +367,9 @@ class PdfReportGenerator(_ReportBase):
         has_field_metrics = data["has_field_metrics"]
         all_field_names  = data["all_field_names"]
 
-        use_rank = has_field_metrics and len(all_field_names) > 1
+        use_avg_score = has_field_metrics and len(all_field_names) > 1
 
-        if use_rank:
+        if use_avg_score:
             story.extend(self._build_appendix_b(data))
         return story
 
@@ -426,11 +426,11 @@ class PdfReportGenerator(_ReportBase):
         prompt_opts      = data["prompt_optimizations"]
         has_opts         = data["has_optimizations"]
 
-        use_rank   = has_field_metrics and len(all_field_names) > 1
+        use_avg_score   = has_field_metrics and len(all_field_names) > 1
         use_single = has_field_metrics and len(all_field_names) == 1
 
-        rank_or_acc_header = "Avg Score" if use_rank else "Accuracy"
-        headers = ["Model", "Prompt*", rank_or_acc_header,
+        score_or_acc_header = "Avg Score†" if use_avg_score else "Accuracy"
+        headers = ["Model", "Prompt*", score_or_acc_header,
                    "Total Cost", "Avg Cost/Doc", "Total Time", "Avg Time/Doc"]
         if has_opts:
             headers.append("Optimizations")
@@ -474,7 +474,7 @@ class PdfReportGenerator(_ReportBase):
             has_rate     = bool(result.llm_config and result.llm_config.get("cost_rate") is not None)
 
             # Accuracy/rank cell
-            if use_rank:
+            if use_avg_score:
                 avg_score = result.metrics.average_example_score
                 acc_cell = f"{avg_score * 100:.2f}%"
                 is_best_acc = avg_score >= performance_best["best_avg_score"]
@@ -524,6 +524,8 @@ class PdfReportGenerator(_ReportBase):
 
         elems: list[Any] = [t, Spacer(1, 4)]
         elems.append(Paragraph("* See Appendix A for prompt references.", _STYLES["note"]))
+        if use_avg_score:
+            elems.append(Paragraph("† See Appendix B for Avg Score definition.", _STYLES["note"]))
 
         for result in results:
             if result.llm_config and result.llm_config.get("cost_rate") is not None:
@@ -654,7 +656,7 @@ class PdfReportGenerator(_ReportBase):
         return elems
 
     def _build_appendix_b(self, data: dict) -> list[Any]:
-        use_rank = data["has_field_metrics"] and len(data["all_field_names"]) > 1
+        use_avg_score = data["has_field_metrics"] and len(data["all_field_names"]) > 1
 
         def _subhead(text: str) -> list[Any]:
             return [
@@ -678,7 +680,7 @@ class PdfReportGenerator(_ReportBase):
         elems.extend(self._section_heading("Appendix B: Metric Definitions"))
 
         elems.extend(_subhead("Performance Metrics"))
-        if use_rank:
+        if use_avg_score:
             elems.extend([
                 Paragraph("<b>Avg Score</b>", _STYLES["h4"]),
                 Paragraph(
