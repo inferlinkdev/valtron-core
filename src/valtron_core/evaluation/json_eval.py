@@ -1,15 +1,14 @@
 from __future__ import annotations
-from typing import Literal, Any
+from typing import Literal, Any, Callable, cast
 from pydantic import BaseModel, Field, ConfigDict, model_validator
 from concurrent.futures import ThreadPoolExecutor
 import json
 import copy
 import logging
 import math
-import os
 import threading
 import warnings
-from litellm import completion, completion_cost, embedding
+from litellm import completion, completion_cost, embedding, ModelResponse
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
@@ -24,7 +23,6 @@ from valtron_core.evaluation.comparisons import (
     _llm_compare,
     _text_similarity_compare,
 )
-import os
 
 logger = logging.getLogger(__name__)
 
@@ -173,6 +171,42 @@ ListMetricConfig.model_rebuild()
 FieldConfig.model_rebuild()
 
 
+def _leaf_mc(config: "FieldConfig") -> LeafMetricConfig:
+    """Narrow a leaf field's metric config to :class:`LeafMetricConfig`.
+
+    The ``_route_metric_config`` validator guarantees a leaf field always carries a
+    ``LeafMetricConfig``; this helper encodes that invariant for the type checker.
+
+    :param config: A leaf :class:`FieldConfig`.
+    :return: The field's leaf metric config.
+    """
+    mc = config.metric_config
+    assert isinstance(mc, LeafMetricConfig)
+    return mc
+
+
+def _object_mc(config: "FieldConfig") -> ObjectMetricConfig:
+    """Narrow an object field's metric config to :class:`ObjectMetricConfig`.
+
+    :param config: An object :class:`FieldConfig`.
+    :return: The field's object metric config.
+    """
+    mc = config.metric_config
+    assert isinstance(mc, ObjectMetricConfig)
+    return mc
+
+
+def _list_mc(config: "FieldConfig") -> ListMetricConfig:
+    """Narrow a list field's metric config to :class:`ListMetricConfig`.
+
+    :param config: A list :class:`FieldConfig`.
+    :return: The field's list metric config.
+    """
+    mc = config.metric_config
+    assert isinstance(mc, ListMetricConfig)
+    return mc
+
+
 class ExpensiveListComparisonError(Exception):
     """Raised when an unordered list field uses a 3rd-party metric without
     explicit opt-in via ``allow_expensive_list_comparison: true``."""
@@ -262,6 +296,7 @@ def _scan_item_logic_for_expensive_metrics(
         mc = config.metric_config
         if mc is None:
             return issues
+        assert isinstance(mc, LeafMetricConfig)
         # For a list of primitives the item_logic root is the leaf itself; use "$item"
         display_rel = relative_path if relative_path else "$item"
         if mc.metric in custom_metric_names:
@@ -304,8 +339,8 @@ def _scan_item_logic_for_expensive_metrics(
             )
 
     elif config.type == "list":
-        mc = config.metric_config
-        if mc and mc.item_logic:
+        mc = _list_mc(config)
+        if mc.item_logic:
             issues.extend(
                 _scan_item_logic_for_expensive_metrics(
                     mc.item_logic, f"{path}[]", custom_metric_names, relative_path
@@ -323,8 +358,8 @@ def _find_expensive_lists_recursive(
 ) -> None:
     """Walk the config tree; append issue dicts for each offending list field."""
     if config.type == "list":
-        mc = config.metric_config
-        if mc and not mc.ordered:
+        mc = _list_mc(config)
+        if not mc.ordered:
             allowed = set(mc.allow_expensive_comparisons_for or [])
             if mc.item_logic:
                 for issue in _scan_item_logic_for_expensive_metrics(
@@ -334,7 +369,7 @@ def _find_expensive_lists_recursive(
                         issue["list_path"] = path
                         issues.append(issue)
         # Always recurse into item_logic in case there are nested lists
-        if mc and mc.item_logic:
+        if mc.item_logic:
             _find_expensive_lists_recursive(
                 mc.item_logic, f"{path}[]", custom_metric_names, issues
             )
@@ -534,8 +569,8 @@ class EvalResult(BaseModel):
 class JsonEvaluator:
     def __init__(
         self,
-        custom_metrics: dict[str, callable] | None = None,
-        custom_aggs: dict[str, callable] | None = None,
+        custom_metrics: dict[str, Callable[..., Any]] | None = None,
+        custom_aggs: dict[str, Callable[..., Any]] | None = None,
     ):
         self._template_vars: dict[str, Any] = {}
         self._evaluation_cost_usd: float = 0.0
@@ -689,7 +724,7 @@ class JsonEvaluator:
             )
 
         # Normal metric evaluation
-        m_cfg = config.metric_config
+        m_cfg = _leaf_mc(config)
         metric_fn = self.metric_registry.get(m_cfg.metric, self.metric_registry["exact"])
         effective_params = {**m_cfg.params, "_template_vars": self._template_vars}
         result = metric_fn(exp, act, effective_params)
@@ -716,20 +751,22 @@ class JsonEvaluator:
 
     def _eval_object(self, config: FieldConfig, exp: dict[str, Any], act: dict[str, Any], path: str) -> EvalResult:
         exp, act = (exp or {}), (act or {})
+        o_cfg = _object_mc(config)
+        fields = config.fields or {}
         child_results = {}
         eval_results = []
         for key in exp.keys():
-            field_cfg = config.fields.get(key, FieldConfig())
+            field_cfg = fields.get(key, FieldConfig())
             res = self._recurse(field_cfg, exp.get(key), act.get(key), f"{path}.{key}")
             child_results[key] = res
             eval_results.append(copy.deepcopy(res))
 
-        agg_fn = self.agg_registry.get(config.metric_config.propagation, self._weighted_avg)
+        agg_fn = self.agg_registry.get(o_cfg.propagation, self._weighted_avg)
         return EvalResult(
             path=path,
             score=agg_fn(eval_results),
             weight=config.weight,
-            metric=f"agg:{config.metric_config.propagation}",
+            metric=f"agg:{o_cfg.propagation}",
             children=child_results,
             is_correct=all(res.is_correct for res in eval_results) and (bool(exp) or not bool(act)),
             precision=self._weighted_avg_field(eval_results, "precision"),
@@ -737,7 +774,7 @@ class JsonEvaluator:
         )
 
     def _eval_list(self, config: FieldConfig, exp: list[Any], act: list[Any], path: str) -> EvalResult:
-        m_cfg = config.metric_config
+        m_cfg = _list_mc(config)
         exp, act = (exp or []), (act or [])
 
         if not m_cfg.ordered and m_cfg.item_logic:
@@ -773,17 +810,19 @@ class JsonEvaluator:
         return self._eval_list_unordered(config, exp, act, path, m_cfg)
 
     def _eval_list_ordered(self, config: FieldConfig, exp: list[Any], act: list[Any], path: str, m_cfg: "ListMetricConfig") -> EvalResult:
+        item_logic = m_cfg.item_logic
+        assert item_logic is not None
         alignments: list[AlignmentItem] = []
         min_len = min(len(exp), len(act))
         for i in range(min_len):
-            res = self._recurse(m_cfg.item_logic, exp[i], act[i], f"{path}[{i}]")
+            res = self._recurse(item_logic, exp[i], act[i], f"{path}[{i}]")
             alignments.append(AlignmentItem(e_idx=i, a_idx=i, score=res.score, result=res))
 
         matched = sum(1 for a in alignments if a.result.is_correct)
 
         # Add unmatched expected items so leaf-level fn is counted
         for i in range(min_len, len(exp)):
-            res = self._recurse(m_cfg.item_logic, exp[i], None, f"{path}[{i}]")
+            res = self._recurse(item_logic, exp[i], None, f"{path}[{i}]")
             alignments.append(AlignmentItem(e_idx=i, a_idx=-1, score=0.0, result=res))
 
         precision = matched / len(act) if act else 0
@@ -810,6 +849,8 @@ class JsonEvaluator:
         )
 
     def _eval_list_unordered(self, config: FieldConfig, exp: list[Any], act: list[Any], path: str, m_cfg: "ListMetricConfig") -> EvalResult:
+        item_logic = m_cfg.item_logic
+        assert item_logic is not None
         potential_matches: list[AlignmentItem] = []
         for i, e_item in enumerate(exp):
             for j, a_item in enumerate(act):
@@ -818,14 +859,13 @@ class JsonEvaluator:
                 # actual item can't correspond to this expected item (counts as FP).
                 if (
                     m_cfg.required_fields_to_match
-                    and m_cfg.item_logic
-                    and m_cfg.item_logic.fields
+                    and item_logic.fields
                     and isinstance(e_item, dict)
                     and isinstance(a_item, dict)
                 ):
                     required_ok = True
                     for rf in m_cfg.required_fields_to_match:
-                        rf_config = m_cfg.item_logic.fields.get(rf, FieldConfig())
+                        rf_config = item_logic.fields.get(rf, FieldConfig())
                         rf_res = self._recurse(
                             rf_config,
                             e_item.get(rf),
@@ -838,7 +878,7 @@ class JsonEvaluator:
                     if not required_ok:
                         continue
 
-                res = self._recurse(m_cfg.item_logic, e_item, a_item, f"{path}[{i}]")
+                res = self._recurse(item_logic, e_item, a_item, f"{path}[{i}]")
                 potential_matches.append(AlignmentItem(e_idx=i, a_idx=j, score=res.score, result=res))
 
         potential_matches.sort(key=lambda x: x.score, reverse=True)
@@ -856,7 +896,7 @@ class JsonEvaluator:
         # Add unmatched expected items so leaf-level fn is counted
         for i in range(len(exp)):
             if i not in matched_e:
-                res = self._recurse(m_cfg.item_logic, exp[i], None, f"{path}[{i}]")
+                res = self._recurse(item_logic, exp[i], None, f"{path}[{i}]")
                 alignments.append(AlignmentItem(e_idx=i, a_idx=-1, score=0.0, result=res))
 
         precision = len(matched_a) / len(act) if act else 0
@@ -951,18 +991,21 @@ class JsonEvaluator:
 
         selected: list[str] | None = None
         try:
-            response = completion(
+            response = cast(ModelResponse, completion(
                 model=m_cfg.match_key_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.0,
                 response_format=_MatchKeyFields,
-            )
+            ))
             try:
                 self._record_evaluation_cost(completion_cost(completion_response=response))
             except Exception:  # noqa: BLE001
                 logger.warning("match_key_cost_tracking_failed at '%s'", path)
 
-            parsed = _MatchKeyFields.model_validate_json(response.choices[0].message.content)
+            content = response.choices[0].message.content
+            if not content:
+                raise ValueError("empty match-key selection response")
+            parsed = _MatchKeyFields.model_validate_json(content)
             valid = [f for f in parsed.fields if f in field_names]
             selected = valid or None
         except Exception as e:  # noqa: BLE001
@@ -1138,6 +1181,7 @@ class JsonEvaluator:
             )
 
         item_logic = m_cfg.item_logic
+        assert item_logic is not None
         required_fields = m_cfg.required_fields_to_match or []
 
         # Per-E candidate filtering by required_fields_to_match.  Skipping a candidate
