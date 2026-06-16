@@ -280,10 +280,9 @@ def _scan_item_logic_for_expensive_metrics(
     elif config.type == "list":
         mc = config.metric_config
         if mc and mc.item_logic:
-            # Nested list — relative_path resets to "" for the inner list's item_logic
             issues.extend(
                 _scan_item_logic_for_expensive_metrics(
-                    mc.item_logic, f"{path}[]", custom_metric_names, ""
+                    mc.item_logic, f"{path}[]", custom_metric_names, relative_path
                 )
             )
 

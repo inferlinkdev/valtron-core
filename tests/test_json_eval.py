@@ -853,6 +853,38 @@ class TestScanItemLogicForExpensiveMetrics:
         assert len(issues) == 1
         assert issues[0]["metric_path"] == "root[]"
 
+    def test_object_field_containing_list_preserves_relative_path_prefix(self):
+        # Outer list item_logic is an object with a field that is itself a list with
+        # an expensive leaf. The relative_path reported for the leaf should include the
+        # object field name as a prefix, e.g. "institution.city" not just "city".
+        config = FieldConfig.model_validate({
+            "type": "object",
+            "fields": {
+                "institution": {
+                    "type": "list",
+                    "metric_config": {
+                        "item_logic": {
+                            "type": "object",
+                            "fields": {
+                                "city": {
+                                    "type": "leaf",
+                                    "metric_config": {
+                                        "metric": "comparator",
+                                        "params": {"element_compare": "llm"},
+                                    },
+                                },
+                                "state": {"type": "leaf", "metric_config": {"metric": "exact"}},
+                            },
+                        },
+                    },
+                },
+            },
+        })
+        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset(), "")
+        assert len(issues) == 1
+        assert issues[0]["relative_path"] == "institution.city"
+        assert issues[0]["metric_path"] == "root.institution[].city"
+
 
 class TestFindExpensiveLists:
     """Tests for find_expensive_unordered_list_fields."""
