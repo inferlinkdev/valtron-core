@@ -1,6 +1,7 @@
 """Tests for the JSON evaluation module."""
 
 import json
+import math
 from unittest.mock import Mock, patch
 
 import pytest
@@ -14,6 +15,8 @@ from valtron_core.evaluation.json_eval import (
     EvalResult,
     AlignmentItem,
     comparator_metric,
+    _match_key_text,
+    MATCH_KEY_MAX_CHARS,
     find_expensive_unordered_list_fields,
     _check_builtin_metric_category,
     _scan_item_logic_for_expensive_metrics,
@@ -1127,15 +1130,12 @@ class TestExpensiveListGuardInEval:
                 },
             },
         }
-        mock_response = Mock()
-        mock_response.choices = [Mock()]
-        mock_response.choices[0].message.content = '{"matched_a_idx": 0}'
-        with patch("valtron_core.evaluation.json_eval.completion", return_value=mock_response):
+        with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: _embed_by_identity(texts)):
             with patch("valtron_core.evaluation.json_eval.Comparator") as MockComp:
                 MockComp.return_value.compare.return_value = True
                 result = evaluator.evaluate(config, {"tags": ["a"]}, {"tags": ["a"]})
         assert result is not None
-        assert result.children["tags"].metric == "list_llm_aligned_iter_f1"
+        assert result.children["tags"].metric == "list_embed_hungarian_f1"
 
 
 class TestLLMPromptTemplate:
@@ -1758,28 +1758,25 @@ class TestScanIssuesIncludeCategory:
         assert issues == []
 
 
-def _make_completion_mock(matched_a_idx: int | None) -> Mock:
-    """Return a mock litellm completion response for per-item alignment (alias for _make_alignment_mock)."""
-    idx_json = "null" if matched_a_idx is None else str(matched_a_idx)
-    msg = Mock()
-    msg.content = f'{{"matched_a_idx": {idx_json}}}'
-    choice = Mock()
-    choice.message = msg
-    response = Mock()
-    response.choices = [choice]
-    return response
+def _embed_by_identity(texts: list[str]) -> list[list[float]]:
+    """Deterministic stand-in for _embed_texts: identical texts → identical one-hot vectors.
 
+    Matching items get cosine 1.0 and distinct items cosine 0.0, so the embedding+Hungarian
+    aligner can be driven in tests without touching the embedding API.
 
-def _make_alignment_mock(matched_a_idx: int | None) -> Mock:
-    """Return a mock litellm completion response for per-item alignment."""
-    idx_json = "null" if matched_a_idx is None else str(matched_a_idx)
-    msg = Mock()
-    msg.content = f'{{"matched_a_idx": {idx_json}}}'
-    choice = Mock()
-    choice.message = msg
-    response = Mock()
-    response.choices = [choice]
-    return response
+    :param texts: Texts to embed (expected items followed by actual items).
+    :return: One one-hot vector per text, in input order.
+    """
+    index: dict[str, int] = {}
+    for t in texts:
+        index.setdefault(t, len(index))
+    dim = max(1, len(index))
+    vecs: list[list[float]] = []
+    for t in texts:
+        v = [0.0] * dim
+        v[index[t]] = 1.0
+        vecs.append(v)
+    return vecs
 
 
 def _make_leaf_yes_mock() -> Mock:
@@ -1813,13 +1810,13 @@ class TestLlmAlignmentRouting:
 
     def test_llm_judge_leaf_routes_to_llm_alignment_metric(self):
         evaluator = JsonEvaluator()
-        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+        with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: _embed_by_identity(texts)):
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
                     result = evaluator.evaluate(
                         self._make_llm_list_config(), {"items": ["a"]}, {"items": ["a"]}
                     )
-        assert result.children["items"].metric == "list_llm_aligned_iter_f1"
+        assert result.children["items"].metric == "list_embed_hungarian_f1"
 
     def test_no_llm_judge_leaf_uses_greedy_path(self):
         evaluator = JsonEvaluator()
@@ -1901,7 +1898,7 @@ class TestEvalListUnorderedWithLlmAlignment:
 
     def test_successful_alignment_perfect_match(self):
         evaluator = JsonEvaluator()
-        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+        with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: _embed_by_identity(texts)):
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
                     result = evaluator.evaluate(
@@ -1913,9 +1910,10 @@ class TestEvalListUnorderedWithLlmAlignment:
         assert items.fp == 0
         assert items.is_correct is True
 
-    def test_aligner_returns_none_leaves_item_unmatched(self):
+    def test_non_matching_item_left_unmatched(self):
         evaluator = JsonEvaluator()
-        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(None)):
+        # "a" and "b" embed to orthogonal vectors (cosine 0 < align_lo) → no match.
+        with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: _embed_by_identity(texts)):
             result = evaluator.evaluate(self._make_config(), {"items": ["a"]}, {"items": ["b"]})
         items = result.children["items"]
         assert items.tp == 0
@@ -1923,7 +1921,7 @@ class TestEvalListUnorderedWithLlmAlignment:
 
     def test_details_include_aligner_metadata(self):
         evaluator = JsonEvaluator()
-        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+        with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: _embed_by_identity(texts)):
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
                     result = evaluator.evaluate(
@@ -1931,13 +1929,16 @@ class TestEvalListUnorderedWithLlmAlignment:
                     )
         details = result.children["items"].details
         assert details["aligner_used"] is True
-        assert details["n_aligner_calls"] == 2
-        assert "aligner_model" in details
+        assert details["align_method"] == "embed_hungarian"
+        assert details["n_matched"] == 2
+        assert details["n_embed_calls"] == 1
+        assert "embedding_model" in details
 
-    def test_conflict_resolution_lowest_e_idx_wins(self):
+    def test_surplus_expected_items_left_unmatched(self):
         evaluator = JsonEvaluator()
-        # E[0] and E[1] both claim A[0] — E[0] wins, E[1] becomes unmatched
-        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
+        # Two expected items, one actual: only the matching expected item ("a") pairs; the
+        # surplus ("b") has no eligible counterpart and stays unmatched.
+        with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: _embed_by_identity(texts)):
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
                     result = evaluator.evaluate(
@@ -1953,39 +1954,9 @@ class TestEvalListUnorderedWithLlmAlignment:
         assert len(unmatched) == 1
         assert unmatched[0].e_idx == 1
 
-    def test_valtron_aligner_model_env_var_respected(self, monkeypatch):
-        monkeypatch.setenv("VALTRON_ALIGNER_MODEL", "gpt-4o")
+    def test_embedding_failure_leaves_items_unmatched(self):
         evaluator = JsonEvaluator()
-        captured: list[str] = []
-
-        def capture(**kwargs):
-            captured.append(kwargs.get("model", ""))
-            return _make_alignment_mock(0)
-
-        with patch("valtron_core.evaluation.json_eval.completion", side_effect=capture):
-            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
-                    evaluator.evaluate(self._make_config(), {"items": ["x"]}, {"items": ["x"]})
-
-        assert captured and all(m == "gpt-4o" for m in captured)
-
-    def test_aligner_model_appears_in_details(self, monkeypatch):
-        monkeypatch.setenv("VALTRON_ALIGNER_MODEL", "gpt-4o-mini")
-        evaluator = JsonEvaluator()
-        with patch("valtron_core.evaluation.json_eval.completion", return_value=_make_alignment_mock(0)):
-            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
-                    result = evaluator.evaluate(
-                        self._make_config(), {"items": ["x"]}, {"items": ["x"]}
-                    )
-        assert result.children["items"].details["aligner_model"] == "gpt-4o-mini"
-
-    def test_aligner_soft_fail_on_bad_response(self):
-        evaluator = JsonEvaluator()
-        bad_response = Mock()
-        bad_response.choices = [Mock()]
-        bad_response.choices[0].message.content = "not-valid-json"
-        with patch("valtron_core.evaluation.json_eval.completion", return_value=bad_response):
+        with patch.object(evaluator, "_embed_texts", side_effect=RuntimeError("embedding down")):
             result = evaluator.evaluate(self._make_config(), {"items": ["a"]}, {"items": ["b"]})
         assert result.children["items"].tp == 0
 
@@ -2017,13 +1988,15 @@ class TestEvalListUnorderedWithLlmAlignment:
             },
         }
         evaluator = JsonEvaluator()
-        captured_candidate_counts: list[int] = []
+        captured_candidates: list[list[int]] = []
 
-        def recording_align(e_item, act, candidate_a_indices, path):
-            captured_candidate_counts.append(len(candidate_a_indices))
-            return candidate_a_indices[0] if candidate_a_indices else None
+        def recording_align(exp, act, candidates_per_e, path, m_cfg):
+            captured_candidates.extend(candidates_per_e)
+            return {i: None for i in range(len(exp))}, {
+                "n_matched": 0, "n_embed_calls": 0, "embedding_ok": False, "match_key_fields": None,
+            }
 
-        with patch.object(evaluator, "_llm_align_one_item", side_effect=recording_align):
+        with patch.object(evaluator, "_align_by_embedding", side_effect=recording_align):
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
                     evaluator.evaluate(
@@ -2034,8 +2007,8 @@ class TestEvalListUnorderedWithLlmAlignment:
                             {"id": "A", "description": "baz"},
                         ]},
                     )
-        # Only A[1] has id="A" matching E[0].id="A"; A[0] has id="B" so it should be filtered
-        assert captured_candidate_counts == [1]
+        # Only A[1] has id="A" matching E[0].id="A"; A[0] has id="B" so it is pre-filtered out.
+        assert captured_candidates == [[1]]
 
 
 class TestEvaluationCostAccumulation:
@@ -2090,32 +2063,201 @@ class TestEvaluationCostAccumulation:
             evaluator._comparator_metric("a", "a", {})
         assert evaluator.evaluation_cost == 0.0
 
-    # --- _llm_align_one_item calls _record_evaluation_cost ---
+    # --- _embed_texts records the embedding-call cost ---
 
     @pytest.mark.unit
-    def test_llm_align_one_item_records_cost(self):
+    def test_embed_texts_records_cost(self):
         evaluator = JsonEvaluator()
-        with patch(
-            "valtron_core.evaluation.json_eval.completion",
-            return_value=_make_completion_mock(0),
-        ):
+        resp = Mock()
+        resp.data = [{"embedding": [1.0, 0.0]}, {"embedding": [0.0, 1.0]}]
+        with patch("valtron_core.evaluation.json_eval.embedding", return_value=resp):
             with patch("valtron_core.evaluation.json_eval.completion_cost", return_value=0.005):
                 with patch.object(evaluator, "_record_evaluation_cost") as mock_record:
-                    evaluator._llm_align_one_item("a", ["a"], [0], "items[0]")
+                    evaluator._embed_texts(["a", "b"], "text-embedding-3-small", "items")
         mock_record.assert_called_once_with(0.005)
 
     @pytest.mark.unit
-    def test_llm_align_one_item_soft_fails_on_cost_error(self):
+    def test_embed_texts_soft_fails_on_cost_error(self):
         evaluator = JsonEvaluator()
-        with patch(
-            "valtron_core.evaluation.json_eval.completion",
-            return_value=_make_completion_mock(0),
-        ):
+        resp = Mock()
+        resp.data = [{"embedding": [1.0, 0.0]}]
+        with patch("valtron_core.evaluation.json_eval.embedding", return_value=resp):
             with patch(
                 "valtron_core.evaluation.json_eval.completion_cost",
                 side_effect=RuntimeError("billing unavailable"),
             ):
-                # Should not raise; soft-fail means the result is still returned
-                result = evaluator._llm_align_one_item("a", ["a"], [0], "items[0]")
-        assert result == 0
+                # Should not raise; soft-fail means the vectors are still returned
+                vecs = evaluator._embed_texts(["a"], "text-embedding-3-small", "items")
+        assert vecs == [[1.0, 0.0]]
         assert evaluator.evaluation_cost == 0.0
+
+
+class TestEmbeddingHungarianAlignment:
+    """Tests for the embedding + Hungarian aligner.
+
+    These drive _align_by_embedding directly with the embedding call patched out, so no
+    third-party API is touched. _cosine runs for real over the supplied vectors so the
+    assignment reflects the actual similarity arithmetic.
+    """
+
+    def _cfg(self, **overrides):
+        """Build a ListMetricConfig with match_key_fields set (skips the field-selection call).
+
+        :param overrides: Field overrides applied on top of the defaults.
+        :return: A configured :class:`ListMetricConfig`.
+        """
+        params = dict(
+            ordered=False,
+            match_key_fields=["name"],
+            align_lo=0.35,
+        )
+        params.update(overrides)
+        return ListMetricConfig(**params)
+
+    def test_hungarian_finds_global_optimum_no_llm(self):
+        """The optimal one-to-one assignment is found over cosine, with no LLM aligner call.
+
+        Both items have act0 as their top cosine, but the optimal assignment pairs exp0->act0
+        and exp1->act1 (total cosine 0.50+0.40 beats 0.45+0.30) -- a global trade that greedy
+        per-item matching cannot make.
+        """
+        ev = JsonEvaluator()
+        exp = [{"name": "p"}, {"name": "q"}]
+        act = [{"name": "x"}, {"name": "y"}]
+        candidates = [[0, 1], [0, 1]]
+        c0 = math.sqrt(1 - 0.50 ** 2 - 0.30 ** 2)
+        c1 = math.sqrt(1 - 0.45 ** 2 - 0.40 ** 2)
+        vecs = [
+            [0.50, 0.30, c0],   # exp0: cos->act0=0.50, act1=0.30
+            [0.45, 0.40, c1],   # exp1: cos->act0=0.45, act1=0.40
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+
+        with patch.object(ev, "_embed_texts", return_value=vecs):
+            assignment, stats = ev._align_by_embedding(
+                exp, act, candidates, "root.items", self._cfg()
+            )
+
+        assert assignment == {0: 0, 1: 1}
+        assert stats["embedding_ok"] is True
+        assert stats["n_matched"] == 2
+
+    def test_hungarian_drops_sub_lo_pairs(self):
+        """An item is left unmatched when its only candidate is below align_lo."""
+        ev = JsonEvaluator()
+        exp = [{"name": "p"}, {"name": "q"}]
+        act = [{"name": "x"}, {"name": "y"}]
+        candidates = [[0, 1], [0, 1]]
+        # exp0 strongly matches act0; exp1's best is act1 at 0.20, below align_lo=0.35.
+        c1 = math.sqrt(1 - 0.20 ** 2 - 0.10 ** 2)
+        vecs = [
+            [0.95, 0.10, math.sqrt(1 - 0.95 ** 2 - 0.10 ** 2)],
+            [0.10, 0.20, c1],
+            [1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+        ]
+
+        with patch.object(ev, "_embed_texts", return_value=vecs):
+            assignment, stats = ev._align_by_embedding(
+                exp, act, candidates, "root.items", self._cfg()
+            )
+
+        assert assignment == {0: 0, 1: None}   # exp1 below lo -> unmatched
+        assert stats["n_matched"] == 1
+
+    def test_embedding_failure_leaves_items_unmatched(self):
+        """If the embedding call fails, every item is left unmatched (no LLM fallback)."""
+        ev = JsonEvaluator()
+        exp = [{"name": "p"}, {"name": "q"}]
+        act = [{"name": "x"}, {"name": "y"}]
+        candidates = [[0, 1], [0, 1]]
+
+        with patch.object(ev, "_embed_texts", side_effect=RuntimeError("embedding down")):
+            assignment, stats = ev._align_by_embedding(
+                exp, act, candidates, "root.items", self._cfg()
+            )
+
+        assert assignment == {0: None, 1: None}
+        assert stats["embedding_ok"] is False
+        assert stats["n_matched"] == 0
+
+    def test_nested_items_skip_match_key_selection(self):
+        """Items with nested values skip the field-selection LLM call (return None)."""
+        ev = JsonEvaluator()
+        exp = [{"name": "a", "details": {"k": 1}}]
+        act = [{"name": "a", "details": {"k": 1}}]
+
+        with patch("valtron_core.evaluation.json_eval.completion") as mock_completion:
+            fields = ev._select_match_key_fields(
+                ListMetricConfig(ordered=False), exp, act, "root.nested"
+            )
+
+        assert fields is None
+        mock_completion.assert_not_called()
+
+    def test_flat_items_still_use_match_key_selection(self):
+        """Flat items keep the field-selection call so boilerplate fields can be dropped."""
+        ev = JsonEvaluator()
+        exp = [{"name": "a", "status": "open"}, {"name": "b", "status": "open"}]
+        act = [{"name": "a", "status": "open"}]
+
+        resp = Mock()
+        resp.choices = [Mock()]
+        resp.choices[0].message.content = '{"fields": ["name"]}'
+
+        with patch("valtron_core.evaluation.json_eval.completion", return_value=resp), \
+             patch("valtron_core.evaluation.json_eval.completion_cost", return_value=0.0):
+            fields = ev._select_match_key_fields(
+                ListMetricConfig(ordered=False), exp, act, "root.flat"
+            )
+
+        assert fields == ["name"]
+
+
+class TestMatchKeyText:
+    """Tests for _match_key_text — the bounded, top-level-only item rendering for embedding."""
+
+    def test_top_level_scalars_only_excludes_nested(self):
+        """With no explicit fields, only top-level scalar fields are rendered; nested are dropped."""
+        item = {
+            "title": "Blue Whale",
+            "category": "mammal",
+            "tags": ["marine", "large"],
+            "sources": [{"name": "encyclopedia"}],
+        }
+        text = _match_key_text(item, None)
+
+        assert "title:" in text
+        assert "category:" in text
+        # Nested list/dict fields and their contents are excluded.
+        assert "tags" not in text
+        assert "marine" not in text
+        assert "sources" not in text
+        assert "encyclopedia" not in text
+
+    def test_truncates_to_cap(self):
+        """A long top-level string is truncated to the safety cap."""
+        item = {"title": "x" * 5000}
+        text = _match_key_text(item, None)
+
+        assert len(text) == MATCH_KEY_MAX_CHARS
+
+    def test_no_top_level_scalars_falls_back_to_whole_item(self):
+        """An item whose fields are all nested still yields a (bounded) rendering."""
+        item = {"program_element": {"number": "0602144A"}, "summary": [{"fy": 2024}]}
+        text = _match_key_text(item, None)
+
+        assert text  # non-empty
+        assert len(text) <= MATCH_KEY_MAX_CHARS
+        # The fallback serializes the whole item, so nested content appears here.
+        assert "0602144A" in text
+
+    def test_explicit_fields_are_honored(self):
+        """Explicit match_key_fields select exactly those fields."""
+        item = {"name": "alpha", "status": "open", "notes": "irrelevant"}
+        text = _match_key_text(item, ["name", "status"])
+
+        assert "name: alpha" in text
+        assert "status: open" in text
+        assert "notes" not in text

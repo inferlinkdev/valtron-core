@@ -5,10 +5,13 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import copy
 import logging
+import math
 import os
 import threading
 import warnings
-from litellm import completion, completion_cost
+from litellm import completion, completion_cost, embedding
+import numpy as np
+from scipy.optimize import linear_sum_assignment
 
 from valtron_core.evaluation.comparison_functions import (
     Comparator,
@@ -27,7 +30,17 @@ logger = logging.getLogger(__name__)
 
 
 MAX_LIST_LENGTH_FOR_EXPENSIVE_COMPARE = 4
-DEFAULT_LLM_ALIGNER_MODEL = "gpt-4o-mini"
+
+# --- Embedding alignment defaults (unordered lists with LLM-judge leaves) ---
+# Unordered-list items are aligned by optimal one-to-one assignment over embedding cosine
+# similarity (Hungarian). These knobs are overridable per list via ListMetricConfig.
+DEFAULT_ALIGN_EMBEDDING_MODEL = "text-embedding-3-small"
+DEFAULT_MATCH_KEY_MODEL = "gpt-5.4-mini"
+DEFAULT_ALIGN_LO = 0.35      # cosine floor: pairs below this are left unmatched
+# Safety cap on the text embedded per item. Top-level-only rendering keeps items small; this
+# bounds the request size even when a top-level string is unusually long, so a batched
+# embedding over a long list can't grow into an oversized request.
+MATCH_KEY_MAX_CHARS = 512
 
 
 def _score_to_result(result: bool | float, params: dict[str, Any]) -> tuple[float, bool]:
@@ -107,6 +120,15 @@ class ListMetricConfig(BaseModel):
     required_fields_to_match: list[str] | None = None
     allow_expensive_comparisons_for: list[str] | None = None
 
+    # Embedding alignment knobs (only used for unordered lists whose item_logic contains an
+    # LLM-judge leaf). match_key_fields names the identity-bearing fields to embed; when None
+    # they are selected once per list by a small LLM call (cached), falling back to the item's
+    # top-level scalar fields. align_lo is the cosine floor below which pairs stay unmatched.
+    match_key_fields: list[str] | None = None
+    match_key_model: str = DEFAULT_MATCH_KEY_MODEL
+    align_embedding_model: str = DEFAULT_ALIGN_EMBEDDING_MODEL
+    align_lo: float = DEFAULT_ALIGN_LO
+
 
 class FieldConfig(BaseModel):
     type: Literal["object", "list", "leaf"] = "leaf"
@@ -130,7 +152,11 @@ class FieldConfig(BaseModel):
                 'propagation': mc.get('propagation', 'weighted_avg'),
             }
         elif field_type == 'list':
-            list_keys = ('match_threshold', 'item_logic', 'required_fields_to_match', 'allow_expensive_comparisons_for')
+            list_keys = (
+                'match_threshold', 'item_logic', 'required_fields_to_match',
+                'allow_expensive_comparisons_for', 'match_key_fields', 'match_key_model',
+                'align_embedding_model', 'align_lo',
+            )
             filtered = {k: mc[k] for k in list_keys if k in mc}
             filtered['ordered'] = mc.get('ordered', False)  # always present for union discrimination
             data['metric_config'] = filtered
@@ -392,17 +418,88 @@ def find_expensive_unordered_list_fields(
     return issues
 
 
-class _PerItemAlignment(BaseModel):
-    """LLM response for one expected item's alignment.
+class _MatchKeyFields(BaseModel):
+    """LLM response selecting the identity-bearing fields of a list item.
 
-    Tiny one-field schema designed to be trivially reliable under OpenAI structured-output
-    strict mode.  Leaf-level judging is intentionally NOT collapsed into this call; it runs
-    afterwards through the regular leaf-judge code path on each matched pair.
+    Used once per list (cached) to decide which fields to embed when aligning items for an
+    unordered list.  Embedding only the identity fields keeps the cosine signal sharp;
+    boilerplate/enum fields would otherwise dilute it.
 
-    :param matched_a_idx: Index into the candidate actual list, or None if no actual item
-        plausibly matches the expected item.
+    :param fields: Field names (top level of the item) that together identify an item.
     """
-    matched_a_idx: int | None
+    fields: list[str]
+
+
+def _cosine(v1: list[float], v2: list[float]) -> float:
+    """Compute cosine similarity between two equal-length vectors.
+
+    :param v1: First vector.
+    :param v2: Second vector.
+    :return: Cosine similarity in ``[-1, 1]``; ``0.0`` if either vector has zero magnitude.
+    """
+    dot = sum(a * b for a, b in zip(v1, v2))
+    mag1 = math.sqrt(sum(a * a for a in v1))
+    mag2 = math.sqrt(sum(b * b for b in v2))
+
+    if mag1 == 0 or mag2 == 0:
+        return 0.0
+
+    return dot / (mag1 * mag2)
+
+
+def _match_key_text(item: Any, fields: list[str] | None) -> str:
+    """Build the text embedded to represent ``item`` when aligning candidates.
+
+    An item is characterized by its **top-level elements only** — nested lists/dicts are not
+    recursed into, since identity almost always lives at the top level and the nested content
+    is mostly noise (and bulk) for matching. Resolution:
+
+    * explicit ``fields`` (dict item): serialize just those fields (a nested field named
+      explicitly is still honored);
+    * no ``fields`` (dict item): serialize only the top-level *scalar* fields;
+    * neither yields anything (e.g. an item whose identity is entirely nested), or a
+      non-dict item: fall back to a whole-item rendering.
+
+    The result is truncated to :data:`MATCH_KEY_MAX_CHARS` as a safety bound so a batched
+    embedding over a long list cannot grow into an oversized request.
+
+    :param item: The list item (dict or primitive).
+    :param fields: Explicit identity field names to embed, or None to use top-level scalars.
+    :return: A compact, length-bounded text representation suitable for embedding.
+    """
+    if not isinstance(item, dict):
+        return json.dumps(item, default=str, ensure_ascii=False, sort_keys=True)[:MATCH_KEY_MAX_CHARS]
+
+    if fields:
+        keys = [f for f in fields if f in item and item[f] is not None]
+    else:
+        # Top-level (non-recursive) scalar fields only.
+        keys = [k for k, v in item.items() if v is not None and isinstance(v, (str, int, float, bool))]
+
+    parts: list[str] = []
+    for k in keys:
+        val = item[k]
+        val_str = val if isinstance(val, str) else json.dumps(val, default=str, ensure_ascii=False)
+        parts.append(f"{k}: {val_str}")
+
+    if not parts:
+        return json.dumps(item, default=str, ensure_ascii=False, sort_keys=True)[:MATCH_KEY_MAX_CHARS]
+
+    return "\n".join(parts)[:MATCH_KEY_MAX_CHARS]
+
+
+def _truncate_for_prompt(value: Any, limit: int = 200) -> str:
+    """Serialize a field value and truncate it for inclusion in a sample prompt.
+
+    :param value: The field value to render.
+    :param limit: Maximum number of characters to keep.
+    :return: A truncated string representation.
+    """
+    text = value if isinstance(value, str) else json.dumps(value, default=str, ensure_ascii=False)
+    if len(text) > limit:
+        return text[:limit] + "…"
+
+    return text
 
 
 class AlignmentItem(BaseModel):
@@ -443,6 +540,8 @@ class JsonEvaluator:
         self._template_vars: dict[str, Any] = {}
         self._evaluation_cost_usd: float = 0.0
         self._evaluation_cost_lock = threading.Lock()
+        # Per-path cache of match-key field selections (one LLM call per list, reused per run).
+        self._match_key_cache: dict[str, list[str] | None] = {}
 
         # Metric Registry: (expected, actual, params) -> tuple[float, bool]:
         self.metric_registry = {
@@ -784,104 +883,215 @@ class JsonEvaluator:
             is_correct=all_correct,
         )
 
-    def _llm_align_one_item(
+    def _select_match_key_fields(
         self,
-        e_item: Any,
+        m_cfg: "ListMetricConfig",
+        exp: list[Any],
         act: list[Any],
-        candidate_a_indices: list[int],
         path: str,
-    ) -> int | None:
-        """One LLM call: pick which actual item (if any) corresponds to a given expected
-        item.  Returns just ``matched_a_idx`` or None.
+    ) -> list[str] | None:
+        """Decide which item fields to embed when aligning candidates for this list.
 
-        Each call is a single local decision over a trivial one-field schema, so it does
-        not suffer the global-consistency failures of one-shot full-list alignment.
-        Retries once on schema/parse failure; on second failure returns None (soft fail)
-        so the surrounding document is not blocked.
+        Resolution order: explicit ``match_key_fields`` on the config wins; otherwise a single
+        small-LLM call picks the identity-bearing fields from a few sample items. The result is
+        cached per evaluation path -- the item schema is constant across a run, so this is
+        roughly one LLM call per list for the whole run. Any failure (non-dict items, API
+        error, empty/invalid selection) caches None, which tells :func:`_match_key_text` to
+        fall back to the item's top-level scalar fields.
 
-        :param e_item: The expected item being aligned.
-        :param act: Full list of actual items (used to read candidate items by index).
-        :param candidate_a_indices: Indices into ``act`` that are eligible matches (after
-            the ``required_fields_to_match`` pre-filter is applied).
-        :param path: Evaluation path used in log messages.
-        :return: The chosen index from ``candidate_a_indices``, or None.
+        :param m_cfg: The list's metric config.
+        :param exp: Expected list of items.
+        :param act: Actual list of items.
+        :param path: Evaluation path, used as the cache key and in log messages.
+        :return: Field names to embed, or None to use the item's top-level scalar fields.
         """
-        if not candidate_a_indices:
+        if m_cfg.match_key_fields:
+            return m_cfg.match_key_fields
+
+        if path in self._match_key_cache:
+            return self._match_key_cache[path]
+
+        samples = [it for it in (exp + act) if isinstance(it, dict)][:5]
+        if not samples:
+            self._match_key_cache[path] = None
             return None
 
-        model = os.environ.get("VALTRON_ALIGNER_MODEL", DEFAULT_LLM_ALIGNER_MODEL)
+        # Nested items: skip the LLM field selection and return None, which tells
+        # _match_key_text to characterize the item by its top-level scalar fields only (no
+        # recursion into nested lists/dicts). The LLM selection only earns its keep on flat
+        # items, where it can drop low-information scalar fields (enums, flags) that would
+        # otherwise dilute the cosine signal.
+        if any(isinstance(v, (dict, list)) for it in samples for v in it.values()):
+            self._match_key_cache[path] = None
+            return None
 
-        expected_repr = json.dumps(e_item, default=str, ensure_ascii=False, indent=2)
-        actuals_repr = "\n".join(
-            f"[A{j}]\n{json.dumps(act[j], default=str, ensure_ascii=False, indent=2)}"
-            for j in candidate_a_indices
+        field_names = sorted({k for it in samples for k in it.keys()})
+        if len(field_names) <= 1:
+            selected = field_names or None
+            self._match_key_cache[path] = selected
+            return selected
+
+        samples_repr = "\n\n".join(
+            "ITEM:\n"
+            + "\n".join(f"  {k}: {_truncate_for_prompt(it[k])}" for k in field_names if k in it)
+            for it in samples[:3]
         )
-        valid_indices_str = ", ".join(str(j) for j in candidate_a_indices)
-
-        base_prompt = (
-            "You are aligning one expected item against a list of candidate actual items, "
-            "as part of an automated evaluation pipeline.\n\n"
-            "Decide which (if any) of the candidate ACTUAL items corresponds to the EXPECTED "
-            "item below.\n"
-            f"- matched_a_idx must be one of: [{valid_indices_str}] (the integer after the `A` "
-            "tag), or null if no candidate plausibly matches.\n"
-            "- Be strict: prefer null over a doubtful match.\n\n"
-            f"EXPECTED:\n{expected_repr}\n\n"
-            f"ACTUAL CANDIDATES ({len(candidate_a_indices)}):\n{actuals_repr}\n\n"
-            "Return JSON only, matching the schema."
+        prompt = (
+            "You are configuring an automated evaluation pipeline. Below are sample items from "
+            "a list. Pick the subset of fields that together IDENTIFY an item -- the fields a "
+            "human would use to tell one item apart from another (e.g. a title, name, or "
+            "description). Exclude low-information fields whose values repeat across items "
+            "(enums, booleans, status flags, priorities) and bookkeeping fields (ids, indices) "
+            "unless they are the only identifier.\n\n"
+            f"Available fields: {field_names}\n\n"
+            f"Sample items:\n{samples_repr}\n\n"
+            "Return JSON only, matching the schema (a list of field names drawn from the "
+            "available fields)."
         )
 
-        last_err: Exception | None = None
-        prompt = base_prompt
-        valid_set = set(candidate_a_indices)
-
-        for attempt in range(2):
+        selected: list[str] | None = None
+        try:
+            response = completion(
+                model=m_cfg.match_key_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.0,
+                response_format=_MatchKeyFields,
+            )
             try:
-                response = completion(
-                    model=model,
-                    messages=[{"role": "user", "content": prompt}],
-                    temperature=0.0,
-                    response_format=_PerItemAlignment,
-                )
+                self._record_evaluation_cost(completion_cost(completion_response=response))
+            except Exception:  # noqa: BLE001
+                logger.warning("match_key_cost_tracking_failed at '%s'", path)
 
-                # Account for judge spend: each alignment call is a billable LLM
-                # request and is the dominant cost of unordered-list scoring.
-                # Record it before parsing so failed-parse retries are counted too.
-                # Best-effort — a cost-lookup failure must never block scoring.
-                try:
-                    self._record_evaluation_cost(completion_cost(completion_response=response))
-                except Exception:  # noqa: BLE001
-                    logger.warning("evaluation_cost_tracking_failed at '%s'", path)
+            parsed = _MatchKeyFields.model_validate_json(response.choices[0].message.content)
+            valid = [f for f in parsed.fields if f in field_names]
+            selected = valid or None
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Match-key field selection failed at '%s' (model=%s); embedding whole item: %s",
+                path, m_cfg.match_key_model, e,
+            )
+            selected = None
 
-                content = response.choices[0].message.content
-                parsed = _PerItemAlignment.model_validate_json(content)
+        logger.info("Match-key fields for '%s': %s", path, selected if selected else "<whole item>")
+        self._match_key_cache[path] = selected
+        return selected
 
-                if parsed.matched_a_idx is not None and parsed.matched_a_idx not in valid_set:
-                    raise ValueError(
-                        f"matched_a_idx={parsed.matched_a_idx} not in candidate set "
-                        f"{candidate_a_indices}"
-                    )
+    def _embed_texts(self, texts: list[str], model: str, path: str) -> list[list[float]]:
+        """Embed a batch of texts in a single API call and record the spend.
 
-                return parsed.matched_a_idx
+        :param texts: Texts to embed (expected items followed by actual items).
+        :param model: Embedding model name.
+        :param path: Evaluation path, used in log messages.
+        :return: One embedding vector per input text, in input order.
+        """
+        response = embedding(model=model, input=texts)
+        try:
+            self._record_evaluation_cost(completion_cost(completion_response=response))
+        except Exception:  # noqa: BLE001
+            logger.warning("embed_cost_tracking_failed at '%s'", path)
 
-            except Exception as e:
-                last_err = e
-                logger.warning(
-                    "Per-item aligner attempt %d/2 failed at '%s' (model=%s): %s",
-                    attempt + 1, path, model, e,
-                )
-                prompt = (
-                    base_prompt
-                    + f"\n\nYour previous response was invalid: {e}\nTry again, strictly "
-                    "obeying the schema and the rules above."
-                )
+        return [d["embedding"] for d in response.data]
 
-        logger.warning(
-            "Per-item aligner failed at '%s' after 2 attempts (model=%s); treating as no "
-            "match: %s",
-            path, model, last_err,
-        )
-        return None
+    def _align_by_hungarian(
+        self,
+        sims: list[list[float]],
+        candidates_per_e: list[list[int]],
+        lo: float,
+    ) -> dict[int, int | None]:
+        """Globally optimal one-to-one assignment over the cosine matrix (no LLM calls).
+
+        Builds a cost matrix (cost = 1 - cosine) over only the pairs that pass the
+        ``required_fields_to_match`` pre-filter and clear the ``lo`` floor; every other pair is
+        forbidden with a prohibitively large cost. ``scipy.optimize.linear_sum_assignment`` then
+        finds the assignment minimizing total cost (i.e. maximizing total cosine), and any
+        forbidden pair it is forced to pick on a rectangular matrix is dropped to unmatched.
+
+        :param sims: Expected-by-actual cosine similarity matrix.
+        :param candidates_per_e: Per expected item, the allowed actual indices (pre-filter).
+        :param lo: Minimum cosine for a pair to be eligible.
+        :return: Mapping of each expected index to a chosen actual index or None.
+        """
+        n_exp = len(sims)
+        n_act = len(sims[0]) if n_exp else 0
+        e_assignment: dict[int, int | None] = {i: None for i in range(n_exp)}
+        if n_exp == 0 or n_act == 0:
+            return e_assignment
+
+        forbid = 1e6
+        allowed = [set(c) for c in candidates_per_e]
+        cost = np.full((n_exp, n_act), forbid, dtype=float)
+        for i in range(n_exp):
+            for j in allowed[i]:
+                if sims[i][j] >= lo:
+                    cost[i][j] = 1.0 - sims[i][j]
+
+        rows, cols = linear_sum_assignment(cost)
+        for i, j in zip(rows, cols):
+            if cost[i][j] < forbid:  # a real, eligible pair (not a forced forbidden slot)
+                e_assignment[int(i)] = int(j)
+
+        return e_assignment
+
+    def _align_by_embedding(
+        self,
+        exp: list[Any],
+        act: list[Any],
+        candidates_per_e: list[list[int]],
+        path: str,
+        m_cfg: "ListMetricConfig",
+    ) -> tuple[dict[int, int | None], dict[str, Any]]:
+        """Align expected->actual items by optimal one-to-one assignment over cosine similarity.
+
+        One batched embedding call scores every expected item against every actual item by
+        cosine similarity (over the match-key rendering of each item), then
+        :meth:`_align_by_hungarian` finds the globally optimal assignment, leaving pairs below
+        ``align_lo`` unmatched. No LLM aligner calls are made. If the embedding call fails at
+        runtime, scoring degrades to all-unmatched (logged) rather than blocking the run.
+
+        :param exp: Expected list of items.
+        :param act: Actual list of items.
+        :param candidates_per_e: Per expected item, the actual indices passing the
+            ``required_fields_to_match`` pre-filter.
+        :param path: Current evaluation path.
+        :param m_cfg: The list's metric config (supplies the embedding model and align_lo).
+        :return: A ``(e_assignment, stats)`` tuple, where ``e_assignment`` maps each expected
+            index to a chosen actual index or None, and ``stats`` carries diagnostic counts.
+        """
+        n_exp, n_act = len(exp), len(act)
+        e_assignment: dict[int, int | None] = {i: None for i in range(n_exp)}
+        stats: dict[str, Any] = {
+            "n_matched": 0, "n_embed_calls": 0,
+            "embedding_ok": False, "match_key_fields": None,
+        }
+
+        if n_exp == 0 or n_act == 0:
+            return e_assignment, stats
+
+        # One batched embedding call -> cosine matrix. On failure, leave everything unmatched
+        # rather than blocking the run.
+        try:
+            fields = self._select_match_key_fields(m_cfg, exp, act, path)
+            texts = [_match_key_text(it, fields) for it in exp] + [
+                _match_key_text(it, fields) for it in act
+            ]
+            vecs = self._embed_texts(texts, m_cfg.align_embedding_model, path)
+            exp_vecs, act_vecs = vecs[:n_exp], vecs[n_exp:]
+            sims = [
+                [_cosine(exp_vecs[i], act_vecs[j]) for j in range(n_act)]
+                for i in range(n_exp)
+            ]
+            stats["n_embed_calls"] = 1
+            stats["embedding_ok"] = True
+            stats["match_key_fields"] = fields
+        except Exception as e:  # noqa: BLE001
+            logger.warning(
+                "Embedding alignment unavailable at '%s'; leaving items unmatched: %s", path, e,
+            )
+            return e_assignment, stats
+
+        e_assignment = self._align_by_hungarian(sims, candidates_per_e, m_cfg.align_lo)
+        stats["n_matched"] = sum(1 for v in e_assignment.values() if v is not None)
+        return e_assignment, stats
 
     def _eval_list_unordered_with_llm_alignment(
         self,
@@ -891,18 +1101,14 @@ class JsonEvaluator:
         path: str,
         m_cfg: "ListMetricConfig",
     ) -> EvalResult:
-        """Evaluate an unordered list whose items contain LLM-judge leaves, using per-item
-        iterative LLM alignment followed by the regular leaf-judge code path.
+        """Evaluate an unordered list whose items contain LLM-judge leaves, aligning items by
+        optimal assignment over embedding cosine similarity, then judging each matched pair.
 
-        For each expected item, issues one LLM call to pick the matching actual item (or
-        none) — a tiny one-field decision that gpt-4o-mini handles reliably.  Calls run
-        in parallel.  Once alignment is decided, each matched pair is evaluated by
-        recursing ``item_logic`` so every leaf (LLM-judge, embedding, or local) runs
-        through its own configured metric with its own prompt template.
-
-        Conflict resolution: when multiple expected items claim the same actual item, the
-        lowest e_idx wins; the others fall through to unmatched.  (We don't have a
-        confidence signal from the alignment call, so the tiebreaker is just deterministic.)
+        Alignment is delegated to :meth:`_align_by_embedding`: one batched embedding call scores
+        all expected×actual pairs by cosine similarity and the Hungarian algorithm finds the
+        globally optimal one-to-one assignment — no LLM aligner calls. Once alignment is decided,
+        each matched pair is evaluated by recursing ``item_logic`` so every leaf (LLM-judge,
+        embedding, or local) runs through its own configured metric with its own prompt template.
 
         :param config: The list's :class:`FieldConfig`.
         :param exp: Expected list of items.
@@ -914,7 +1120,7 @@ class JsonEvaluator:
         if not exp and not act:
             return EvalResult(
                 path=path, score=1.0, weight=config.weight,
-                metric="list_llm_aligned_iter_f1",
+                metric="list_embed_hungarian_f1",
                 alignment=[], precision=0.0, recall=0.0,
                 tp=0, fp=0, fn=0,
                 details={"matched_items": 0, "aligner_used": True},
@@ -924,7 +1130,7 @@ class JsonEvaluator:
         if not exp:
             return EvalResult(
                 path=path, score=0.0, weight=config.weight,
-                metric="list_llm_aligned_iter_f1",
+                metric="list_embed_hungarian_f1",
                 alignment=[], precision=0.0, recall=0.0,
                 fp=len(act), fn=0, tp=0,
                 details={"matched_items": 0, "aligner_used": True},
@@ -965,30 +1171,12 @@ class JsonEvaluator:
             else:
                 candidates_per_e.append(list(range(len(act))))
 
-        # Fan out one LLM call per expected item — each is a one-field decision, immune
-        # to the global-consistency failures of one-shot full-list alignment.
+        # Optimal one-to-one assignment over embedding cosine decides the alignment
+        # (no LLM aligner calls; see _align_by_embedding).
         max_workers = min(32, max(1, len(exp)))
-        proposed_a_per_e: dict[int, int | None] = {}
-        with ThreadPoolExecutor(max_workers=max_workers) as ex:
-            future_to_idx = {
-                ex.submit(
-                    self._llm_align_one_item,
-                    exp[i], act, candidates_per_e[i], f"{path}[{i}]",
-                ): i
-                for i in range(len(exp))
-            }
-            for fut, i in future_to_idx.items():
-                proposed_a_per_e[i] = fut.result()
-
-        # Conflict resolution: each actual item can be claimed at most once; lowest e_idx
-        # wins.  Losing claimants fall through to unmatched.
-        e_assignment: dict[int, int | None] = {i: None for i in range(len(exp))}
-        a_taken: set[int] = set()
-        for i in range(len(exp)):
-            proposed = proposed_a_per_e.get(i)
-            if proposed is not None and proposed not in a_taken:
-                e_assignment[i] = proposed
-                a_taken.add(proposed)
+        e_assignment, align_stats = self._align_by_embedding(
+            exp, act, candidates_per_e, path, m_cfg
+        )
 
         # Run the leaf-judging recursion for every expected item in parallel.  Each
         # _recurse call makes its own LLM-judge / embedding / local-metric calls
@@ -1027,7 +1215,7 @@ class JsonEvaluator:
             path=path,
             score=1.0 if all_correct else soft_f1,
             weight=config.weight,
-            metric="list_llm_aligned_iter_f1",
+            metric="list_embed_hungarian_f1",
             alignment=alignments,
             precision=precision,
             recall=recall,
@@ -1037,8 +1225,11 @@ class JsonEvaluator:
             details={
                 "matched_items": len(matched_e),
                 "aligner_used": True,
-                "aligner_model": os.environ.get("VALTRON_ALIGNER_MODEL", DEFAULT_LLM_ALIGNER_MODEL),
-                "n_aligner_calls": len(exp),
+                "align_method": "embed_hungarian" if align_stats["embedding_ok"] else "embedding_unavailable",
+                "embedding_model": m_cfg.align_embedding_model,
+                "match_key_fields": align_stats["match_key_fields"],
+                "n_matched": align_stats["n_matched"],
+                "n_embed_calls": align_stats["n_embed_calls"],
             },
             is_correct=all_correct,
         )
