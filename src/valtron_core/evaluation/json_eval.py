@@ -5,7 +5,6 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import copy
 import logging
-import math
 import threading
 import warnings
 from litellm import completion, completion_cost, embedding, ModelResponse
@@ -465,21 +464,25 @@ class _MatchKeyFields(BaseModel):
     fields: list[str]
 
 
-def _cosine(v1: list[float], v2: list[float]) -> float:
-    """Compute cosine similarity between two equal-length vectors.
+def _cosine_matrix(exp_vecs: list[list[float]], act_vecs: list[list[float]]) -> "np.ndarray":
+    """Cosine-similarity matrix between two sets of vectors via one normalized matrix multiply.
 
-    :param v1: First vector.
-    :param v2: Second vector.
-    :return: Cosine similarity in ``[-1, 1]``; ``0.0`` if either vector has zero magnitude.
+    Row ``i`` / column ``j`` is the cosine similarity of ``exp_vecs[i]`` and ``act_vecs[j]``.
+    Computing it as a single BLAS matmul (rather than pairwise in Python) keeps alignment cheap
+    even for long lists. A zero-magnitude vector yields ``0.0`` similarity, matching a direct
+    cosine.
+
+    :param exp_vecs: Expected-item embedding vectors (n_exp × d).
+    :param act_vecs: Actual-item embedding vectors (n_act × d).
+    :return: An ``n_exp × n_act`` cosine-similarity matrix.
     """
-    dot = sum(a * b for a, b in zip(v1, v2))
-    mag1 = math.sqrt(sum(a * a for a in v1))
-    mag2 = math.sqrt(sum(b * b for b in v2))
+    E = np.asarray(exp_vecs, dtype=float)
+    A = np.asarray(act_vecs, dtype=float)
+    # Clip the norm so a zero vector normalizes to zero (→ 0 similarity) instead of dividing by 0.
+    E /= np.clip(np.linalg.norm(E, axis=1, keepdims=True), 1e-12, None)
+    A /= np.clip(np.linalg.norm(A, axis=1, keepdims=True), 1e-12, None)
 
-    if mag1 == 0 or mag2 == 0:
-        return 0.0
-
-    return dot / (mag1 * mag2)
+    return E @ A.T
 
 
 def _match_key_text(item: Any, fields: list[str] | None) -> str:
@@ -1037,7 +1040,7 @@ class JsonEvaluator:
 
     def _align_by_hungarian(
         self,
-        sims: list[list[float]],
+        sims: "np.ndarray",
         candidates_per_e: list[list[int]],
         lo: float,
     ) -> dict[int, int | None]:
@@ -1054,23 +1057,26 @@ class JsonEvaluator:
         :param lo: Minimum cosine for a pair to be eligible.
         :return: Mapping of each expected index to a chosen actual index or None.
         """
-        n_exp = len(sims)
-        n_act = len(sims[0]) if n_exp else 0
+        n_exp = sims.shape[0]
+        n_act = sims.shape[1] if sims.ndim == 2 else 0
         e_assignment: dict[int, int | None] = {i: None for i in range(n_exp)}
         if n_exp == 0 or n_act == 0:
             return e_assignment
 
         forbid = 1e6
-        allowed = [set(c) for c in candidates_per_e]
-        cost = np.full((n_exp, n_act), forbid, dtype=float)
-        for i in range(n_exp):
-            for j in allowed[i]:
-                if sims[i][j] >= lo:
-                    cost[i][j] = 1.0 - sims[i][j]
+        # Eligible pairs (cosine ≥ lo) cost 1 - cosine; everything else is prohibitively
+        # expensive so the solver avoids it.
+        cost = np.where(sims >= lo, 1.0 - sims, forbid)
+        # Apply the required_fields_to_match pre-filter, only for rows it actually narrowed.
+        for i, cands in enumerate(candidates_per_e):
+            if len(cands) != n_act:
+                disallowed = np.ones(n_act, dtype=bool)
+                disallowed[list(cands)] = False
+                cost[i, disallowed] = forbid
 
         rows, cols = linear_sum_assignment(cost)
         for i, j in zip(rows, cols):
-            if cost[i][j] < forbid:  # a real, eligible pair (not a forced forbidden slot)
+            if cost[i, j] < forbid:  # a real, eligible pair (not a forced forbidden slot)
                 e_assignment[int(i)] = int(j)
 
         return e_assignment
@@ -1118,11 +1124,7 @@ class JsonEvaluator:
                 _match_key_text(it, fields) for it in act
             ]
             vecs = self._embed_texts(texts, m_cfg.align_embedding_model, path)
-            exp_vecs, act_vecs = vecs[:n_exp], vecs[n_exp:]
-            sims = [
-                [_cosine(exp_vecs[i], act_vecs[j]) for j in range(n_act)]
-                for i in range(n_exp)
-            ]
+            sims = _cosine_matrix(vecs[:n_exp], vecs[n_exp:])
             stats["n_embed_calls"] = 1
             stats["embedding_ok"] = True
             stats["match_key_fields"] = fields

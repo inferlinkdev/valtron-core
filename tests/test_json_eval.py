@@ -2096,8 +2096,8 @@ class TestEmbeddingHungarianAlignment:
     """Tests for the embedding + Hungarian aligner.
 
     These drive _align_by_embedding directly with the embedding call patched out, so no
-    third-party API is touched. _cosine runs for real over the supplied vectors so the
-    assignment reflects the actual similarity arithmetic.
+    third-party API is touched. The cosine matrix is computed for real over the supplied
+    vectors so the assignment reflects the actual similarity arithmetic.
     """
 
     def _cfg(self, **overrides):
