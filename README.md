@@ -161,6 +161,10 @@ docker compose run --rm pipeline-test
 # Install dependencies
 poetry install
 
+# or, if you want to run pytest
+poetry env use 3.13
+poetry install --all-extras
+
 # Run tests
 poetry run pytest
 
