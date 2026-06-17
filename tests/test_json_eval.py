@@ -1808,7 +1808,7 @@ class TestLlmAlignmentRouting:
             },
         }
 
-    def test_llm_judge_leaf_routes_to_llm_alignment_metric(self):
+    def test_llm_judge_leaf_routes_to_aligned_metric(self):
         evaluator = JsonEvaluator()
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: _embed_by_identity(texts)):
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
@@ -1859,8 +1859,8 @@ class TestLlmAlignmentRouting:
 
 
 @pytest.mark.unit
-class TestEvalListUnorderedWithLlmAlignment:
-    """Tests for _eval_list_unordered_with_llm_alignment."""
+class TestEvalListUnorderedWithAlignment:
+    """Tests for _eval_list_unordered_with_alignment."""
 
     def _make_config(self, extra_fields: dict | None = None):
         mc: dict = {

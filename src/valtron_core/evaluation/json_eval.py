@@ -801,11 +801,11 @@ class JsonEvaluator:
 
         if _item_logic_has_llm_judge_leaf(m_cfg.item_logic):
             logger.info(
-                "Unordered list at '%s': using LLM-based alignment because at least one leaf "
-                "below uses an LLM-judge metric. This converts O(k^2) judge calls into O(k+1).",
+                "Unordered list at '%s': aligning items by embedding + Hungarian assignment "
+                "(no LLM aligner calls) because at least one leaf below uses an LLM-judge metric.",
                 path,
             )
-            return self._eval_list_unordered_with_llm_alignment(config, exp, act, path, m_cfg)
+            return self._eval_list_unordered_with_alignment(config, exp, act, path, m_cfg)
 
         return self._eval_list_unordered(config, exp, act, path, m_cfg)
 
@@ -1136,7 +1136,7 @@ class JsonEvaluator:
         stats["n_matched"] = sum(1 for v in e_assignment.values() if v is not None)
         return e_assignment, stats
 
-    def _eval_list_unordered_with_llm_alignment(
+    def _eval_list_unordered_with_alignment(
         self,
         config: FieldConfig,
         exp: list[Any],
