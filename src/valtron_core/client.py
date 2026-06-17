@@ -178,11 +178,13 @@ class LLMClient:
 
         _temperature_dropped = False
         attempt = 0
+        latency = 0.0
         while attempt <= max_retries:
             if attempt > 0:
                 wait = retry_delay * (2 ** (attempt - 1))
                 logger.warning("llm_retry", model=model_name, attempt=attempt, wait=wait)
                 await asyncio.sleep(wait)
+            call_start = time.perf_counter()
             try:
                 if api_mode == "responses":
                     raw = await aresponses(**completion_args)
@@ -191,6 +193,7 @@ class LLMClient:
                     )
                 else:
                     response = await acompletion(**completion_args)
+                latency = time.perf_counter() - call_start
                 break
             except Exception as e:
                 if (
@@ -214,12 +217,25 @@ class LLMClient:
                 logger.warning("llm_attempt_failed", model=model_name, attempt=attempt, error=str(e))
                 attempt += 1
 
+        cost: float | None = None
+        usage = None if stream else getattr(response, "usage", None)
         if not stream:
             try:
                 cost = completion_cost(completion_response=response)
                 self._total_cost += cost
             except Exception as e:
                 logger.warning("cost_tracking_failed", model=model_name, error=str(e))
+
+        # Per-call latency + token instrumentation (debug level: chatty at scale, but the
+        # single most useful signal when diagnosing where wall-clock goes — see issue #25).
+        logger.debug(
+            "llm_call_complete",
+            model=model_name,
+            latency_s=round(latency, 3),
+            prompt_tokens=getattr(usage, "prompt_tokens", None),
+            completion_tokens=getattr(usage, "completion_tokens", None),
+            cost=cost,
+        )
 
         return response
 

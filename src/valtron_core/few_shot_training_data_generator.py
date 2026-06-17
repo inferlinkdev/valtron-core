@@ -3,6 +3,7 @@
 import asyncio
 import json
 import random
+import time
 from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, List
@@ -554,6 +555,7 @@ class FewShotTrainingDataGenerator:
         )
 
         parsed_examples = []
+        gen_start = time.perf_counter()
 
         if is_extraction:
             # Two-step approach for extraction tasks (complex JSON labels)
@@ -666,12 +668,16 @@ class FewShotTrainingDataGenerator:
                 if example_data is not None:
                     parsed_examples.append(example_data)
 
+        gen_duration = time.perf_counter() - gen_start
+
         logger.info(
             "examples_generated",
             model=generator_model,
             requested=num_examples,
             generated=len(parsed_examples),
             total_cost=generation_cost,
+            generation_duration_s=round(gen_duration, 2),
+            strategy="two_step" if is_extraction else "single_step",
         )
 
         logger.info(
@@ -697,7 +703,9 @@ class FewShotTrainingDataGenerator:
             for validator_model in validator_models:
                 validation_tasks.append(_validate_one(i, example, validator_model))
 
+        val_start = time.perf_counter()
         validation_results = await asyncio.gather(*validation_tasks)
+        val_duration = time.perf_counter() - val_start
 
         # Aggregate votes and costs per example
         validation_costs = {model: 0.0 for model in validator_models}
@@ -753,6 +761,8 @@ class FewShotTrainingDataGenerator:
                 1 for e in validated_examples if e["consensus"] == "split"
             ),
             total_cost=total_cost,
+            validation_calls=len(validation_tasks),
+            validation_duration_s=round(val_duration, 2),
         )
 
         return {

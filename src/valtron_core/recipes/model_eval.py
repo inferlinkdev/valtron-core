@@ -889,6 +889,7 @@ class ModelEval(BaseRecipe):
     async def _generate_few_shot_data(self) -> None:
         """Generate additional training data using few-shot learning."""
         logger.info("generating_few_shot_data")
+        phase_start = time.perf_counter()
 
         examples = [
             LabeledExample(document=item["content"], label=item["label"]) for item in self.data
@@ -917,6 +918,7 @@ class ModelEval(BaseRecipe):
             correct=len(correct_examples),
             kept_for_few_shot=len(self.few_shot_examples),
             total_cost=result["costs"]["total_cost"],
+            duration_s=round(time.perf_counter() - phase_start, 2),
         )
 
     # -------------------------------------------------------------------------
