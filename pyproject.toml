@@ -34,6 +34,8 @@ rich = "^13.0.0"
 tqdm = "^4.0"
 # String similarity (used in core decompose and evaluation)
 rapidfuzz = "^3.14.3"
+# Optimal one-to-one assignment for unordered-list alignment (Hungarian algorithm)
+scipy = "^1.13"
 requests = "^2.31.0"
 # Visualization and reporting
 matplotlib = "^3.8.0"

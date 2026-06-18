@@ -120,8 +120,8 @@ def _llm_compare(
     model: str = "gpt-4o-mini",
     prompt_template: str | None = None,
     prompt_extra_vars: dict[str, Any] | None = None,
-) -> bool:
-    """Return True if an LLM judge considers predicted and expected to match.
+) -> tuple[bool, float]:
+    """Return (match, cost_usd) where match is True if an LLM judge considers the values equal.
 
     Args:
         predicted: The predicted value.
@@ -166,15 +166,20 @@ def _llm_compare(
             max_tokens=10,
         )
 
+    try:
+        cost_usd = float(completion_cost(completion_response=response) or 0.0)
+    except Exception:
+        cost_usd = 0.0
+
     if use_structured:
         try:
             result = json.loads(response.choices[0].message.content)
-            return bool(result.get("match", False))
+            return bool(result.get("match", False)), cost_usd
         except Exception:
             pass
 
     answer = response.choices[0].message.content.strip().upper()
-    return answer.startswith("YES")
+    return answer.startswith("YES"), cost_usd
 
 
 def _embedding_compare(
@@ -183,20 +188,26 @@ def _embedding_compare(
     *,
     model: str = "text-embedding-3-small",
     threshold: float | None = None,
-) -> bool | float:
-    """Return embedding cosine similarity (0.0-1.0) or bool if threshold is set.
+) -> tuple[bool | float, float]:
+    """Return (similarity, cost_usd) where similarity is cosine similarity or bool if threshold set.
 
     Args:
         predicted: The predicted value.
         expected: The expected ground truth value.
         model: LiteLLM embedding model name.
-        threshold: If set, return bool (score >= threshold) instead of raw float.
+        threshold: If set, similarity is returned as bool (score >= threshold).
     """
     response_predicted = embedding(model=model, input=[predicted])
     response_expected = embedding(model=model, input=[expected])
     vec_predicted = response_predicted.data[0]["embedding"]
     vec_expected = response_expected.data[0]["embedding"]
     similarity = _cosine_similarity(vec_predicted, vec_expected)
-    if threshold is None:
-        return similarity
-    return similarity >= threshold
+    try:
+        cost_usd = float(
+            (completion_cost(completion_response=response_predicted) or 0.0)
+            + (completion_cost(completion_response=response_expected) or 0.0)
+        )
+    except Exception:
+        cost_usd = 0.0
+    result: bool | float = similarity if threshold is None else similarity >= threshold
+    return result, cost_usd
