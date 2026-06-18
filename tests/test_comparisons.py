@@ -162,35 +162,35 @@ class TestLLMCompare:
         mock_response = self._mock_completion("YES")
         with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
             with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
-                result = _llm_compare("NYC", "New York City")
+                result, _ = _llm_compare("NYC", "New York City")
         assert result is True
 
     def test_no_text_fallback(self) -> None:
         mock_response = self._mock_completion("NO")
         with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
             with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
-                result = _llm_compare("apple", "orange")
+                result, _ = _llm_compare("apple", "orange")
         assert result is False
 
     def test_structured_output_true(self) -> None:
         mock_response = self._mock_completion('{"match": true}')
         with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=True):
             with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
-                result = _llm_compare("NYC", "New York City")
+                result, _ = _llm_compare("NYC", "New York City")
         assert result is True
 
     def test_structured_output_false(self) -> None:
         mock_response = self._mock_completion('{"match": false}')
         with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=True):
             with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
-                result = _llm_compare("apple", "orange")
+                result, _ = _llm_compare("apple", "orange")
         assert result is False
 
     def test_structured_json_parse_failure_falls_back_to_text(self) -> None:
         mock_response = self._mock_completion("yes.")
         with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=True):
             with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
-                result = _llm_compare("a", "a")
+                result, _ = _llm_compare("a", "a")
         assert result is True
 
     def test_text_fallback_case_insensitive(self) -> None:
@@ -198,14 +198,16 @@ class TestLLMCompare:
             mock_response = self._mock_completion(content)
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
-                    assert _llm_compare("a", "a") is True, f"failed for {content!r}"
+                    match, _ = _llm_compare("a", "a")
+                    assert match is True, f"failed for {content!r}"
 
     def test_text_fallback_rejects_no(self) -> None:
         for content in ("no", "No", "NO", "no they differ"):
             mock_response = self._mock_completion(content)
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
-                    assert _llm_compare("a", "b") is False, f"failed for {content!r}"
+                    match, _ = _llm_compare("a", "b")
+                    assert match is False, f"failed for {content!r}"
 
     def test_structured_path_passes_response_format(self) -> None:
         from valtron_core.evaluation.comparisons import _MatchResult
@@ -229,7 +231,7 @@ class TestLLMCompare:
         mock_response = self._mock_completion("YES")
         with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", side_effect=Exception("err")):
             with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
-                result = _llm_compare("a", "a")
+                result, _ = _llm_compare("a", "a")
         assert result is True
 
     def test_custom_prompt_template(self) -> None:
@@ -281,9 +283,9 @@ class TestEmbeddingCompare:
 
         with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp1, mock_resp2]
-            result = _embedding_compare("hello", "hello")
+            similarity, _ = _embedding_compare("hello", "hello")
 
-        assert result == pytest.approx(1.0)
+        assert similarity == pytest.approx(1.0)
 
     def test_threshold_pass(self) -> None:
         mock_resp1 = Mock()
@@ -293,7 +295,7 @@ class TestEmbeddingCompare:
 
         with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp1, mock_resp2]
-            result = _embedding_compare("hello", "hello", threshold=0.9)
+            result, _ = _embedding_compare("hello", "hello", threshold=0.9)
 
         assert result is True
 
@@ -305,7 +307,7 @@ class TestEmbeddingCompare:
 
         with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp1, mock_resp2]
-            result = _embedding_compare("hello", "world")
+            result, _ = _embedding_compare("hello", "world")
 
         assert isinstance(result, float)
         assert 0.0 < result < 1.0
