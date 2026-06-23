@@ -34,7 +34,7 @@ from valtron_core.evaluation.json_eval.registries import (
 )
 from valtron_core.evaluation.json_eval.validation import (
     _BUILTIN_METRIC_NAMES,
-    _item_logic_has_llm_judge_leaf,
+    _item_logic_uses_expensive_api,
     _scan_item_logic_for_expensive_metrics,
 )
 
@@ -219,10 +219,10 @@ class JsonEvaluator:
         if m_cfg.ordered:
             return self._eval_list_ordered(config, exp, act, path, m_cfg)
 
-        if _item_logic_has_llm_judge_leaf(m_cfg.item_logic):
+        if _item_logic_uses_expensive_api(m_cfg.item_logic):
             logger.info(
                 "Unordered list at '%s': aligning items by embedding + Hungarian assignment "
-                "(no LLM aligner calls) because at least one leaf below uses an LLM-judge metric.",
+                "because at least one leaf below calls a 3rd-party API (LLM or embedding).",
                 path,
             )
             return self._eval_list_unordered_with_alignment(config, exp, act, path, m_cfg)

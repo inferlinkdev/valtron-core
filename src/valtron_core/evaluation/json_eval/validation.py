@@ -1,7 +1,7 @@
 from __future__ import annotations
 from typing import Any
 
-from valtron_core.evaluation.comparison_functions import MetricCategory, element_compare_category
+from valtron_core.evaluation.comparison_functions import element_compare_category
 from valtron_core.evaluation.json_eval.schema import (
     FieldConfig,
     LeafMetricConfig,
@@ -17,49 +17,39 @@ _BUILTIN_METRIC_NAMES: frozenset[str] = frozenset({
 })
 
 
-def _check_builtin_metric_category(
-    metric_name: str, params: dict[str, Any]
-) -> tuple[MetricCategory, str]:
-    """Return ``(category, description)`` for a built-in metric.
+def _uses_expensive_thirdparty_api(metric_name: str, params: dict[str, Any]) -> bool:
+    """Return True if a built-in metric calls a 3rd-party API (LLM or embedding service).
 
-    ``category`` is one of ``"local"``, ``"llm"``, or ``"embedding"`` and is used by both
-    the pre-flight safety check and the auto-LLM-alignment routing for unordered lists.
-
-    DEVELOPER NOTE — when adding a new metric to ``JsonEvaluator.metric_registry``:
-      1. Add a branch here returning the correct category.
+    DEVELOPER NOTE -- when adding a new metric to ``JsonEvaluator.metric_registry``:
+      1. Add a branch here returning the correct bool.
     Omitting this raises ``NotImplementedError`` at pre-flight time.
 
     :param metric_name: The built-in metric name.
     :param params: The metric's params dict.
-    :return: A ``(category, description)`` tuple.
+    :return: True if the metric calls a 3rd-party API, False if it is fully local.
     """
     if metric_name in ("exact", "threshold", "exact_compare"):
-        return "local", ""
+        return False
 
     if metric_name == "text_similarity":
-        if params.get("metric") == "cosine":
-            model = params.get("embedding_model", "text-embedding-3-small")
-            return "embedding", (
-                f"text_similarity with cosine metric calls the embedding API (model='{model}')"
-            )
-        return "local", ""
+        return params.get("metric") == "cosine"
 
     if metric_name == "comparator":
         element_compare = params.get("element_compare", "exact")
-        return element_compare_category(element_compare, params)
+        category, _ = element_compare_category(element_compare, params)
+        return category != "local"
 
     if metric_name == "llm":
-        model = params.get("model", "gpt-4o-mini")
-        return "llm", f"LLM metric (model='{model}')"
+        return True
 
     if metric_name == "embedding":
-        model = params.get("model", "text-embedding-3-small")
-        return "embedding", f"embedding metric (model='{model}')"
+        return True
+
     raise NotImplementedError(
-        f"Built-in metric '{metric_name}' has no category declaration.\n"
+        f"Built-in metric '{metric_name}' has no API-cost declaration.\n"
         "When adding a new metric to JsonEvaluator.metric_registry you MUST:\n"
-        "  1. Add a branch in _check_builtin_metric_category() in validation.py\n"
-        "     returning the correct category ('local' | 'llm' | 'embedding').\n"
+        "  1. Add a branch in _uses_expensive_thirdparty_api() in validation.py\n"
+        "     returning True (calls external API) or False (fully local).\n"
         "This check exists to prevent accidental n²-cost list evaluations."
     )
 
@@ -101,15 +91,12 @@ def _scan_item_logic_for_expensive_metrics(
                 ),
             })
         elif mc.metric in _BUILTIN_METRIC_NAMES:
-            category, desc = _check_builtin_metric_category(mc.metric, mc.params)
-            if category != "local":
+            if _uses_expensive_thirdparty_api(mc.metric, mc.params):
                 issues.append({
                     "metric_path": path,
                     "relative_path": display_rel,
                     "type": "builtin",
                     "metric": mc.metric,
-                    "category": category,
-                    "description": desc,
                 })
         else:
             raise ValueError(
@@ -202,21 +189,30 @@ def collect_field_metric_llm_models(config_dict: dict[str, Any]) -> set[str]:
     return _collect_llm_models_recursive(config)
 
 
-def _item_logic_has_llm_judge_leaf(item_logic: FieldConfig | None) -> bool:
-    """Return True if any leaf below ``item_logic`` uses an LLM-judge metric.
+def _item_logic_uses_expensive_api(item_logic: FieldConfig | None) -> bool:
+    """Return True if any builtin leaf below ``item_logic`` calls a 3rd-party API.
 
-    Walks the nested FieldConfig subtree of a list's item_logic and reports whether
-    at least one reachable leaf has ``metric == "comparator"`` with
-    ``params.element_compare == "llm"``.  Nested lists are descended into so a deeply
-    buried LLM-judge leaf still triggers the auto-alignment path on its enclosing list.
+    Walks the nested FieldConfig subtree and returns True as soon as a leaf is found
+    where ``_uses_expensive_thirdparty_api`` is True (covers both LLM-judge and
+    embedding metrics). Nested lists are descended into.
 
     :param item_logic: The list's ``item_logic`` FieldConfig, or None.
-    :return: True if any leaf below uses an LLM judge.
+    :return: True if any builtin leaf calls a 3rd-party API.
     """
     if item_logic is None:
         return False
-
-    return bool(_collect_llm_models_recursive(item_logic))
+    if item_logic.type == "leaf" and item_logic.metric_config is not None:
+        mc = item_logic.metric_config
+        assert isinstance(mc, LeafMetricConfig)
+        if mc.metric in _BUILTIN_METRIC_NAMES:
+            return _uses_expensive_thirdparty_api(mc.metric, mc.params)
+        return True  # custom metric: conservatively assume it calls a 3rd-party API
+    if item_logic.type == "object" and item_logic.fields:
+        return any(_item_logic_uses_expensive_api(fc) for fc in item_logic.fields.values())
+    if item_logic.type == "list" and item_logic.metric_config is not None:
+        inner = getattr(item_logic.metric_config, "item_logic", None)
+        return _item_logic_uses_expensive_api(inner)
+    return False
 
 
 def find_expensive_unordered_list_fields(

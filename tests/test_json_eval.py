@@ -23,9 +23,9 @@ from valtron_core.evaluation.json_eval.schema import AlignmentConfig
 from valtron_core.evaluation.json_eval.registries import _score_to_result
 from valtron_core.evaluation.json_eval.alignment import _match_key_text
 from valtron_core.evaluation.json_eval.validation import (
-    _check_builtin_metric_category,
+    _uses_expensive_thirdparty_api,
     _scan_item_logic_for_expensive_metrics,
-    _item_logic_has_llm_judge_leaf,
+    _item_logic_uses_expensive_api,
 )
 
 
@@ -758,42 +758,30 @@ class TestFieldConfigRouting:
         assert config.metric_config.allow_expensive_comparisons_for == ["$item"]
 
 
-class TestCheckBuiltinMetricCategory:
-    """Tests for _check_builtin_metric_category."""
+class TestUsesExpensiveThirdpartyApi:
+    """Tests for _uses_expensive_thirdparty_api."""
 
     def test_exact_is_local(self):
-        category, desc = _check_builtin_metric_category("exact", {})
-        assert category == "local"
-        assert desc == ""
+        assert _uses_expensive_thirdparty_api("exact", {}) is False
 
     def test_threshold_is_local(self):
-        category, desc = _check_builtin_metric_category("threshold", {})
-        assert category == "local"
-        assert desc == ""
+        assert _uses_expensive_thirdparty_api("threshold", {}) is False
 
-    def test_comparator_with_llm_is_llm(self):
-        category, desc = _check_builtin_metric_category("comparator", {"element_compare": "llm"})
-        assert category == "llm"
-        assert "llm" in desc.lower() or "LLM" in desc
+    def test_comparator_with_llm_is_expensive(self):
+        assert _uses_expensive_thirdparty_api("comparator", {"element_compare": "llm"}) is True
 
-    def test_comparator_with_embedding_is_embedding(self):
-        category, desc = _check_builtin_metric_category("comparator", {"element_compare": "embedding"})
-        assert category == "embedding"
-        assert "embedding" in desc.lower()
+    def test_comparator_with_embedding_is_expensive(self):
+        assert _uses_expensive_thirdparty_api("comparator", {"element_compare": "embedding"}) is True
 
     def test_comparator_with_exact_is_local(self):
-        category, desc = _check_builtin_metric_category("comparator", {"element_compare": "exact"})
-        assert category == "local"
-        assert desc == ""
+        assert _uses_expensive_thirdparty_api("comparator", {"element_compare": "exact"}) is False
 
     def test_comparator_default_element_compare_is_local(self):
-        # default element_compare is "exact"
-        category, desc = _check_builtin_metric_category("comparator", {})
-        assert category == "local"
+        assert _uses_expensive_thirdparty_api("comparator", {}) is False
 
     def test_unknown_metric_raises_not_implemented(self):
-        with pytest.raises(NotImplementedError, match="no category declaration"):
-            _check_builtin_metric_category("unknown_metric", {})
+        with pytest.raises(NotImplementedError, match="no API-cost declaration"):
+            _uses_expensive_thirdparty_api("unknown_metric", {})
 
 
 class TestScanItemLogicForExpensiveMetrics:
@@ -1283,53 +1271,37 @@ class TestComparatorMetricDeprecationWarning:
                 comparator_metric("a", "a", {})
 
 
-class TestCheckBuiltinMetricCategoryNewMetrics:
-    """Tests for the new metric branches in _check_builtin_metric_category."""
+class TestUsesExpensiveThirdpartyApiNewMetrics:
+    """Tests for the new metric branches in _uses_expensive_thirdparty_api."""
 
     def test_exact_compare_is_local(self) -> None:
-        category, desc = _check_builtin_metric_category("exact_compare", {})
-        assert category == "local"
-        assert desc == ""
+        assert _uses_expensive_thirdparty_api("exact_compare", {}) is False
 
     def test_text_similarity_fuzz_is_local(self) -> None:
-        category, desc = _check_builtin_metric_category("text_similarity", {"metric": "fuzz_ratio"})
-        assert category == "local"
+        assert _uses_expensive_thirdparty_api("text_similarity", {"metric": "fuzz_ratio"}) is False
 
     def test_text_similarity_bleu_is_local(self) -> None:
-        category, desc = _check_builtin_metric_category("text_similarity", {"metric": "bleu"})
-        assert category == "local"
+        assert _uses_expensive_thirdparty_api("text_similarity", {"metric": "bleu"}) is False
 
-    def test_text_similarity_cosine_is_embedding(self) -> None:
-        category, desc = _check_builtin_metric_category("text_similarity", {"metric": "cosine"})
-        assert category == "embedding"
-        assert "embedding" in desc.lower()
+    def test_text_similarity_cosine_is_expensive(self) -> None:
+        assert _uses_expensive_thirdparty_api("text_similarity", {"metric": "cosine"}) is True
 
-    def test_text_similarity_cosine_includes_model(self) -> None:
-        category, desc = _check_builtin_metric_category(
+    def test_text_similarity_cosine_with_model_is_expensive(self) -> None:
+        assert _uses_expensive_thirdparty_api(
             "text_similarity", {"metric": "cosine", "embedding_model": "my-embed-model"}
-        )
-        assert category == "embedding"
-        assert "my-embed-model" in desc
+        ) is True
 
-    def test_llm_metric_is_llm(self) -> None:
-        category, desc = _check_builtin_metric_category("llm", {})
-        assert category == "llm"
-        assert "llm" in desc.lower() or "LLM" in desc
+    def test_llm_metric_is_expensive(self) -> None:
+        assert _uses_expensive_thirdparty_api("llm", {}) is True
 
-    def test_llm_metric_includes_model(self) -> None:
-        category, desc = _check_builtin_metric_category("llm", {"model": "claude-3"})
-        assert category == "llm"
-        assert "claude-3" in desc
+    def test_llm_metric_with_model_is_expensive(self) -> None:
+        assert _uses_expensive_thirdparty_api("llm", {"model": "claude-3"}) is True
 
-    def test_embedding_metric_is_embedding(self) -> None:
-        category, desc = _check_builtin_metric_category("embedding", {})
-        assert category == "embedding"
-        assert "embedding" in desc.lower()
+    def test_embedding_metric_is_expensive(self) -> None:
+        assert _uses_expensive_thirdparty_api("embedding", {}) is True
 
-    def test_embedding_metric_includes_model(self) -> None:
-        category, desc = _check_builtin_metric_category("embedding", {"model": "my-embed"})
-        assert category == "embedding"
-        assert "my-embed" in desc
+    def test_embedding_metric_with_model_is_expensive(self) -> None:
+        assert _uses_expensive_thirdparty_api("embedding", {"model": "my-embed"}) is True
 
 
 class TestNewMetricsInRegistry:
@@ -1630,38 +1602,45 @@ class TestNewMetricsExpensiveListGuard:
         assert result is not None
 
 
-class TestItemLogicHasLlmJudgeLeaf:
-    """Tests for _item_logic_has_llm_judge_leaf."""
+class TestItemLogicUsesExpensiveApi:
+    """Tests for _item_logic_uses_expensive_api."""
 
     def test_none_returns_false(self):
-        assert _item_logic_has_llm_judge_leaf(None) is False
+        assert _item_logic_uses_expensive_api(None) is False
 
     def test_leaf_exact_returns_false(self):
         config = FieldConfig(type="leaf", metric_config=LeafMetricConfig(metric="exact"))
-        assert _item_logic_has_llm_judge_leaf(config) is False
+        assert _item_logic_uses_expensive_api(config) is False
 
     def test_leaf_comparator_llm_returns_true(self):
         config = FieldConfig.model_validate({
             "type": "leaf",
             "metric_config": {"metric": "comparator", "params": {"element_compare": "llm"}},
         })
-        assert _item_logic_has_llm_judge_leaf(config) is True
+        assert _item_logic_uses_expensive_api(config) is True
 
     def test_leaf_llm_metric_returns_true(self):
         config = FieldConfig.model_validate({
             "type": "leaf",
             "metric_config": {"metric": "llm", "params": {}},
         })
-        assert _item_logic_has_llm_judge_leaf(config) is True
+        assert _item_logic_uses_expensive_api(config) is True
 
-    def test_leaf_comparator_embedding_returns_false(self):
+    def test_leaf_comparator_embedding_returns_true(self):
         config = FieldConfig.model_validate({
             "type": "leaf",
             "metric_config": {"metric": "comparator", "params": {"element_compare": "embedding"}},
         })
-        assert _item_logic_has_llm_judge_leaf(config) is False
+        assert _item_logic_uses_expensive_api(config) is True
 
-    def test_object_with_llm_field_returns_true(self):
+    def test_leaf_embedding_metric_returns_true(self):
+        config = FieldConfig.model_validate({
+            "type": "leaf",
+            "metric_config": {"metric": "embedding", "params": {}},
+        })
+        assert _item_logic_uses_expensive_api(config) is True
+
+    def test_object_with_expensive_field_returns_true(self):
         config = FieldConfig.model_validate({
             "type": "object",
             "fields": {
@@ -1672,9 +1651,9 @@ class TestItemLogicHasLlmJudgeLeaf:
                 },
             },
         })
-        assert _item_logic_has_llm_judge_leaf(config) is True
+        assert _item_logic_uses_expensive_api(config) is True
 
-    def test_object_without_llm_field_returns_false(self):
+    def test_object_without_expensive_field_returns_false(self):
         config = FieldConfig.model_validate({
             "type": "object",
             "fields": {
@@ -1682,9 +1661,9 @@ class TestItemLogicHasLlmJudgeLeaf:
                 "score": {"type": "leaf"},
             },
         })
-        assert _item_logic_has_llm_judge_leaf(config) is False
+        assert _item_logic_uses_expensive_api(config) is False
 
-    def test_nested_list_with_llm_leaf_returns_true(self):
+    def test_nested_list_with_expensive_leaf_returns_true(self):
         config = FieldConfig.model_validate({
             "type": "list",
             "metric_config": {
@@ -1694,71 +1673,21 @@ class TestItemLogicHasLlmJudgeLeaf:
                 },
             },
         })
-        assert _item_logic_has_llm_judge_leaf(config) is True
+        assert _item_logic_uses_expensive_api(config) is True
 
-    def test_nested_list_without_llm_leaf_returns_false(self):
+    def test_nested_list_without_expensive_leaf_returns_false(self):
         config = FieldConfig.model_validate({
             "type": "list",
             "metric_config": {"item_logic": {"type": "leaf"}},
         })
-        assert _item_logic_has_llm_judge_leaf(config) is False
+        assert _item_logic_uses_expensive_api(config) is False
 
-
-class TestScanIssuesIncludeCategory:
-    """Tests that _scan_item_logic_for_expensive_metrics includes a 'category' key in issues."""
-
-    def test_builtin_llm_issue_has_category_llm(self):
+    def test_custom_metric_returns_true(self):
         config = FieldConfig.model_validate({
             "type": "leaf",
-            "metric_config": {"metric": "comparator", "params": {"element_compare": "llm"}},
+            "metric_config": {"metric": "my_custom_scorer"},
         })
-        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
-        assert len(issues) == 1
-        assert issues[0]["category"] == "llm"
-
-    def test_builtin_embedding_issue_has_category_embedding(self):
-        config = FieldConfig.model_validate({
-            "type": "leaf",
-            "metric_config": {"metric": "comparator", "params": {"element_compare": "embedding"}},
-        })
-        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
-        assert len(issues) == 1
-        assert issues[0]["category"] == "embedding"
-
-    def test_new_llm_metric_issue_has_category_llm(self):
-        config = FieldConfig.model_validate({
-            "type": "leaf",
-            "metric_config": {"metric": "llm", "params": {}},
-        })
-        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
-        assert len(issues) == 1
-        assert issues[0]["category"] == "llm"
-
-    def test_new_embedding_metric_issue_has_category_embedding(self):
-        config = FieldConfig.model_validate({
-            "type": "leaf",
-            "metric_config": {"metric": "embedding", "params": {}},
-        })
-        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
-        assert len(issues) == 1
-        assert issues[0]["category"] == "embedding"
-
-    def test_custom_metric_issue_has_category_custom(self):
-        config = FieldConfig.model_validate({
-            "type": "leaf",
-            "metric_config": {"metric": "my_custom"},
-        })
-        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset({"my_custom"}))
-        assert len(issues) == 1
-        assert issues[0]["category"] == "custom"
-
-    def test_cheap_metric_produces_no_issues(self):
-        config = FieldConfig.model_validate({
-            "type": "leaf",
-            "metric_config": {"metric": "exact"},
-        })
-        issues = _scan_item_logic_for_expensive_metrics(config, "root", frozenset())
-        assert issues == []
+        assert _item_logic_uses_expensive_api(config) is True
 
 
 def _embed_by_identity(texts: list[str]) -> list[list[float]]:
