@@ -81,6 +81,9 @@ models/
 CLAUDE.md
 .claude/
 
+# Scratch / local investigation
+tmp/
+
 coverage.xml
 test-reports/
 results/
