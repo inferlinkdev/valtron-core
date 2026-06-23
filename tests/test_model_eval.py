@@ -1870,7 +1870,7 @@ class TestReevaluate:
             mock_result = Mock()
             mock_result.score = 1.0
             mock_result.is_correct = True
-            mock_eval.return_value = mock_result
+            mock_eval.return_value = (mock_result, 0.0)
 
             me.reevaluate(field_metrics_config=_SIMPLE_FIELD_CONFIG)
 
@@ -1888,7 +1888,7 @@ class TestReevaluate:
             mock_result = Mock()
             mock_result.score = 1.0
             mock_result.is_correct = True
-            mock_eval.return_value = mock_result
+            mock_eval.return_value = (mock_result, 0.0)
 
             me.reevaluate(field_metrics_config=fmc)
 
@@ -1905,7 +1905,7 @@ class TestReevaluate:
             mock_result = Mock()
             mock_result.score = 0.75
             mock_result.is_correct = True
-            mock_eval.return_value = mock_result
+            mock_eval.return_value = (mock_result, 0.0)
 
             me.reevaluate(field_metrics_config=_SIMPLE_FIELD_CONFIG)
 
@@ -2040,7 +2040,7 @@ class TestReevaluate:
         mock_result.score = 0.9
         mock_result.is_correct = True
 
-        with patch("valtron_core.evaluator.JsonEvaluator.evaluate", return_value=mock_result):
+        with patch("valtron_core.evaluator.JsonEvaluator.evaluate", return_value=(mock_result, 0.0)):
             result = ModelEval._rescore_prediction(prediction, field_metrics_config=fmc)
 
         assert result.field_metrics is mock_result

@@ -223,7 +223,7 @@ def reevaluate_with_field_metrics(results: list[EvaluationResult], field_metrics
     for result in results:
         for pred in result.predictions:
             try:
-                eval_result = evaluator.evaluate(
+                eval_result, _ = evaluator.evaluate(
                     field_metrics_config.config,
                     pred.expected_value,
                     pred.predicted_value,

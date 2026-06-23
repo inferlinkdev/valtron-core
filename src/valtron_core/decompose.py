@@ -873,12 +873,11 @@ class DecomposedEvaluator:
                     custom_metrics=field_metrics_config.custom_metrics,
                     custom_aggs=field_metrics_config.custom_aggs,
                 )
-                field_metrics = evaluator.evaluate(
+                field_metrics, total_evaluation_cost = evaluator.evaluate(
                     field_metrics_config.config,
                     label.value,
                     merged_json,
                 )
-                total_evaluation_cost = evaluator.evaluation_cost
                 example_score = field_metrics.score
                 is_correct = field_metrics.is_correct
             except Exception as e:
