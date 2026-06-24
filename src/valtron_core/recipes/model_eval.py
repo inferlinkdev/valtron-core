@@ -1364,6 +1364,7 @@ class ModelEval(BaseRecipe):
                     model_config=model_config,
                     manipulations=manipulations,
                     field_metrics_config=field_metrics_config,
+                    on_document_complete=_on_doc_with_progress,
                 )
                 updated_prompt = self._format_sub_prompts_for_display(sub_prompts)
             else:
@@ -1450,11 +1451,14 @@ class ModelEval(BaseRecipe):
         model_config: Any,
         manipulations: list,
         field_metrics_config: FieldMetricsConfig | None,
+        on_document_complete: "Callable | None" = None,
     ) -> tuple[EvaluationResult, dict[str, str]]:
         """Run evaluation with decomposed sub-prompts for each entity field.
 
         Returns:
             Tuple of (EvaluationResult, sub_prompts dict).
+
+        :param on_document_complete: Optional per-document callback for live progress.
         """
         split_info = find_split_point(self.response_format)
 
@@ -1475,6 +1479,7 @@ class ModelEval(BaseRecipe):
                 model=self._build_model_arg(model_config),
                 response_format=effective_rf,
                 field_metrics_config=field_metrics_config,
+                _on_document_complete=on_document_complete,
             )
             return result, {}
 
@@ -1516,6 +1521,7 @@ class ModelEval(BaseRecipe):
             field_metrics_config=field_metrics_config,
             hallucination_filter=Manipulation.hallucination_filter in manipulations,
             multi_pass=multi_pass,
+            on_document_complete=on_document_complete,
         )
         return result, sub_prompts
 

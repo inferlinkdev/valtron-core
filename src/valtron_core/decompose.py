@@ -743,11 +743,15 @@ class DecomposedEvaluator:
         field_metrics_config: FieldMetricsConfig | None = None,
         hallucination_filter: bool = False,
         multi_pass: int = 1,
+        on_document_complete: Callable[[PredictionResult], None] | None = None,
     ) -> EvaluationResult:
         """Evaluate all documents using decomposed sub-prompts.
 
         For each document, N sub-prompts are run in parallel (one per entity
         field), then merged and graded against the full label.
+
+        :param on_document_complete: Optional callback invoked with each document's
+            prediction as it finishes, for live progress reporting.
         """
         run_id = str(uuid.uuid4())
         result = EvaluationResult(
@@ -766,7 +770,7 @@ class DecomposedEvaluator:
             if label is None:
                 return None
             async with semaphore:
-                return await self._evaluate_single_decomposed(
+                pred = await self._evaluate_single_decomposed(
                     document=doc,
                     label=label,
                     sub_prompts=sub_prompts,
@@ -780,6 +784,9 @@ class DecomposedEvaluator:
                     hallucination_filter=hallucination_filter,
                     multi_pass=multi_pass,
                 )
+            if on_document_complete is not None and pred is not None:
+                on_document_complete(pred)
+            return pred
 
         predictions = await asyncio.gather(
             *[eval_doc(doc) for doc in documents]

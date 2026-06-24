@@ -376,6 +376,52 @@ class TestDecomposedEvaluator:
         assert "pathogens" in merged["entities"]
 
     @pytest.mark.asyncio
+    async def test_evaluate_fires_on_document_complete_per_doc(self, mock_env_vars):
+        """The on_document_complete callback fires once per document (live progress)."""
+        split_info = find_split_point(ExtractionSchema)
+        sub_schemas = create_sub_schemas(split_info, ExtractionSchema)
+        sub_prompts = {
+            "people": "Extract ONLY people from: {content}",
+            "pathogens": "Extract ONLY pathogens from: {content}",
+        }
+        documents = [
+            Document(id="doc-1", content="Alice found E.coli."),
+            Document(id="doc-2", content="Bob found Listeria."),
+        ]
+        labels = [
+            Label(document_id="doc-1", value=json.dumps({"entities": {"people": [], "pathogens": []}})),
+            Label(document_id="doc-2", value=json.dumps({"entities": {"people": [], "pathogens": []}})),
+        ]
+
+        async def mock_complete(model, messages, **kwargs):
+            response = Mock()
+            response.choices = [Mock()]
+            response.choices[0].message = Mock()
+            response.choices[0].message.content = json.dumps({"entities": {"people": [], "pathogens": []}})
+            response._hidden_params = {"response_cost": 0.0001}
+            return response
+
+        seen_doc_ids: list[str] = []
+
+        def on_doc(pred):
+            seen_doc_ids.append(pred.document_id)
+
+        evaluator = DecomposedEvaluator()
+        with patch.object(evaluator.evaluator.client, "complete", side_effect=mock_complete):
+            result = await evaluator.evaluate(
+                documents=documents,
+                labels=labels,
+                sub_prompts=sub_prompts,
+                sub_schemas=sub_schemas,
+                split_info=split_info,
+                model="test-model",
+                on_document_complete=on_doc,
+            )
+
+        assert len(result.predictions) == 2
+        assert sorted(seen_doc_ids) == ["doc-1", "doc-2"]  # fired once per document
+
+    @pytest.mark.asyncio
     async def test_evaluate_with_field_metrics(self, mock_env_vars):
         """Test that field_metrics_config is applied to merged results."""
         split_info = find_split_point(ExtractionSchema)
