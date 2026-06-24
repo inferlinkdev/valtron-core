@@ -46,12 +46,16 @@ def _score_prediction(
     field_metrics_config: FieldMetricsConfig | None,
     extra_template_vars: dict[str, Any] | None = None,
     document_id: str = "",
+    json_evaluator: JsonEvaluator | None = None,
 ) -> tuple[Any, float, bool, float]:
     """Compute (field_metrics, example_score, is_correct, evaluation_cost).
 
     Uses JsonEvaluator when field_metrics_config is provided; falls back to
     case-insensitive string comparison otherwise. evaluation_cost is non-zero
     only when JsonEvaluator makes LLM-as-judge calls.
+
+    Pass a pre-built ``json_evaluator`` to share its cache across documents in a run.
+    If omitted, a fresh JsonEvaluator is constructed from ``field_metrics_config``.
     """
     is_correct = predicted_value.strip().lower() == expected_value.strip().lower()
     example_score = 1.0 if is_correct else 0.0
@@ -60,17 +64,16 @@ def _score_prediction(
 
     if field_metrics_config:
         try:
-            evaluator = JsonEvaluator(
+            evaluator = json_evaluator or JsonEvaluator(
                 custom_metrics=field_metrics_config.custom_metrics,
                 custom_aggs=field_metrics_config.custom_aggs,
             )
-            result = evaluator.evaluate(
+            result, evaluation_cost = evaluator.evaluate(
                 field_metrics_config.config,
                 expected_value,
                 predicted_value,
                 extra_template_vars=extra_template_vars or {},
             )
-            evaluation_cost = evaluator.evaluation_cost
             field_metrics = result
             example_score = result.score
             is_correct = result.is_correct
@@ -331,6 +334,7 @@ class PromptEvaluator:
         field_metrics_config: FieldMetricsConfig | None = None,
         post_extraction_filter: Callable[[Any, Document], Any] | None = None,
         multi_pass: int = 1,
+        json_evaluator: JsonEvaluator | None = None,
     ) -> PredictionResult:
         """
         Evaluate a single document.
@@ -442,6 +446,7 @@ class PromptEvaluator:
                 field_metrics_config=field_metrics_config,
                 extra_template_vars=extra_template_vars,
                 document_id=document.id,
+                json_evaluator=json_evaluator,
             )
 
             return PredictionResult(
@@ -541,6 +546,15 @@ class PromptEvaluator:
             _fallback_warning_logged = False
             _has_user_cost_rate = isinstance(eval_input.model, dict) and eval_input.model.get("cost_rate") is not None
 
+            json_evaluator = (
+                JsonEvaluator(
+                    custom_metrics=field_metrics_config.custom_metrics,
+                    custom_aggs=field_metrics_config.custom_aggs,
+                )
+                if field_metrics_config is not None
+                else None
+            )
+
             async def evaluate_with_semaphore(doc: Document) -> PredictionResult | None:
                 nonlocal _fallback_warning_logged
                 if doc.id not in label_map:
@@ -558,6 +572,7 @@ class PromptEvaluator:
                         field_metrics_config=field_metrics_config,
                         post_extraction_filter=post_extraction_filter,
                         multi_pass=multi_pass,
+                        json_evaluator=json_evaluator,
                     )
                     if pred is not None:
                         if (

@@ -232,7 +232,7 @@ class TestJsonEvaluatorEvaluate:
         expected = {"name": "John", "age": 30}
         actual = {"name": "John", "age": 30}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score == 1.0
         assert result.is_correct is True
@@ -248,7 +248,7 @@ class TestJsonEvaluatorEvaluate:
         expected = {"name": "John", "age": 30}
         actual = {"name": "Jane", "age": 30}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score < 1.0
         # One field matches, one doesn't
@@ -273,7 +273,7 @@ class TestJsonEvaluatorEvaluate:
             "person": {"name": "John", "address": {"city": "NYC", "zip": "10001"}}
         }
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score == 1.0
 
@@ -288,7 +288,7 @@ class TestJsonEvaluatorEvaluate:
         expected = {"name": "John", "age": 30}
         actual = {"name": "John"}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score < 1.0
         # age is missing, should be penalized
@@ -303,7 +303,7 @@ class TestJsonEvaluatorEvaluate:
         expected = {"items": ["a", "b", "c"]}
         actual = {"items": ["a", "b", "c"]}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score == 1.0
 
@@ -317,7 +317,7 @@ class TestJsonEvaluatorEvaluate:
         expected = {"items": ["a", "b", "c"]}
         actual = {"items": ["a", "c", "b"]}  # Wrong order
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         # Order matters, so score should be less than 1
         assert result.score < 1.0
@@ -332,7 +332,7 @@ class TestJsonEvaluatorEvaluate:
         expected = {"items": ["a", "b", "c"]}
         actual = {"items": ["c", "a", "b"]}  # Different order but same items
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         # Items are the same, order doesn't matter
         assert result.score == 1.0
@@ -347,7 +347,7 @@ class TestJsonEvaluatorEvaluate:
         expected = {"items": ["a", "b", "c"]}
         actual = {"items": ["a", "b"]}  # Missing one item
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score < 1.0
         # Should have FN for missing item
@@ -362,7 +362,7 @@ class TestJsonEvaluatorEvaluate:
         expected = {"items": []}
         actual = {"items": []}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         # Empty lists result in 0 score (no items to match) - this is expected behavior
         assert result is not None
@@ -375,7 +375,7 @@ class TestJsonEvaluatorEvaluate:
         expected = {}
         actual = {}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         # Empty object with no fields results in 0 weighted avg - this is expected
         assert result is not None
@@ -388,7 +388,7 @@ class TestJsonEvaluatorEvaluate:
         expected = '{"name": "John", "age": 30}'
         actual = '{"name": "John", "age": 30}'
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score == 1.0
 
@@ -404,7 +404,7 @@ class TestJsonEvaluatorEdgeCases:
         expected = {"field": None}
         actual = {"field": None}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         # Both None with optional field - check child result
         assert result.children["field"].score == 1.0
@@ -417,7 +417,7 @@ class TestJsonEvaluatorEdgeCases:
         expected = {"field": None}
         actual = {"field": "value"}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         # Expected None but got value - may be FP depending on implementation
         # Just verify it returns a result
@@ -431,7 +431,7 @@ class TestJsonEvaluatorEdgeCases:
         expected = {"field": "value"}
         actual = {"field": None}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         # Expected value but got None - FN
         assert result.score < 1.0
@@ -446,7 +446,7 @@ class TestJsonEvaluatorEdgeCases:
         expected = {"items": ["a", "b", "c", "d"]}
         actual = {"items": ["a", "b", "x", "y"]}  # 2 correct, 2 wrong
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         # Should have score between 0 and 1
         assert 0 <= result.score <= 1
@@ -461,7 +461,7 @@ class TestJsonEvaluatorEdgeCases:
         expected = {"items": ["a", "b"]}
         actual = {"items": ["a", "c"]}  # 1 TP, 1 FP, 1 FN
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         # Check that result exists
         assert result is not None
@@ -496,7 +496,7 @@ class TestJsonEvaluatorEdgeCases:
             }
         }
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score == 1.0
 
@@ -510,7 +510,7 @@ class TestJsonEvaluatorEdgeCases:
         expected = {"items": [1, "two", {"three": 3}]}
         actual = {"items": [1, "two", {"three": 3}]}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score == 1.0
 
@@ -522,7 +522,7 @@ class TestJsonEvaluatorEdgeCases:
         expected = {"value": 3.14159}
         actual = {"value": 3.14159}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score == 1.0
 
@@ -537,7 +537,7 @@ class TestJsonEvaluatorEdgeCases:
         expected = {"active": True, "deleted": False}
         actual = {"active": True, "deleted": False}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score == 1.0
 
@@ -549,7 +549,7 @@ class TestJsonEvaluatorEdgeCases:
         expected = {"active": True}
         actual = {"active": False}
 
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
 
         assert result.score == 0.0
 
@@ -597,7 +597,7 @@ class TestListSoftF1Scoring:
         # hard tp=2, hard precision=2/2=1.0, hard recall=2/3, hard_f1=0.8
         # soft_tp=1.0+0.92=1.92, soft_precision=1.92/2=0.96, soft_recall=1.92/3=0.64, soft_f1~0.77
         # soft_f1 < hard_f1 here because recall drops. The key property: score < 1.0 and != 0.0.
-        result = evaluator.evaluate(
+        result, _ = evaluator.evaluate(
             self._config(ordered=False),
             {"items": ["apple", "banana", "cherry"]},
             {"items": ["apple", "bananaa"]},
@@ -615,7 +615,7 @@ class TestListSoftF1Scoring:
         # "apple"/"apple" -> score=1.0; "banana"/"bananaa" -> score~0.92.
         # matched=2 (both is_correct=True, no threshold), len(exp)=3 -> is_correct=False on list.
         # soft_tp=1.0+~0.92=~1.92 vs hard tp=2.
-        result = evaluator.evaluate(
+        result, _ = evaluator.evaluate(
             self._config(ordered=True),
             {"items": ["apple", "banana", "cherry"]},
             {"items": ["apple", "bananaa"]},
@@ -629,7 +629,7 @@ class TestListSoftF1Scoring:
     def test_exact_match_returns_one(self) -> None:
         """When all items match exactly, score is still 1.0."""
         evaluator = JsonEvaluator()
-        result = evaluator.evaluate(
+        result, _ = evaluator.evaluate(
             self._config(ordered=False),
             {"items": ["apple", "banana"]},
             {"items": ["banana", "apple"]},
@@ -640,7 +640,7 @@ class TestListSoftF1Scoring:
     def test_ordered_exact_match_returns_one(self) -> None:
         """Ordered exact match: score is 1.0."""
         evaluator = JsonEvaluator()
-        result = evaluator.evaluate(
+        result, _ = evaluator.evaluate(
             self._config(ordered=True),
             {"items": ["apple", "banana"]},
             {"items": ["apple", "banana"]},
@@ -1013,7 +1013,7 @@ class TestRequiredFieldsToMatch:
         config = self._make_config()
         expected = {"items": [{"id": "A", "name": "Alice"}]}
         actual = {"items": [{"id": "A", "name": "Alice"}]}
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
         assert result.children["items"].score == 1.0
 
     def test_required_field_mismatch_pair_is_skipped(self):
@@ -1023,7 +1023,7 @@ class TestRequiredFieldsToMatch:
         # expected id=A, actual id=B — required field never matches → no alignment
         expected = {"items": [{"id": "A", "name": "Alice"}]}
         actual = {"items": [{"id": "B", "name": "Alice"}]}
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
         items_result = result.children["items"]
         assert items_result.fn == 1
         assert items_result.fp == 1
@@ -1037,7 +1037,7 @@ class TestRequiredFieldsToMatch:
         # and B↔Bob, or mix them.  With it, A always pairs with A and B with B.
         expected = {"items": [{"id": "A", "name": "Alice"}, {"id": "B", "name": "Bob"}]}
         actual = {"items": [{"id": "B", "name": "Bob"}, {"id": "A", "name": "Different"}]}
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
         items_result = result.children["items"]
         # B-Bob pair is a full match; A-Different is partial — both should be aligned
         assert items_result.tp >= 1
@@ -1068,7 +1068,7 @@ class TestRequiredFieldsToMatch:
         # type matches ("X") but id differs ("1" vs "2") → pair skipped
         expected = {"items": [{"type": "X", "id": "1", "value": "hello"}]}
         actual = {"items": [{"type": "X", "id": "2", "value": "hello"}]}
-        result = evaluator.evaluate(config, expected, actual)
+        result, _ = evaluator.evaluate(config, expected, actual)
         items_result = result.children["items"]
         assert items_result.fn == 1
         assert items_result.fp == 1
@@ -1124,7 +1124,7 @@ class TestExpensiveListGuardInEval:
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
             with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
                 MockComp.return_value.compare.return_value = True
-                result = evaluator.evaluate(config, {"tags": ["a"]}, {"tags": ["a"]})
+                result, _ = evaluator.evaluate(config, {"tags": ["a"]}, {"tags": ["a"]})
         assert result is not None
         assert result.children["tags"].metric == "list_embed_hungarian_f1"
 
@@ -1207,7 +1207,7 @@ class TestLLMPromptTemplate:
 
         with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = True
-            result = evaluator.evaluate(
+            result, _ = evaluator.evaluate(
                 config,
                 {"city": "Paris"},
                 {"city": "Paris"},
@@ -1224,7 +1224,7 @@ class TestLLMPromptTemplate:
             "fields": {"name": {"metric_config": {"metric": "exact"}}},
         }
         evaluator = JsonEvaluator()
-        result = evaluator.evaluate(config, {"name": "John"}, {"name": "John"})
+        result, _ = evaluator.evaluate(config, {"name": "John"}, {"name": "John"})
         assert result.children["name"].is_correct is True
 
 
@@ -1315,7 +1315,7 @@ class TestNewMetricsInRegistry:
                 "name": {"metric_config": {"metric": "exact_compare", "params": {}}},
             },
         }
-        result = evaluator.evaluate(config, {"name": "Alice"}, {"name": "Alice"})
+        result, _ = evaluator.evaluate(config, {"name": "Alice"}, {"name": "Alice"})
         assert result.children["name"].is_correct is True
 
     def test_exact_compare_metric_case_insensitive(self) -> None:
@@ -1326,7 +1326,7 @@ class TestNewMetricsInRegistry:
                 "name": {"metric_config": {"metric": "exact_compare", "params": {"case_sensitive": False}}},
             },
         }
-        result = evaluator.evaluate(config, {"name": "ALICE"}, {"name": "alice"})
+        result, _ = evaluator.evaluate(config, {"name": "ALICE"}, {"name": "alice"})
         assert result.children["name"].is_correct is True
 
     def test_exact_compare_metric_mismatch(self) -> None:
@@ -1337,7 +1337,7 @@ class TestNewMetricsInRegistry:
                 "name": {"metric_config": {"metric": "exact_compare", "params": {}}},
             },
         }
-        result = evaluator.evaluate(config, {"name": "Alice"}, {"name": "Bob"})
+        result, _ = evaluator.evaluate(config, {"name": "Alice"}, {"name": "Bob"})
         assert result.children["name"].is_correct is False
 
     def test_text_similarity_metric_match(self) -> None:
@@ -1353,7 +1353,7 @@ class TestNewMetricsInRegistry:
                 },
             },
         }
-        result = evaluator.evaluate(config, {"text": "hello"}, {"text": "hello"})
+        result, _ = evaluator.evaluate(config, {"text": "hello"}, {"text": "hello"})
         assert result.children["text"].is_correct is True
 
     def test_text_similarity_metric_no_threshold_returns_score(self) -> None:
@@ -1369,7 +1369,7 @@ class TestNewMetricsInRegistry:
                 },
             },
         }
-        result = evaluator.evaluate(config, {"text": "hello"}, {"text": "hallo"})
+        result, _ = evaluator.evaluate(config, {"text": "hello"}, {"text": "hallo"})
         assert 0.0 < result.children["text"].score < 1.0
 
     def test_llm_metric_match(self) -> None:
@@ -1391,7 +1391,7 @@ class TestNewMetricsInRegistry:
 
         with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
             with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
-                result = evaluator.evaluate(config, {"city": "NYC"}, {"city": "New York"})
+                result, _ = evaluator.evaluate(config, {"city": "NYC"}, {"city": "New York"})
 
         assert result.children["city"].is_correct is True
 
@@ -1446,7 +1446,7 @@ class TestNewMetricsInRegistry:
 
         with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp1, mock_resp2]
-            result = evaluator.evaluate(config, {"text": "hello"}, {"text": "hello"})
+            result, _ = evaluator.evaluate(config, {"text": "hello"}, {"text": "hello"})
 
         assert result.children["text"].is_correct is True
 
@@ -1470,7 +1470,7 @@ class TestNewMetricsInRegistry:
 
         with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp1, mock_resp2]
-            result = evaluator.evaluate(config, {"text": "hello"}, {"text": "world"})
+            result, _ = evaluator.evaluate(config, {"text": "hello"}, {"text": "world"})
 
         assert 0.0 < result.children["text"].score < 1.0
 
@@ -1575,7 +1575,7 @@ class TestNewMetricsExpensiveListGuard:
                 },
             },
         }
-        result = evaluator.evaluate(config, ["hello"], ["hello"])
+        result, _ = evaluator.evaluate(config, ["hello"], ["hello"])
         assert result is not None
 
     def test_llm_metric_unordered_list_allowed(self) -> None:
@@ -1597,7 +1597,7 @@ class TestNewMetricsExpensiveListGuard:
 
         with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
             with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
-                result = evaluator.evaluate(config, ["a"], ["a"])
+                result, _ = evaluator.evaluate(config, ["a"], ["a"])
 
         assert result is not None
 
@@ -1745,7 +1745,7 @@ class TestLlmAlignmentRouting:
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
-                    result = evaluator.evaluate(
+                    result, _ = evaluator.evaluate(
                         self._make_llm_list_config(), {"items": ["a"]}, {"items": ["a"]}
                     )
         assert result.children["items"].metric == "list_embed_hungarian_f1"
@@ -1764,7 +1764,7 @@ class TestLlmAlignmentRouting:
                 },
             },
         }
-        result = evaluator.evaluate(config, {"items": ["a"]}, {"items": ["a"]})
+        result, _ = evaluator.evaluate(config, {"items": ["a"]}, {"items": ["a"]})
         assert result.children["items"].metric == "list_greedy_f1"
 
     def test_ordered_list_with_llm_leaf_uses_ordered_path(self):
@@ -1786,7 +1786,7 @@ class TestLlmAlignmentRouting:
         }
         with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
             with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
-                result = evaluator.evaluate(config, {"items": ["a"]}, {"items": ["a"]})
+                result, _ = evaluator.evaluate(config, {"items": ["a"]}, {"items": ["a"]})
         assert result.children["items"].metric == "list_ordered_f1"
 
 
@@ -1812,14 +1812,14 @@ class TestEvalListUnorderedWithAlignment:
 
     def test_both_empty_returns_perfect_score(self):
         evaluator = JsonEvaluator()
-        result = evaluator.evaluate(self._make_config(), {"items": []}, {"items": []})
+        result, _ = evaluator.evaluate(self._make_config(), {"items": []}, {"items": []})
         items = result.children["items"]
         assert items.score == 1.0
         assert items.is_correct is True
 
     def test_empty_expected_nonempty_actual_returns_zero_score(self):
         evaluator = JsonEvaluator()
-        result = evaluator.evaluate(self._make_config(), {"items": []}, {"items": ["a", "b"]})
+        result, _ = evaluator.evaluate(self._make_config(), {"items": []}, {"items": ["a", "b"]})
         items = result.children["items"]
         assert items.score == 0.0
         assert items.is_correct is False
@@ -1832,7 +1832,7 @@ class TestEvalListUnorderedWithAlignment:
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
-                    result = evaluator.evaluate(
+                    result, _ = evaluator.evaluate(
                         self._make_config(), {"items": ["apple"]}, {"items": ["apple"]}
                     )
         items = result.children["items"]
@@ -1845,7 +1845,7 @@ class TestEvalListUnorderedWithAlignment:
         evaluator = JsonEvaluator()
         # "a" and "b" embed to orthogonal vectors (cosine 0 < align_lo) → no match.
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
-            result = evaluator.evaluate(self._make_config(), {"items": ["a"]}, {"items": ["b"]})
+            result, _ = evaluator.evaluate(self._make_config(), {"items": ["a"]}, {"items": ["b"]})
         items = result.children["items"]
         assert items.tp == 0
         assert items.fn == 1
@@ -1855,7 +1855,7 @@ class TestEvalListUnorderedWithAlignment:
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
-                    result = evaluator.evaluate(
+                    result, _ = evaluator.evaluate(
                         self._make_config(), {"items": ["x", "y"]}, {"items": ["x", "y"]}
                     )
         details = result.children["items"].details
@@ -1871,7 +1871,7 @@ class TestEvalListUnorderedWithAlignment:
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
             with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
                 with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
-                    result = evaluator.evaluate(
+                    result, _ = evaluator.evaluate(
                         self._make_config(),
                         {"items": ["a", "b"]},
                         {"items": ["a"]},
@@ -1887,7 +1887,7 @@ class TestEvalListUnorderedWithAlignment:
     def test_embedding_failure_leaves_items_unmatched(self):
         evaluator = JsonEvaluator()
         with patch.object(evaluator, "_embed_texts", side_effect=RuntimeError("embedding down")):
-            result = evaluator.evaluate(self._make_config(), {"items": ["a"]}, {"items": ["b"]})
+            result, _ = evaluator.evaluate(self._make_config(), {"items": ["a"]}, {"items": ["b"]})
         assert result.children["items"].tp == 0
 
     def test_required_fields_pre_filter_limits_candidates(self):

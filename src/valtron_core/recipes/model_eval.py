@@ -582,6 +582,7 @@ class ModelEval(BaseRecipe):
         prediction: PredictionResult,
         field_metrics_config: "FieldMetricsConfig | None",
         extra_template_vars: "dict[str, Any] | None" = None,
+        json_evaluator: "JsonEvaluator | None" = None,
     ) -> PredictionResult:
         """Re-score a stored prediction without making any LLM calls.
 
@@ -595,6 +596,7 @@ class ModelEval(BaseRecipe):
             field_metrics_config=field_metrics_config,
             extra_template_vars=extra_template_vars,
             document_id=prediction.document_id,
+            json_evaluator=json_evaluator,
         )
         return prediction.model_copy(
             update={
@@ -722,6 +724,15 @@ class ModelEval(BaseRecipe):
             for i, item in enumerate(self.data)
         }
 
+        json_evaluator = (
+            JsonEvaluator(
+                custom_metrics=effective_fmc.custom_metrics,
+                custom_aggs=effective_fmc.custom_aggs,
+            )
+            if effective_fmc is not None
+            else None
+        )
+
         # Re-score all predictions and recompute aggregated metrics
         for eval_result in self.results:
             new_predictions = []
@@ -733,7 +744,7 @@ class ModelEval(BaseRecipe):
                     else {}
                 )
                 new_predictions.append(
-                    self._rescore_prediction(p, effective_fmc, extra_vars)
+                    self._rescore_prediction(p, effective_fmc, extra_vars, json_evaluator)
                 )
             eval_result.predictions = new_predictions
             eval_result.compute_metrics()
@@ -1203,7 +1214,7 @@ class ModelEval(BaseRecipe):
                         field_name = next(iter(fields))
                         eval_expected = json.dumps({field_name: expected_label})
                         eval_predicted = json.dumps({field_name: prediction})
-                eval_result = json_evaluator.evaluate(cfg, eval_expected, eval_predicted)
+                eval_result, _ = json_evaluator.evaluate(cfg, eval_expected, eval_predicted)
                 is_correct = eval_result.score == 1.0
             else:
                 is_correct = prediction.strip() == expected_label.strip()

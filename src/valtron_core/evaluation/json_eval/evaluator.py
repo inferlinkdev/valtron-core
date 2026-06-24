@@ -82,7 +82,7 @@ class JsonEvaluator:
         expected: dict[str, Any] | str,
         actual: dict[str, Any] | str,
         extra_template_vars: dict[str, Any] | None = None,
-    ) -> EvalResult:
+    ) -> tuple[EvalResult, float]:
         if isinstance(config_dict, str):
             config_dict = json.loads(config_dict)
         if isinstance(expected, str):
@@ -90,9 +90,11 @@ class JsonEvaluator:
         if isinstance(actual, str):
             actual = json.loads(actual)
 
+        cost_before = self.evaluation_cost
         self._template_vars: dict[str, Any] = extra_template_vars or {}
         config = FieldConfig.model_validate(config_dict)
-        return self._recurse(config, expected, actual, "root")
+        result = self._recurse(config, expected, actual, "root")
+        return result, self.evaluation_cost - cost_before
 
     def _recurse(self, config: FieldConfig, exp: Any, act: Any, path: str) -> EvalResult:
         if config.type == "object":
