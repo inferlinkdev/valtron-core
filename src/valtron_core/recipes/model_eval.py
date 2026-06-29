@@ -1385,6 +1385,24 @@ class ModelEval(BaseRecipe):
             remaining_docs = [d for d in documents if d.id not in completed_ids]
             remaining_labels = [lb for d, lb in zip(documents, labels) if d.id not in completed_ids]
 
+            # Pre-advance the shared progress bar and running cost for documents that
+            # were already completed in a prior run and are being reused from cache.
+            # Without this the bar starts at 0 and cost shows $0.00 even though work
+            # was already done, which is confusing on resume.
+            if cached_preds:
+                prior_cost = sum(
+                    p.llm_cost + p.evaluation_cost for p in cached_preds.values()
+                )
+                running_cost[0] += prior_cost
+                shared_bar.update(len(cached_preds))
+                shared_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
+                if progress_tracker is not None:
+                    try:
+                        for _ in cached_preds:
+                            progress_tracker.on_doc_complete(model_label)
+                    except Exception:
+                        pass
+
             # Per-model callback wrapper.  The underlying ``_on_doc`` is shared (cost
             # accounting + tqdm); we layer a tracker.on_doc_complete on top so each
             # model's progress can be reported independently in progress.json.
