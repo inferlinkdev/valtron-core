@@ -37,6 +37,88 @@ class PreflightError(ValueError):
     """Raised when a required environment variable (e.g. API key) is missing before evaluation."""
 
 
+def save_single_model_result(
+    run_dir: "Path | str",
+    result: "EvaluationResult",
+    *,
+    model_prompt: "str | None" = None,
+    prompt_manipulations: "list | None" = None,
+    model_override_prompt: "str | None" = None,
+) -> Path:
+    """Write one completed model result to ``run_dir/models/{safe_name}.json``.
+
+    Creates ``run_dir/models/`` if it does not exist.  Returns the path to the
+    written file.
+
+    Args:
+        run_dir: The run directory to write into.
+        result: Completed ``EvaluationResult`` for a single model.
+        model_prompt: The prompt actually used (post-manipulation).
+            Falls back to ``result.prompt_template`` when absent.
+        prompt_manipulations: List of manipulation names applied to this model.
+        model_override_prompt: Per-model override prompt (pre-manipulation), if any.
+
+    Returns:
+        Path to the written JSON file.
+    """
+    run_dir = Path(run_dir)
+    models_dir = run_dir / "models"
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    predictions = []
+    for p in result.predictions:
+        pred_dict: dict[str, Any] = {
+            "document_id": p.document_id,
+            "predicted_value": p.predicted_value,
+            "expected_value": p.expected_value,
+            "original_cost": p.original_cost,
+            "llm_cost": p.llm_cost,
+            "evaluation_cost": p.evaluation_cost,
+            "response_time": p.response_time,
+            "is_correct": p.is_correct,
+            "example_score": p.example_score,
+        }
+        if p.field_metrics:
+            pred_dict["field_metrics"] = p.field_metrics.model_dump()
+        predictions.append(pred_dict)
+
+    model_data: dict[str, Any] = {
+        "run_id": result.run_id,
+        "model": result.model,
+        "started_at": result.started_at,
+        "completed_at": result.completed_at,
+        "status": result.status,
+        "prompt_template": model_prompt if model_prompt is not None else result.prompt_template,
+        "prompt_manipulations": prompt_manipulations if prompt_manipulations is not None else [],
+        "override_prompt": model_override_prompt,
+        "llm_config": result.llm_config,
+        "metrics": result.metrics.model_dump() if result.metrics else None,
+        "predictions": predictions,
+    }
+    safe_name = result.model.replace("/", "_")
+    out_file = models_dir / f"{safe_name}.json"
+    with open(out_file, "w") as f:
+        json.dump(model_data, f, indent=2, default=str)
+    return out_file
+
+
+def _completed_model_labels_on_disk(output_dir: Path) -> set[str]:
+    """Return model labels whose ``models/{name}.json`` file has ``status=completed``."""
+    models_dir = output_dir / "models"
+    if not models_dir.exists():
+        return set()
+    completed: set[str] = set()
+    for json_file in models_dir.glob("*.json"):
+        try:
+            with open(json_file) as f:
+                data = json.load(f)
+            if data.get("status") == "completed":
+                completed.add(data["model"])
+        except Exception:
+            pass
+    return completed
+
+
 def save_run_dir(
     run_dir: "Path | str",
     results: "list[EvaluationResult]",
@@ -101,41 +183,13 @@ def save_run_dir(
             json.dump(metadata, f, indent=2, default=str)
 
     for result in results:
-        model_name = result.model
-        predictions = []
-        for p in result.predictions:
-            pred_dict: dict[str, Any] = {
-                "document_id": p.document_id,
-                "predicted_value": p.predicted_value,
-                "expected_value": p.expected_value,
-                "original_cost": p.original_cost,
-                "llm_cost": p.llm_cost,
-                "evaluation_cost": p.evaluation_cost,
-                "response_time": p.response_time,
-                "is_correct": p.is_correct,
-                "example_score": p.example_score,
-            }
-            if p.field_metrics:
-                pred_dict["field_metrics"] = p.field_metrics.model_dump()
-            predictions.append(pred_dict)
-
-        model_data = {
-            "run_id": result.run_id,
-            "model": model_name,
-            "started_at": result.started_at,
-            "completed_at": result.completed_at,
-            "status": result.status,
-            "prompt_template": (model_prompts or {}).get(model_name, result.prompt_template),
-            "prompt_manipulations": (prompt_manipulations or {}).get(model_name, []),
-            "override_prompt": (model_override_prompts or {}).get(model_name),
-            "llm_config": result.llm_config,
-            "metrics": result.metrics.model_dump() if result.metrics else None,
-            "predictions": predictions,
-        }
-        safe_name = model_name.replace("/", "_")
-        out_file = models_dir / f"{safe_name}.json"
-        with open(out_file, "w") as f:
-            json.dump(model_data, f, indent=2, default=str)
+        save_single_model_result(
+            run_dir,
+            result,
+            model_prompt=(model_prompts or {}).get(result.model),
+            prompt_manipulations=(prompt_manipulations or {}).get(result.model),
+            model_override_prompt=(model_override_prompts or {}).get(result.model),
+        )
 
     return run_dir
 
