@@ -33,6 +33,7 @@ from valtron_core.few_shot_training_data_generator import (
     LabeledExample,
 )
 from valtron_core.models import Document, FieldMetricsConfig, Label, PredictionResult
+from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
 from valtron_core.progress import ProgressTracker, write_status
 from valtron_core.prompt_optimizer import ExplanationEnhancer
 from valtron_core.recipes.base import BaseRecipe
@@ -844,8 +845,14 @@ class ModelEval(BaseRecipe):
         _status("Preparing prompts...")
         self._model_prompts = await self._prepare_model_prompts()
 
-        # Skip models that already have results (supports incremental evaluation)
+        # Skip models that already have results (supports incremental evaluation).
+        # Also check disk for models persisted from a prior partial run so the user
+        # can re-run against the same output_dir without calling load_experiment_results().
         existing_labels: set[str] = {r.model for r in (self.results or [])}
+        if self.output_dir is not None and not self.results:
+            from valtron_core.runner import _completed_model_labels_on_disk
+
+            existing_labels |= _completed_model_labels_on_disk(Path(self.output_dir))
         models_to_run = [m for m in self.models if (m.label or m.name) not in existing_labels]
 
         if models_to_run:
@@ -1284,6 +1291,12 @@ class ModelEval(BaseRecipe):
         effective_models = models if models is not None else self.models
         documents, labels = self._load_documents_and_labels()
 
+        partial_store = (
+            PartialResultStore(Path(self.output_dir)) if self.output_dir is not None else None
+        )
+        if partial_store is not None:
+            (Path(self.output_dir) / "models").mkdir(parents=True, exist_ok=True)
+
         total_docs = len(documents) * len(effective_models)
         running_cost: list[float] = [0.0]
         shared_bar = tqdm(total=total_docs, unit="doc", desc="Evaluating")
@@ -1311,6 +1324,32 @@ class ModelEval(BaseRecipe):
                 logger.warning("progress_tracker_init_failed", error=str(e))
                 progress_tracker = None
 
+        def _persist_model_result(
+            result: EvaluationResult,
+            model_label: str,
+            manipulations: list,
+            updated_prompt: "str | None",
+        ) -> None:
+            """Write the completed model result to disk and clean up its staging file."""
+            if self.output_dir is None:
+                return
+            from valtron_core.runner import save_single_model_result
+
+            try:
+                effective_prompt = updated_prompt or (self._model_prompts or {}).get(model_label)
+                override = (self._model_override_prompts or {}).get(model_label)
+                save_single_model_result(
+                    self.output_dir,
+                    result,
+                    model_prompt=effective_prompt,
+                    prompt_manipulations=manipulations,
+                    model_override_prompt=override,
+                )
+                if partial_store is not None:
+                    partial_store.finalize(model_label)
+            except Exception as e:
+                logger.warning("eager_model_save_failed", model=model_label, error=str(e))
+
         async def _evaluate_single_model(
             index: int, model_config: Any
         ) -> tuple[int, Any, str, list, str | None]:
@@ -1318,9 +1357,56 @@ class ModelEval(BaseRecipe):
             model_label = model_config.label or model_name
             manipulations = getattr(model_config, "prompt_manipulation", [])
 
+            # Resolve hash inputs for this model before any branch so the shared
+            # callback can close over them regardless of LLM vs transformer path.
+            if model_config.type == "transformer":
+                _hash_prompt = f"transformer:{getattr(model_config, 'model_path', model_label)}"
+                _hash_model_params: dict[str, Any] = {
+                    "type": "transformer",
+                    "model_path": getattr(model_config, "model_path", ""),
+                }
+            else:
+                _hash_prompt = model_prompts[model_label]
+                _raw_model_arg = self._build_model_arg(model_config)
+                _hash_model_params = (
+                    _raw_model_arg if isinstance(_raw_model_arg, dict) else {"model": model_name}
+                )
+
+            # Determine which documents have already been persisted for this model
+            # so we can skip them and resume from where a prior run left off.
+            # Only predictions whose hash matches the current inputs are reused.
+            doc_content_map = {d.id: d.content for d in documents}
+            cached_preds: dict[str, PredictionResult] = {}
+            if partial_store is not None:
+                cached_preds = partial_store.get_valid_cached(
+                    model_label, doc_content_map, _hash_prompt, _hash_model_params
+                )
+            completed_ids = set(cached_preds.keys())
+            remaining_docs = [d for d in documents if d.id not in completed_ids]
+            remaining_labels = [lb for d, lb in zip(documents, labels) if d.id not in completed_ids]
+
+            # Pre-advance the shared progress bar and running cost for documents that
+            # were already completed in a prior run and are being reused from cache.
+            # Without this the bar starts at 0 and cost shows $0.00 even though work
+            # was already done, which is confusing on resume.
+            if cached_preds:
+                prior_cost = sum(
+                    p.llm_cost + p.evaluation_cost for p in cached_preds.values()
+                )
+                running_cost[0] += prior_cost
+                shared_bar.update(len(cached_preds))
+                shared_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
+                if progress_tracker is not None:
+                    try:
+                        for _ in cached_preds:
+                            progress_tracker.on_doc_complete(model_label)
+                    except Exception:
+                        pass
+
             # Per-model callback wrapper.  The underlying ``_on_doc`` is shared (cost
             # accounting + tqdm); we layer a tracker.on_doc_complete on top so each
             # model's progress can be reported independently in progress.json.
+            # We also stage each prediction for crash recovery.
             def _on_doc_with_progress(pred: PredictionResult) -> None:
                 _on_doc(pred)
                 if progress_tracker is not None:
@@ -1328,13 +1414,27 @@ class ModelEval(BaseRecipe):
                         progress_tracker.on_doc_complete(model_label)
                     except Exception:
                         pass
+                if partial_store is not None:
+                    try:
+                        h = compute_prediction_hash(
+                            pred.metadata.get("content", ""),
+                            _hash_prompt,
+                            _hash_model_params,
+                        )
+                        partial_store.record(model_label, pred, h)
+                    except Exception:
+                        pass
 
             # --- Transformer branch (label mode only; guarded at __init__) ---
             if model_config.type == "transformer":
                 result = await self._evaluate_transformer(
-                    model_config, documents, field_metrics_config,
+                    model_config, remaining_docs, field_metrics_config,
                     on_document_complete=_on_doc_with_progress,
                 )
+                if cached_preds:
+                    result.predictions = list(cached_preds.values()) + result.predictions
+                    result.compute_metrics()
+                _persist_model_result(result, model_label, manipulations, None)
                 return index, result, model_label, [], None
 
             prompt = model_prompts[model_label]
@@ -1357,8 +1457,8 @@ class ModelEval(BaseRecipe):
             # --- Decompose branch (extraction mode only; guarded at __init__) ---
             if Manipulation.decompose in manipulations and self.response_format is not None:
                 result, sub_prompts = await self._run_decomposed_evaluation(
-                    documents=documents,
-                    labels=labels,
+                    documents=remaining_docs,
+                    labels=remaining_labels,
                     prompt=prompt,
                     model_name=model_name,
                     model_config=model_config,
@@ -1387,8 +1487,8 @@ class ModelEval(BaseRecipe):
                 multi_pass = 2 if Manipulation.multi_pass in manipulations else 1
 
                 result = await self.runner.evaluate(
-                    documents=documents,
-                    labels=labels,
+                    documents=remaining_docs,
+                    labels=remaining_labels,
                     prompt_template=prompt,
                     model=self._build_model_arg(model_config),
                     response_format=effective_rf,
@@ -1398,6 +1498,12 @@ class ModelEval(BaseRecipe):
                     _tqdm_bar=shared_bar,
                     _on_document_complete=_on_doc_with_progress,
                 )
+
+            # Merge predictions from a prior partial run into this result and
+            # recompute aggregated metrics over the full document set.
+            if cached_preds:
+                result.predictions = list(cached_preds.values()) + result.predictions
+                result.compute_metrics()
 
             # Propagate label to result objects when it differs from the model name
             if model_label != model_name:
@@ -1415,6 +1521,7 @@ class ModelEval(BaseRecipe):
                 except Exception:
                     pass
 
+            _persist_model_result(result, model_label, manipulations, updated_prompt)
             return index, result, model_label, manipulations, updated_prompt
 
         indexed_results = await asyncio.gather(
