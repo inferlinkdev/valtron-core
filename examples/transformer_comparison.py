@@ -12,8 +12,8 @@ Run:
 from pathlib import Path
 
 from valtron_core.models import Document, Label
-from valtron_core.recipes import ModelEval
-from valtron_core.transformer_classifier import TransformerClassifier
+from valtron_core.evaluation import ModelEval
+from valtron_core.training import TransformerClassifier
 
 DATA = [
     {"id": "1",  "content": "The court ruled against the defendant in the criminal case.", "label": "legal"},

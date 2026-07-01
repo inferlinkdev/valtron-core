@@ -11,7 +11,7 @@ Run:
 import json
 from pathlib import Path
 
-from valtron_core.recipes import ModelEval
+from valtron_core.evaluation import ModelEval
 
 DATA = json.loads((Path(__file__).resolve().parent / "sentiment_data.json").read_text())
 
