@@ -6,7 +6,7 @@ from pathlib import Path
 from nltk import test
 import pytest
 
-from valtron_core.bert_trainer import BERTTrainer
+from valtron_core.training.bert_trainer import BERTTrainer
 from valtron_core.models import Document, Label
 
 

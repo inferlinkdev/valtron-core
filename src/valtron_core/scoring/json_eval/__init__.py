@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from valtron_core.evaluation.json_eval.evaluator import JsonEvaluator
-from valtron_core.evaluation.json_eval.registries import comparator_metric
-from valtron_core.evaluation.json_eval.schema import (
+from valtron_core.scoring.json_eval.evaluator import JsonEvaluator
+from valtron_core.scoring.json_eval.registries import comparator_metric
+from valtron_core.scoring.json_eval.schema import (
     DEFAULT_ALIGN_EMBEDDING_MODEL,
     DEFAULT_ALIGN_LO,
     DEFAULT_MATCH_KEY_MODEL,
@@ -16,7 +16,7 @@ from valtron_core.evaluation.json_eval.schema import (
     ListMetricConfig,
     ObjectMetricConfig,
 )
-from valtron_core.evaluation.json_eval.validation import (
+from valtron_core.scoring.json_eval.validation import (
     collect_field_metric_llm_models,
     find_expensive_unordered_list_fields,
 )

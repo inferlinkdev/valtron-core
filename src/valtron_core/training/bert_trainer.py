@@ -1,15 +1,15 @@
 """BERT model training for classification tasks.
 
 .. deprecated::
-    Use :class:`evaltron_core.transformer_classifier.TransformerClassifier` instead.
+    Use :class:`evaltron_core.training.transformer_classifier.TransformerClassifier` instead.
     ``BERTTrainer`` will be removed in a future release.
 """
 
 import warnings
 
 warnings.warn(
-    "evaltron_core.bert_trainer.BERTTrainer is deprecated. "
-    "Use evaltron_core.transformer_classifier.TransformerClassifier instead.",
+    "evaltron_core.training.bert_trainer.BERTTrainer is deprecated. "
+    "Use evaltron_core.training.transformer_classifier.TransformerClassifier instead.",
     DeprecationWarning,
     stacklevel=2,
 )

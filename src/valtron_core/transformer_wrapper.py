@@ -5,7 +5,7 @@ from typing import Any
 
 import structlog
 
-from valtron_core.transformer_classifier import TransformerClassifier
+from valtron_core.training.transformer_classifier import TransformerClassifier
 
 logger = structlog.get_logger()
 

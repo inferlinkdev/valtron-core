@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime
 from unittest.mock import Mock, AsyncMock, patch
 
-from valtron_core.bert_evaluator import BERTEvaluator, create_bert_model_for_comparison
+from valtron_core.training.bert_evaluator import BERTEvaluator, create_bert_model_for_comparison
 from valtron_core.models import Document, Label, EvaluationInput, PredictionResult
 
 
@@ -305,7 +305,7 @@ class TestCreateBertModelForComparison:
             Label(document_id="doc-2", value="negative"),
         ]
 
-        with patch("valtron_core.bert_evaluator.BERTTrainer") as MockTrainer:
+        with patch("valtron_core.training.bert_evaluator.BERTTrainer") as MockTrainer:
             mock_trainer = Mock()
             mock_trainer.prepare_data = Mock(return_value=(Mock(), Mock()))
             mock_trainer.train = Mock(return_value={

@@ -18,7 +18,7 @@ from valtron_core.models import (
     EvaluationMetrics,
     PredictionResult,
 )
-from valtron_core.evaluation.json_eval import EvalResult
+from valtron_core.scoring.json_eval import EvalResult
 
 BENCHMARK_DATA_DIR = Path(__file__).parent / "benchmark_data"
 

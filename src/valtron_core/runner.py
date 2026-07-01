@@ -14,7 +14,7 @@ from tqdm import tqdm  # type: ignore[import-untyped]
 
 from valtron_core.client import LLMClient
 from valtron_core.evaluator import PromptEvaluator
-from valtron_core.evaluation.json_eval import (
+from valtron_core.scoring.json_eval import (
     ExpensiveListComparisonError,
     collect_field_metric_llm_models,
     find_expensive_unordered_list_fields,
@@ -414,7 +414,7 @@ class EvaluationRunner:
         self, run_dir: Path
     ) -> "tuple[list[EvaluationResult], dict[str, Any]]":
         """Load results from new-format run directory (metadata.json + models/)."""
-        from valtron_core.evaluation.json_eval import EvalResult
+        from valtron_core.scoring.json_eval import EvalResult
 
         with open(run_dir / "metadata.json") as f:
             meta = json.load(f)

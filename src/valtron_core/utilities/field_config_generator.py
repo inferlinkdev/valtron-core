@@ -2,9 +2,9 @@
 Infer a FieldMetricsConfig from an example JSON value.
 
 Usage (CLI):
-    python -m evaltron_core.evaluation.field_config_generator '{"name": "foo", "score": 1}'
-    python -m evaltron_core.evaluation.field_config_generator path/to/example.json
-    echo '{"name": "foo"}' | python -m evaltron_core.evaluation.field_config_generator
+    python -m evaltron_core.scoring.field_config_generator '{"name": "foo", "score": 1}'
+    python -m evaltron_core.scoring.field_config_generator path/to/example.json
+    echo '{"name": "foo"}' | python -m evaltron_core.scoring.field_config_generator
 """
 
 import json
@@ -12,7 +12,7 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from valtron_core.evaluation.json_eval import FieldConfig, LeafMetricConfig, ObjectMetricConfig, ListMetricConfig
+from valtron_core.scoring.json_eval import FieldConfig, LeafMetricConfig, ObjectMetricConfig, ListMetricConfig
 
 
 def infer_field_config(json_str: str) -> FieldConfig:

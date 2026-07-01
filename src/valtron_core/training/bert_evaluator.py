@@ -1,7 +1,7 @@
 """BERT model evaluation integrated with the evaluation framework.
 
 .. deprecated::
-    Use :class:`evaltron_core.transformer_classifier.TransformerClassifier` for
+    Use :class:`evaltron_core.training.transformer_classifier.TransformerClassifier` for
     inference and the recipe layer for evaluation. ``BERTEvaluator`` will be
     removed in a future release.
 """
@@ -9,8 +9,8 @@
 import warnings
 
 warnings.warn(
-    "evaltron_core.bert_evaluator.BERTEvaluator is deprecated. "
-    "Use evaltron_core.transformer_classifier.TransformerClassifier with "
+    "evaltron_core.training.bert_evaluator.BERTEvaluator is deprecated. "
+    "Use evaltron_core.training.transformer_classifier.TransformerClassifier with "
     "ModelEval (type='transformer') instead.",
     DeprecationWarning,
     stacklevel=2,
@@ -21,7 +21,7 @@ from typing import Any
 
 import structlog
 
-from valtron_core.bert_trainer import BERTTrainer
+from valtron_core.training.bert_trainer import BERTTrainer
 from valtron_core.models import Document, EvaluationInput, EvaluationResult, Label, PredictionResult
 
 logger = structlog.get_logger()

@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-from valtron_core.evaluation.json_eval import EvalResult
+from valtron_core.scoring.json_eval import EvalResult
 
 
 # Type alias for supported scoring strategies

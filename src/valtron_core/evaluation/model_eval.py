@@ -27,7 +27,7 @@ from valtron_core.decompose import (
     generate_sub_prompts,
     inject_few_shot_into_sub_prompts,
 )
-from valtron_core.evaluation.json_eval import JsonEvaluator
+from valtron_core.scoring.json_eval import JsonEvaluator
 from valtron_core.few_shot_training_data_generator import (
     FewShotTrainingDataGenerator,
     LabeledExample,
@@ -36,8 +36,8 @@ from valtron_core.models import Document, FieldMetricsConfig, Label, PredictionR
 from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
 from valtron_core.progress import ProgressTracker, write_status
 from valtron_core.prompt_optimizer import ExplanationEnhancer
-from valtron_core.recipes.base import BaseRecipe
-from valtron_core.recipes.config import (
+from valtron_core.evaluation.base import BaseRecipe
+from valtron_core.evaluation.config import (
     Manipulation,
     ModelEvalConfig,
     STRUCTURED_MANIPULATIONS,
@@ -167,7 +167,7 @@ class ModelEval(BaseRecipe):
         self._validate_labels_against_schema()
 
     def _check_model_param_support(self) -> None:
-        from valtron_core.recipes.config import LLMModelConfig
+        from valtron_core.evaluation.config import LLMModelConfig
 
         wants_response_format = self.response_format is not None
 
@@ -295,7 +295,7 @@ class ModelEval(BaseRecipe):
             ValueError: Duplicate label or structured manipulation without
                 ``response_format``.
         """
-        from valtron_core.recipes.config import LLMModelConfig, TransformerModelConfig
+        from valtron_core.evaluation.config import LLMModelConfig, TransformerModelConfig
 
         normalized = []
         for m in models:
@@ -491,7 +491,7 @@ class ModelEval(BaseRecipe):
                 model_override_prompts[model_label] = md["override_prompt"]
 
             try:
-                from valtron_core.evaluation.json_eval import EvalResult
+                from valtron_core.scoring.json_eval import EvalResult
 
                 _eval_result_cls = EvalResult
             except ImportError:

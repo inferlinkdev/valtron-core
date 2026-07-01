@@ -17,10 +17,10 @@ def mock_validate_environment():
     ):
         yield
 
-from valtron_core.recipes.model_eval import ModelEval
+from valtron_core.evaluation.model_eval import ModelEval
 from valtron_core.schema_synthesis import synthesize_pydantic_model
 from valtron_core.decompose import find_split_point
-from valtron_core.recipes.config import (
+from valtron_core.evaluation.config import (
     ModelEvalConfig,
     LLMModelConfig,
     Manipulation,
@@ -739,7 +739,7 @@ class TestRun:
         }
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
 
-        with patch("valtron_core.recipes.model_eval.FewShotTrainingDataGenerator") as MockGen:
+        with patch("valtron_core.evaluation.model_eval.FewShotTrainingDataGenerator") as MockGen:
             mock_gen = Mock()
             mock_gen.generate_and_validate_examples = AsyncMock(
                 return_value={
@@ -1955,7 +1955,7 @@ class TestReevaluate:
             {"id": "d1", "content": "Hello", "label": "positive"},
             {"id": "UNKNOWN_ID", "content": "?", "label": "positive"},
         ]
-        with patch("valtron_core.recipes.model_eval.logger.warning") as mock_warn:
+        with patch("valtron_core.evaluation.model_eval.logger.warning") as mock_warn:
             me.reevaluate(data=new_data)
 
         warn_events = [call.args[0] for call in mock_warn.call_args_list]
@@ -1982,7 +1982,7 @@ class TestReevaluate:
         run_dir = _write_mock_run_dir(tmp_path)
         me = ModelEval.load_experiment_results(run_dir)
 
-        with patch("valtron_core.recipes.model_eval.logger.warning") as mock_warn:
+        with patch("valtron_core.evaluation.model_eval.logger.warning") as mock_warn:
             me.reevaluate(output_dir=run_dir)
 
         warn_events = [call.args[0] for call in mock_warn.call_args_list]

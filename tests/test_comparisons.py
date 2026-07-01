@@ -4,7 +4,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from valtron_core.evaluation.comparisons import (
+from valtron_core.scoring.comparisons import (
     _cosine_similarity,
     _embedding_compare,
     _exact_compare,
@@ -126,7 +126,7 @@ class TestTextSimilarityCompare:
         mock_resp2 = Mock()
         mock_resp2.data = [{"embedding": [1.0, 0.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparisons.embedding") as mock_embedding:
+        with patch("valtron_core.scoring.comparisons.embedding") as mock_embedding:
             mock_embedding.side_effect = [mock_resp1, mock_resp2]
             result = _text_similarity_compare("hello", "hello", metric="cosine")
 
@@ -160,85 +160,85 @@ class TestLLMCompare:
 
     def test_yes_text_fallback(self) -> None:
         mock_response = self._mock_completion("YES")
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response):
                 result, _ = _llm_compare("NYC", "New York City")
         assert result is True
 
     def test_no_text_fallback(self) -> None:
         mock_response = self._mock_completion("NO")
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response):
                 result, _ = _llm_compare("apple", "orange")
         assert result is False
 
     def test_structured_output_true(self) -> None:
         mock_response = self._mock_completion('{"match": true}')
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=True):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response):
                 result, _ = _llm_compare("NYC", "New York City")
         assert result is True
 
     def test_structured_output_false(self) -> None:
         mock_response = self._mock_completion('{"match": false}')
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=True):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response):
                 result, _ = _llm_compare("apple", "orange")
         assert result is False
 
     def test_structured_json_parse_failure_falls_back_to_text(self) -> None:
         mock_response = self._mock_completion("yes.")
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=True):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response):
                 result, _ = _llm_compare("a", "a")
         assert result is True
 
     def test_text_fallback_case_insensitive(self) -> None:
         for content in ("yes", "Yes", "YES", "yes because they match"):
             mock_response = self._mock_completion(content)
-            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+            with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response):
                     match, _ = _llm_compare("a", "a")
                     assert match is True, f"failed for {content!r}"
 
     def test_text_fallback_rejects_no(self) -> None:
         for content in ("no", "No", "NO", "no they differ"):
             mock_response = self._mock_completion(content)
-            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+            with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response):
                     match, _ = _llm_compare("a", "b")
                     assert match is False, f"failed for {content!r}"
 
     def test_structured_path_passes_response_format(self) -> None:
-        from valtron_core.evaluation.comparisons import _MatchResult
+        from valtron_core.scoring.comparisons import _MatchResult
 
         mock_response = self._mock_completion('{"match": true}')
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=True):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response) as mock_comp:
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response) as mock_comp:
                 _llm_compare("a", "a")
         _, kwargs = mock_comp.call_args
         assert kwargs["response_format"] is _MatchResult
 
     def test_text_fallback_passes_max_tokens(self) -> None:
         mock_response = self._mock_completion("YES")
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response) as mock_comp:
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response) as mock_comp:
                 _llm_compare("a", "a")
         _, kwargs = mock_comp.call_args
         assert kwargs["max_tokens"] == 10
 
     def test_supports_response_schema_exception_falls_back(self) -> None:
         mock_response = self._mock_completion("YES")
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", side_effect=Exception("err")):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", side_effect=Exception("err")):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response):
                 result, _ = _llm_compare("a", "a")
         assert result is True
 
     def test_custom_prompt_template(self) -> None:
         template = "Is '{predicted}' the same as '{expected}'? YES or NO."
         mock_response = self._mock_completion("YES")
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response) as mock_comp:
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response) as mock_comp:
                 _llm_compare("NYC", "New York", prompt_template=template)
         sent = mock_comp.call_args[1]["messages"][0]["content"]
         assert sent == "Is 'NYC' the same as 'New York'? YES or NO."
@@ -246,8 +246,8 @@ class TestLLMCompare:
     def test_prompt_extra_vars_interpolated(self) -> None:
         template = "Doc: {example_content}\n'{predicted}' vs '{expected}'? YES or NO."
         mock_response = self._mock_completion("YES")
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response) as mock_comp:
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response) as mock_comp:
                 _llm_compare(
                     "Paris", "Paris",
                     prompt_template=template,
@@ -258,8 +258,8 @@ class TestLLMCompare:
 
     def test_default_prompt_contains_entity_matching_text(self) -> None:
         mock_response = self._mock_completion("YES")
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response) as mock_comp:
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response) as mock_comp:
                 _llm_compare("NYC", "New York")
         sent = mock_comp.call_args[1]["messages"][0]["content"]
         assert "same entity or concept" in sent
@@ -268,8 +268,8 @@ class TestLLMCompare:
 
     def test_model_param_forwarded(self) -> None:
         mock_response = self._mock_completion("YES")
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response) as mock_comp:
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response) as mock_comp:
                 _llm_compare("a", "a", model="gpt-4")
         assert mock_comp.call_args[1]["model"] == "gpt-4"
 
@@ -281,7 +281,7 @@ class TestEmbeddingCompare:
         mock_resp2 = Mock()
         mock_resp2.data = [{"embedding": [1.0, 0.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
+        with patch("valtron_core.scoring.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp1, mock_resp2]
             similarity, _ = _embedding_compare("hello", "hello")
 
@@ -293,7 +293,7 @@ class TestEmbeddingCompare:
         mock_resp2 = Mock()
         mock_resp2.data = [{"embedding": [1.0, 0.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
+        with patch("valtron_core.scoring.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp1, mock_resp2]
             result, _ = _embedding_compare("hello", "hello", threshold=0.9)
 
@@ -305,7 +305,7 @@ class TestEmbeddingCompare:
         mock_resp2 = Mock()
         mock_resp2.data = [{"embedding": [0.5, 1.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
+        with patch("valtron_core.scoring.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp1, mock_resp2]
             result, _ = _embedding_compare("hello", "world")
 
@@ -316,7 +316,7 @@ class TestEmbeddingCompare:
         mock_resp = Mock()
         mock_resp.data = [{"embedding": [1.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
+        with patch("valtron_core.scoring.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp, mock_resp]
             _embedding_compare("a", "b", model="text-embedding-3-large")
 

@@ -862,7 +862,7 @@ class DecomposedEvaluator:
             )
 
         # Grade the merged result against the real label
-        from valtron_core.evaluation.json_eval import JsonEvaluator
+        from valtron_core.scoring.json_eval import JsonEvaluator
 
         is_correct = False
         example_score = 0.0

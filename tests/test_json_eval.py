@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from valtron_core.evaluation.json_eval import (
+from valtron_core.scoring.json_eval import (
     JsonEvaluator,
     LeafMetricConfig,
     ObjectMetricConfig,
@@ -19,10 +19,10 @@ from valtron_core.evaluation.json_eval import (
     find_expensive_unordered_list_fields,
     collect_field_metric_llm_models,
 )
-from valtron_core.evaluation.json_eval.schema import AlignmentConfig
-from valtron_core.evaluation.json_eval.registries import _score_to_result
-from valtron_core.evaluation.json_eval.alignment import _match_key_text
-from valtron_core.evaluation.json_eval.validation import (
+from valtron_core.scoring.json_eval.schema import AlignmentConfig
+from valtron_core.scoring.json_eval.registries import _score_to_result
+from valtron_core.scoring.json_eval.alignment import _match_key_text
+from valtron_core.scoring.json_eval.validation import (
     _uses_expensive_thirdparty_api,
     _scan_item_logic_for_expensive_metrics,
     _item_logic_uses_expensive_api,
@@ -652,42 +652,42 @@ class TestComparatorMetric:
     """Tests for the comparator_metric function."""
 
     def test_bool_result_true(self):
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = True
             score, is_correct = comparator_metric("a", "a", {})
         assert score == 1.0
         assert is_correct is True
 
     def test_bool_result_false(self):
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = False
             score, is_correct = comparator_metric("a", "b", {})
         assert score == 0.0
         assert is_correct is False
 
     def test_float_with_threshold_met(self):
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = 0.9
             score, is_correct = comparator_metric("a", "b", {"comparison_threshold": 0.8})
         assert score == 0.9
         assert is_correct is True
 
     def test_float_with_threshold_not_met(self):
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = 0.5
             score, is_correct = comparator_metric("a", "b", {"comparison_threshold": 0.8})
         assert score == 0.5
         assert is_correct is False
 
     def test_float_no_threshold_defaults_is_correct_true(self):
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = 0.7
             score, is_correct = comparator_metric("a", "b", {})
         assert score == 0.7
         assert is_correct is True
 
     def test_text_similarity_threshold_used(self):
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = 0.6
             score, is_correct = comparator_metric("a", "b", {"text_similarity_threshold": 0.7})
         assert score == 0.6
@@ -1122,7 +1122,7 @@ class TestExpensiveListGuardInEval:
             },
         }
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
-            with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+            with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
                 MockComp.return_value.compare.return_value = True
                 result, _ = evaluator.evaluate(config, {"tags": ["a"]}, {"tags": ["a"]})
         assert result is not None
@@ -1140,7 +1140,7 @@ class TestLLMPromptTemplate:
             "_template_vars": {"prompt_used": "Extract city.", "example_content": "Paris is in France."},
         }
 
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = True
             comparator_metric("Paris", "Paris", params)
 
@@ -1152,7 +1152,7 @@ class TestLLMPromptTemplate:
         """When _template_vars is absent, llm_prompt_extra_vars is None."""
         params = {"element_compare": "llm"}
 
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = True
             comparator_metric("a", "a", params)
 
@@ -1178,7 +1178,7 @@ class TestLLMPromptTemplate:
         extra_vars = {"prompt_used": "Extract the city.", "example_content": "doc text"}
         evaluator = JsonEvaluator()
 
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = True
             evaluator.evaluate(
                 config,
@@ -1205,7 +1205,7 @@ class TestLLMPromptTemplate:
         }
         evaluator = JsonEvaluator()
 
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = True
             result, _ = evaluator.evaluate(
                 config,
@@ -1265,7 +1265,7 @@ class TestComparatorMetricDeprecationWarning:
     """Verifies that the deprecated comparator_metric emits DeprecationWarning."""
 
     def test_comparator_metric_warns(self) -> None:
-        with patch("valtron_core.evaluation.json_eval.registries.Comparator") as MockComp:
+        with patch("valtron_core.scoring.json_eval.registries.Comparator") as MockComp:
             MockComp.return_value.compare.return_value = True
             with pytest.warns(DeprecationWarning, match="'comparator' metric is deprecated"):
                 comparator_metric("a", "a", {})
@@ -1389,8 +1389,8 @@ class TestNewMetricsInRegistry:
         mock_response.choices = [Mock()]
         mock_response.choices[0].message.content = "YES"
 
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response):
                 result, _ = evaluator.evaluate(config, {"city": "NYC"}, {"city": "New York"})
 
         assert result.children["city"].is_correct is True
@@ -1414,8 +1414,8 @@ class TestNewMetricsInRegistry:
         mock_response.choices = [Mock()]
         mock_response.choices[0].message.content = "YES"
 
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response) as mock_comp:
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response) as mock_comp:
                 evaluator.evaluate(
                     config,
                     {"val": "a"},
@@ -1444,7 +1444,7 @@ class TestNewMetricsInRegistry:
         mock_resp2 = Mock()
         mock_resp2.data = [{"embedding": [1.0, 0.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
+        with patch("valtron_core.scoring.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp1, mock_resp2]
             result, _ = evaluator.evaluate(config, {"text": "hello"}, {"text": "hello"})
 
@@ -1468,7 +1468,7 @@ class TestNewMetricsInRegistry:
         mock_resp2 = Mock()
         mock_resp2.data = [{"embedding": [0.5, 1.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparisons.embedding") as mock_emb:
+        with patch("valtron_core.scoring.comparisons.embedding") as mock_emb:
             mock_emb.side_effect = [mock_resp1, mock_resp2]
             result, _ = evaluator.evaluate(config, {"text": "hello"}, {"text": "world"})
 
@@ -1595,8 +1595,8 @@ class TestNewMetricsExpensiveListGuard:
         mock_response.choices = [Mock()]
         mock_response.choices[0].message.content = "YES"
 
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=mock_response):
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=mock_response):
                 result, _ = evaluator.evaluate(config, ["a"], ["a"])
 
         assert result is not None
@@ -1743,8 +1743,8 @@ class TestLlmAlignmentRouting:
     def test_llm_judge_leaf_routes_to_aligned_metric(self):
         evaluator = JsonEvaluator()
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
-            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+            with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.scoring.comparisons.completion", return_value=_make_leaf_yes_mock()):
                     result, _ = evaluator.evaluate(
                         self._make_llm_list_config(), {"items": ["a"]}, {"items": ["a"]}
                     )
@@ -1784,8 +1784,8 @@ class TestLlmAlignmentRouting:
                 },
             },
         }
-        with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+        with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparisons.completion", return_value=_make_leaf_yes_mock()):
                 result, _ = evaluator.evaluate(config, {"items": ["a"]}, {"items": ["a"]})
         assert result.children["items"].metric == "list_ordered_f1"
 
@@ -1830,8 +1830,8 @@ class TestEvalListUnorderedWithAlignment:
     def test_successful_alignment_perfect_match(self):
         evaluator = JsonEvaluator()
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
-            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+            with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.scoring.comparisons.completion", return_value=_make_leaf_yes_mock()):
                     result, _ = evaluator.evaluate(
                         self._make_config(), {"items": ["apple"]}, {"items": ["apple"]}
                     )
@@ -1853,8 +1853,8 @@ class TestEvalListUnorderedWithAlignment:
     def test_details_include_aligner_metadata(self):
         evaluator = JsonEvaluator()
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
-            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+            with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.scoring.comparisons.completion", return_value=_make_leaf_yes_mock()):
                     result, _ = evaluator.evaluate(
                         self._make_config(), {"items": ["x", "y"]}, {"items": ["x", "y"]}
                     )
@@ -1869,8 +1869,8 @@ class TestEvalListUnorderedWithAlignment:
         # Two expected items, one actual: only the matching expected item ("a") pairs; the
         # surplus ("b") has no eligible counterpart and stays unmatched.
         with patch.object(evaluator, "_embed_texts", side_effect=lambda texts, model, path: (_embed_by_identity(texts), 0.0)):
-            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+            with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.scoring.comparisons.completion", return_value=_make_leaf_yes_mock()):
                     result, _ = evaluator.evaluate(
                         self._make_config(),
                         {"items": ["a", "b"]},
@@ -1928,8 +1928,8 @@ class TestEvalListUnorderedWithAlignment:
             }
 
         with patch.object(evaluator, "_align_by_embedding", side_effect=recording_align):
-            with patch("valtron_core.evaluation.comparisons.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparisons.completion", return_value=_make_leaf_yes_mock()):
+            with patch("valtron_core.scoring.comparisons.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.scoring.comparisons.completion", return_value=_make_leaf_yes_mock()):
                     evaluator.evaluate(
                         config,
                         {"items": [{"id": "A", "description": "foo"}]},
@@ -1978,7 +1978,7 @@ class TestEvaluationCostAccumulation:
     def test_comparator_metric_bound_method_records_cost(self):
         evaluator = JsonEvaluator()
         with patch(
-            "valtron_core.evaluation.json_eval.evaluator._run_comparator",
+            "valtron_core.scoring.json_eval.evaluator._run_comparator",
             return_value=(1.0, True, 0.002, 1),
         ):
             evaluator._comparator_metric("a", "a", {})
@@ -1988,7 +1988,7 @@ class TestEvaluationCostAccumulation:
     def test_comparator_metric_bound_method_zero_cost_not_recorded(self):
         evaluator = JsonEvaluator()
         with patch(
-            "valtron_core.evaluation.json_eval.evaluator._run_comparator",
+            "valtron_core.scoring.json_eval.evaluator._run_comparator",
             return_value=(1.0, True, 0.0, 0),
         ):
             evaluator._comparator_metric("a", "a", {})
@@ -2001,8 +2001,8 @@ class TestEvaluationCostAccumulation:
         evaluator = JsonEvaluator()
         resp = Mock()
         resp.data = [{"embedding": [1.0, 0.0]}, {"embedding": [0.0, 1.0]}]
-        with patch("valtron_core.evaluation.json_eval.evaluator.embedding", return_value=resp):
-            with patch("valtron_core.evaluation.json_eval.evaluator.completion_cost", return_value=0.005):
+        with patch("valtron_core.scoring.json_eval.evaluator.embedding", return_value=resp):
+            with patch("valtron_core.scoring.json_eval.evaluator.completion_cost", return_value=0.005):
                 with patch.object(evaluator, "_record_evaluation_cost") as mock_record:
                     evaluator._embed_texts(["a", "b"], "text-embedding-3-small", "items")
         mock_record.assert_called_once_with(0.005)
@@ -2012,9 +2012,9 @@ class TestEvaluationCostAccumulation:
         evaluator = JsonEvaluator()
         resp = Mock()
         resp.data = [{"embedding": [1.0, 0.0]}]
-        with patch("valtron_core.evaluation.json_eval.evaluator.embedding", return_value=resp):
+        with patch("valtron_core.scoring.json_eval.evaluator.embedding", return_value=resp):
             with patch(
-                "valtron_core.evaluation.json_eval.evaluator.completion_cost",
+                "valtron_core.scoring.json_eval.evaluator.completion_cost",
                 side_effect=RuntimeError("billing unavailable"),
             ):
                 # Should not raise; soft-fail means the vectors are still returned
@@ -2116,7 +2116,7 @@ class TestEmbeddingHungarianAlignment:
         exp = [{"name": "a", "details": {"k": 1}}]
         act = [{"name": "a", "details": {"k": 1}}]
 
-        with patch("valtron_core.evaluation.json_eval.evaluator.completion") as mock_completion:
+        with patch("valtron_core.scoring.json_eval.evaluator.completion") as mock_completion:
             fields, _ = ev._select_match_key_fields(
                 ListMetricConfig(ordered=False, alignment=AlignmentConfig()), exp, act, "root.nested"
             )
@@ -2134,8 +2134,8 @@ class TestEmbeddingHungarianAlignment:
         resp.choices = [Mock()]
         resp.choices[0].message.content = '{"fields": ["name"]}'
 
-        with patch("valtron_core.evaluation.json_eval.evaluator.completion", return_value=resp), \
-             patch("valtron_core.evaluation.json_eval.evaluator.completion_cost", return_value=0.0):
+        with patch("valtron_core.scoring.json_eval.evaluator.completion", return_value=resp), \
+             patch("valtron_core.scoring.json_eval.evaluator.completion_cost", return_value=0.0):
             fields, _ = ev._select_match_key_fields(
                 ListMetricConfig(ordered=False, alignment=AlignmentConfig()), exp, act, "root.flat"
             )
