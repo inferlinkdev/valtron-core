@@ -571,6 +571,8 @@ class ModelEval(BaseRecipe):
             field_config = infer_field_config(first_label)
             return FieldMetricsConfig(config=field_config.model_dump())
         except (json.JSONDecodeError, TypeError):
+            if not self._auto_wrap_string_labels:
+                return None
             field_config = infer_field_config(json.dumps({"label": first_label}))
             return FieldMetricsConfig(config=field_config.model_dump())
 
@@ -1203,7 +1205,7 @@ class ModelEval(BaseRecipe):
             expected_label = label_map.get(doc.id, "")
 
             pred_start = time.time()
-            prediction = transformer.predict(doc.content)
+            prediction, confidence = transformer.predict_with_confidence(doc.content)
             pred_time = time.time() - pred_start
 
             if self._auto_wrap_string_labels:
@@ -1235,6 +1237,7 @@ class ModelEval(BaseRecipe):
                 llm_cost=0.0,
                 model=model_name,
                 metadata={"content": doc.content},
+                confidence_score=confidence,
             )
             result.add_prediction(pred_result)
             if on_document_complete is not None:
@@ -1427,9 +1430,13 @@ class ModelEval(BaseRecipe):
 
             # --- Transformer branch (label mode only; guarded at __init__) ---
             if model_config.type == "transformer":
+                def _on_doc_transformer(pred: PredictionResult) -> None:
+                    _on_doc_with_progress(pred)
+                    shared_bar.update(1)
+
                 result = await self._evaluate_transformer(
                     model_config, remaining_docs, field_metrics_config,
-                    on_document_complete=_on_doc_with_progress,
+                    on_document_complete=_on_doc_transformer,
                 )
                 if cached_preds:
                     result.predictions = list(cached_preds.values()) + result.predictions

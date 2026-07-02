@@ -1,0 +1,826 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Valtron Tradeoff Analysis</title>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <style>
+      {% include 'common.css' %}
+
+      body {
+          max-width: 1400px;
+          padding: 40px 20px;
+          background-attachment: fixed;
+      }
+
+      .header {
+          background: #161b22;
+          color: #c9d1d9;
+          padding: 40px;
+          border-radius: 6px;
+          margin-bottom: 30px;
+          border: 1px solid #30363d;
+      }
+
+      h1 {
+          font-size: 2.4em;
+          letter-spacing: 0.05em;
+          margin-bottom: 8px;
+      }
+
+      .subtitle {
+          color: #8b949e;
+          font-size: 1.0em;
+          margin-top: 8px;
+      }
+
+      .meta-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+          gap: 16px;
+          margin-top: 24px;
+      }
+      .meta-item {
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 14px 16px;
+      }
+      .meta-label {
+          color: #8b949e;
+          font-size: 0.78em;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          margin-bottom: 6px;
+      }
+      .meta-value {
+          color: #c9d1d9;
+          font-size: 1.05em;
+          font-weight: 600;
+      }
+      .meta-value.accent { color: #58a6ff; }
+
+      .panel {
+          background: #161b22;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 28px;
+          margin-bottom: 24px;
+      }
+      .panel h2 {
+          color: #58a6ff;
+          font-size: 1.25em;
+          margin-bottom: 6px;
+      }
+      .panel .panel-desc {
+          color: #8b949e;
+          font-size: 0.88em;
+          margin-bottom: 22px;
+      }
+
+      .controls {
+          display: flex;
+          gap: 16px;
+          align-items: center;
+          flex-wrap: wrap;
+          margin-bottom: 16px;
+      }
+      .control-group {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+      }
+      .control-group label {
+          color: #8b949e;
+          font-size: 0.85em;
+      }
+      select, input[type="number"] {
+          background: #0d1117;
+          color: #c9d1d9;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 6px 10px;
+          font-family: inherit;
+          font-size: 0.85em;
+      }
+      select { cursor: pointer; }
+      input[type="number"] { width: 130px; }
+      select:focus, input:focus {
+          outline: none;
+          border-color: #58a6ff;
+      }
+
+      #tradeoffChart {
+          width: 100%;
+          height: 600px;
+      }
+
+      table.pareto-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 0.85em;
+          margin-top: 8px;
+      }
+      table.pareto-table th, table.pareto-table td {
+          text-align: right;
+          padding: 8px 12px;
+          border-bottom: 1px solid #21262d;
+          color: #c9d1d9;
+      }
+      table.pareto-table th {
+          color: #8b949e;
+          font-weight: 600;
+          text-transform: uppercase;
+          font-size: 0.75em;
+          letter-spacing: 0.05em;
+          border-bottom: 1px solid #30363d;
+      }
+      table.pareto-table tr:hover td {
+          background: #1a2029;
+      }
+      table.pareto-table tr.over-budget td {
+          color: #6e7681;
+          background: #0d1117;
+      }
+      table.pareto-table tr.recommended td {
+          background: rgba(63, 185, 80, 0.12);
+          color: #c9d1d9;
+          border-bottom: 1px solid #238636;
+      }
+      table.pareto-table tr.recommended td:first-child::before {
+          content: '★ ';
+          color: #f0883e;
+      }
+
+      .budget-status {
+          color: #8b949e;
+          font-size: 0.85em;
+          margin-top: 12px;
+      }
+      .budget-status.warn { color: #e3b341; }
+
+      .routing-mix {
+          margin-top: 18px;
+          padding: 14px 16px;
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+      }
+      .routing-mix-title {
+          color: #8b949e;
+          font-size: 0.82em;
+          margin-bottom: 8px;
+      }
+      .routing-mix-title b { color: #c9d1d9; }
+      .routing-mix-bar {
+          display: flex;
+          height: 28px;
+          border-radius: 4px;
+          overflow: hidden;
+          border: 1px solid #30363d;
+      }
+      .routing-mix-segment {
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          color: #fff;
+          font-size: 0.75em;
+          font-weight: 600;
+          min-width: 1px;
+          overflow: hidden;
+          white-space: nowrap;
+      }
+      .routing-mix-legend {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 16px;
+          margin-top: 10px;
+          font-size: 0.78em;
+          color: #8b949e;
+      }
+      .routing-mix-legend .swatch {
+          display: inline-block;
+          width: 10px; height: 10px;
+          border-radius: 2px;
+          vertical-align: middle;
+          margin-right: 5px;
+      }
+      .routing-mix.empty {
+          color: #6e7681;
+          font-style: italic;
+      }
+
+      .footer {
+          margin-top: 40px;
+          padding-top: 30px;
+          border-top: 1px solid #30363d;
+          text-align: center;
+          color: #8b949e;
+          font-size: 0.85em;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>Tradeoff Analysis</h1>
+      <div class="subtitle">
+        Local transformer vs LLM — confidence-thresholded routing
+      </div>
+
+      <div class="meta-grid">
+        <div class="meta-item">
+          <div class="meta-label">Dataset size</div>
+          <div class="meta-value">{{ data.n_total }} examples</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Positive class</div>
+          <div class="meta-value">"{{ data.positive_label }}"</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Transformer $ / call</div>
+          <div class="meta-value">${{ "%.7f"|format(data.transformer_cost_per_call) }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Inference assumption</div>
+          <div class="meta-value">
+            ${{ "%.3f"|format(data.transformer_instance_hourly) }}/hr,
+            {{ "%.1f"|format(data.transformer_samples_per_second) }} sps
+            {% if data.used_measured_throughput %}(measured){% endif %}
+          </div>
+        </div>
+        {% if data.measured_samples_per_second %}
+        <div class="meta-item">
+          <div class="meta-label">Measured throughput</div>
+          <div class="meta-value">{{ "%.2f"|format(data.measured_samples_per_second) }} samples/sec</div>
+        </div>
+        {% endif %}
+        <div class="meta-item">
+          <div class="meta-label">Transformer source</div>
+          <div class="meta-value">Trained model</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">100% transformer</div>
+          <div class="meta-value">
+            F1 {{ "%.3f"|format(data.baseline_transformer.f1) }}
+            · ${{ "%.4f"|format(data.baseline_transformer.cost) }}
+          </div>
+        </div>
+        {% for spec in data.llm_specs %}
+        {% set m = data.llm_measurements.get(spec.name) if data.llm_measurements else None %}
+        <div class="meta-item">
+          <div class="meta-label">
+            {{ spec.name }}
+            {% if m and data.used_full_llm_eval %}
+              (measured acc {{ "%.3f"|format(m.accuracy) }}, n={{ m.n_samples }}, full eval → deterministic)
+            {% elif m %}
+              (measured acc {{ "%.3f"|format(m.accuracy) }} ±{{ "%.3f"|format(m.ci_half_width) }}, n={{ m.n_samples }})
+            {% elif spec.accuracy < 1.0 %}
+              (assumed acc {{ "%.2f"|format(spec.accuracy) }})
+            {% endif %}
+          </div>
+          <div class="meta-value accent">
+            ${{ "%.6f"|format(spec.cost_per_call) }}/call
+            · 100% = ${{ "%.4f"|format(data.baselines_by_llm[spec.name].cost) }}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Tradeoff frontier</h2>
+      <div class="panel-desc">
+        Each point is one (positive_threshold, negative_threshold) cell from the sweep.
+        X axis: estimated total cost (transformer compute + LLM calls on the deferred slice).
+        Y axis: chosen metric.
+        Color: % of dataset handled by the transformer.
+        The connected dashed line traces the Pareto frontier — combinations not dominated by any other.
+        Hover any point for the full breakdown.
+      </div>
+
+      <div class="controls">
+        <div class="control-group">
+          <label for="metricSelect">Metric (Y axis):</label>
+          <select id="metricSelect">
+            <option value="f1" selected>F1 (positive class)</option>
+            <option value="precision">Precision (positive class)</option>
+            <option value="recall">Recall (positive class)</option>
+            <option value="accuracy">Accuracy</option>
+          </select>
+        </div>
+        <div class="control-group">
+          <label for="llmSelect">Active LLM:</label>
+          <select id="llmSelect">
+            {% for spec in data.llm_specs %}
+            <option value="{{ spec.name }}"{% if loop.first %} selected{% endif %}>
+              {{ spec.name }}{% if spec.accuracy < 1.0 %} (acc {{ "%.2f"|format(spec.accuracy) }}){% endif %}
+            </option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="control-group">
+          <label for="xScaleSelect">X axis:</label>
+          <select id="xScaleSelect">
+            <option value="log" selected>Log</option>
+            <option value="value">Linear</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="tradeoffChart"></div>
+
+      <div id="routingMix" class="routing-mix empty">
+        Hover a multi-tier cascade point (yellow line) above to see its routing mix.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Pareto frontier — recommended threshold combinations</h2>
+      <div class="panel-desc">
+        Non-dominated cells for the currently-selected metric, sorted by cost.
+        Set your run size and (optionally) a max cost — the best row within budget
+        is starred. Rows over budget are dimmed but kept visible for comparison.
+      </div>
+
+      <div class="controls">
+        <div class="control-group">
+          <label for="runSizeInput">Estimated run size:</label>
+          <input id="runSizeInput" type="number" min="1" step="1" value="{{ data.default_run_size }}" />
+        </div>
+        <div class="control-group">
+          <label for="budgetInput">Max cost ($):</label>
+          <input id="budgetInput" type="number" min="0" step="0.01" placeholder="(none)" />
+        </div>
+      </div>
+
+      <table class="pareto-table">
+        <thead>
+          <tr>
+            <th style="text-align:left">Pos t</th>
+            <th style="text-align:left">Neg t</th>
+            <th>F1</th>
+            <th>Precision</th>
+            <th>Recall</th>
+            <th>Accuracy</th>
+            <th>Coverage</th>
+            <th>LLM calls</th>
+            <th>Projected cost ($)</th>
+          </tr>
+        </thead>
+        <tbody id="paretoTableBody"></tbody>
+      </table>
+
+      <div id="budgetStatus" class="budget-status"></div>
+    </div>
+
+    <div class="footer">
+      Generated by <strong>valtron_core</strong> tradeoff analysis
+    </div>
+
+    <script>
+      const data = {{ data | tojson }};
+      const chart = echarts.init(document.getElementById('tradeoffChart'), 'dark');
+
+      // Color palette assigned by LLM order — index 0 (active) gets the accent
+      // orange; the rest get muted grays/blues for overlay lines.
+      const LLM_COLORS = ['#f0883e', '#58a6ff', '#a371f7', '#d29922', '#e3b341'];
+      function llmColor(name) {
+          const idx = data.llm_specs.findIndex(s => s.name === name);
+          return LLM_COLORS[idx % LLM_COLORS.length] || '#8b949e';
+      }
+
+      // Tier colors for the multi-tier cascade. Tier 0 = transformer (green),
+      // then cheapest LLM → most expensive LLM cycle through the same palette
+      // so the same model has the same color in the routing-mix bar and the
+      // per-LLM 2-tier curves.
+      const TRANSFORMER_COLOR = '#3fb950';
+      const CASCADE_LINE_COLOR = '#e3b341';
+      function tierColor(tierIdx) {
+          if (tierIdx === 0) return TRANSFORMER_COLOR;
+          const llmName = data.cascade && data.cascade.tier_names
+              ? data.cascade.tier_names[tierIdx] : null;
+          return llmName ? llmColor(llmName) : '#8b949e';
+      }
+
+      const METRIC_LABELS = {
+          f1: 'F1 (positive class)',
+          precision: 'Precision (positive class)',
+          recall: 'Recall (positive class)',
+          accuracy: 'Accuracy'
+      };
+
+      // Helper: read a per-LLM metric off a cell.
+      function cellMetric(cell, llmName, key) {
+          return cell.per_llm[llmName][key];
+      }
+      function cellCost(cell, llmName) {
+          return cell.per_llm[llmName].cost;
+      }
+
+      // ECharts log axis breaks on zero/negative; floor the cost so a zero-cost
+      // transformer-only baseline still renders meaningfully.
+      const LOG_FLOOR = 1e-8;
+      function floorForLog(x, useLog) {
+          return useLog ? Math.max(x, LOG_FLOOR) : x;
+      }
+
+      function buildOption(metricKey, activeLlm, xScale) {
+          const useLog = xScale === 'log';
+          const cells = data.cells;
+          const activeColor = llmColor(activeLlm);
+          const activeParetoSet = new Set(data.pareto_indices_by_llm[activeLlm][metricKey]);
+
+          // Cell scatter (active LLM only — color encodes coverage)
+          const cellPoints = cells.map((c, i) => ({
+              value: [floorForLog(cellCost(c, activeLlm), useLog), cellMetric(c, activeLlm, metricKey), c.coverage],
+              cell: c,
+              llmName: activeLlm,
+              symbolSize: activeParetoSet.has(i) ? 12 : 8,
+              itemStyle: {
+                  borderColor: activeParetoSet.has(i) ? activeColor : '#30363d',
+                  borderWidth: activeParetoSet.has(i) ? 2 : 1
+              }
+          }));
+
+          // Active Pareto line (solid, accent color)
+          const activeParetoCells = data.pareto_indices_by_llm[activeLlm][metricKey]
+              .map(i => cells[i])
+              .slice()
+              .sort((a, b) => cellCost(a, activeLlm) - cellCost(b, activeLlm));
+          const activeParetoLine = activeParetoCells.map(c => [
+              floorForLog(cellCost(c, activeLlm), useLog),
+              cellMetric(c, activeLlm, metricKey)
+          ]);
+
+          // Overlay Pareto lines for non-active LLMs (muted dashed)
+          const overlaySeries = data.llm_specs
+              .filter(s => s.name !== activeLlm)
+              .map(spec => {
+                  const set = data.pareto_indices_by_llm[spec.name][metricKey];
+                  const points = set
+                      .map(i => cells[i])
+                      .slice()
+                      .sort((a, b) => cellCost(a, spec.name) - cellCost(b, spec.name))
+                      .map(c => [floorForLog(cellCost(c, spec.name), useLog), cellMetric(c, spec.name, metricKey)]);
+                  return {
+                      name: `${spec.name} Pareto`,
+                      type: 'line',
+                      data: points,
+                      showSymbol: false,
+                      lineStyle: {
+                          color: llmColor(spec.name), width: 1, type: 'dashed', opacity: 0.55
+                      },
+                      tooltip: { show: false },
+                      z: 0
+                  };
+              });
+
+          // Multi-tier cascade Pareto points + line.
+          const cascade = data.cascade;
+          const cascadeSeries = [];
+          if (cascade && cascade.cells && cascade.cells.length > 0) {
+              const paretoIdx = cascade.pareto_indices[metricKey] || [];
+              const paretoCells = paretoIdx
+                  .map(i => cascade.cells[i])
+                  .slice()
+                  .sort((a, b) => a.cost - b.cost);
+              const points = paretoCells.map(c => ({
+                  value: [floorForLog(c.cost, useLog), c[metricKey]],
+                  cell: c,
+                  cascade: true,
+                  itemStyle: {
+                      color: CASCADE_LINE_COLOR,
+                      borderColor: '#0d1117',
+                      borderWidth: 1
+                  }
+              }));
+              cascadeSeries.push({
+                  name: 'cascade Pareto',
+                  type: 'line',
+                  data: paretoCells.map(c => [floorForLog(c.cost, useLog), c[metricKey]]),
+                  showSymbol: false,
+                  lineStyle: { color: CASCADE_LINE_COLOR, width: 2.5 },
+                  tooltip: { show: false },
+                  z: 2
+              });
+              cascadeSeries.push({
+                  name: 'cascade configs',
+                  type: 'scatter',
+                  data: points,
+                  symbolSize: 10,
+                  z: 3
+              });
+          }
+
+          const baselineT = data.baseline_transformer;
+          const referenceData = [
+              {
+                  value: [floorForLog(baselineT.cost, useLog), baselineT[metricKey], 1.0],
+                  baseline: baselineT,
+                  symbol: 'diamond', symbolSize: 18,
+                  itemStyle: { color: '#3fb950', borderColor: '#0d1117', borderWidth: 2 },
+                  label: { show: true, position: 'right', color: '#3fb950',
+                           formatter: '100% transformer' }
+              }
+          ];
+          for (const spec of data.llm_specs) {
+              const b = data.baselines_by_llm[spec.name];
+              const isActive = spec.name === activeLlm;
+              referenceData.push({
+                  value: [floorForLog(b.cost, useLog), b[metricKey], 0.0],
+                  baseline: b,
+                  symbol: 'diamond',
+                  symbolSize: isActive ? 18 : 12,
+                  itemStyle: {
+                      color: llmColor(spec.name), borderColor: '#0d1117', borderWidth: 2,
+                      opacity: isActive ? 1.0 : 0.6
+                  },
+                  label: {
+                      show: isActive, position: 'left', color: llmColor(spec.name),
+                      formatter: `100% ${spec.name}`
+                  }
+              });
+          }
+
+          const legendData = [
+              { name: `${activeLlm} Pareto`, icon: 'roundRect',
+                itemStyle: { color: activeColor } },
+              ...data.llm_specs
+                  .filter(s => s.name !== activeLlm)
+                  .map(s => ({
+                      name: `${s.name} Pareto`, icon: 'roundRect',
+                      itemStyle: { color: llmColor(s.name), opacity: 0.55 }
+                  }))
+          ];
+
+          return {
+              backgroundColor: '#0d1117',
+              legend: {
+                  data: legendData,
+                  top: 8,
+                  right: 100,
+                  textStyle: { color: '#8b949e', fontSize: 11 },
+                  itemWidth: 20, itemHeight: 4,
+                  selectedMode: false
+              },
+              tooltip: {
+                  trigger: 'item',
+                  backgroundColor: '#161b22',
+                  borderColor: '#30363d',
+                  textStyle: { color: '#c9d1d9' },
+                  formatter: function (p) {
+                      if (p.data.baseline) {
+                          const b = p.data.baseline;
+                          return `<b>${b.label}</b><br/>` +
+                                 `accuracy: ${b.accuracy.toFixed(3)}<br/>` +
+                                 `f1: ${b.f1.toFixed(3)}<br/>` +
+                                 `precision: ${b.precision.toFixed(3)}<br/>` +
+                                 `recall: ${b.recall.toFixed(3)}<br/>` +
+                                 `coverage: ${(b.coverage * 100).toFixed(1)}%<br/>` +
+                                 `transformer cost: $${b.transformer_cost.toFixed(6)}<br/>` +
+                                 `LLM cost: $${b.llm_cost.toFixed(4)}<br/>` +
+                                 `<b>total cost: $${b.cost.toFixed(4)}</b>`;
+                      }
+                      if (p.data.cascade && p.data.cell) {
+                          const c = p.data.cell;
+                          const tn = cascade.tier_names;
+                          const mix = c.tier_counts.map((n, i) =>
+                              `${tn[i]}: ${n}`).join(' / ');
+                          return `<b>cascade config</b><br/>` +
+                                 `f1: ${c.f1.toFixed(3)}<br/>` +
+                                 `precision: ${c.precision.toFixed(3)}<br/>` +
+                                 `recall: ${c.recall.toFixed(3)}<br/>` +
+                                 `accuracy: ${c.accuracy.toFixed(3)}<br/>` +
+                                 `routing: ${mix}<br/>` +
+                                 `<b>total cost: $${c.cost.toFixed(4)}</b>`;
+                      }
+                      const c = p.data.cell;
+                      if (!c) return '';
+                      const per = c.per_llm[p.data.llmName];
+                      return `<b>pos_t = ${c.pos_t.toFixed(3)}</b>, ` +
+                             `<b>neg_t = ${c.neg_t.toFixed(3)}</b> ` +
+                             `<span style="color:#8b949e">(LLM: ${p.data.llmName})</span><br/>` +
+                             `f1: ${per.f1.toFixed(3)}<br/>` +
+                             `precision: ${per.precision.toFixed(3)}<br/>` +
+                             `recall: ${per.recall.toFixed(3)}<br/>` +
+                             `accuracy: ${per.accuracy.toFixed(3)}<br/>` +
+                             `coverage: ${(c.coverage * 100).toFixed(1)}% ` +
+                             `(${c.n_transformer} transformer / ${c.n_frontier} LLM)<br/>` +
+                             `transformer cost: $${c.transformer_cost.toFixed(6)}<br/>` +
+                             `LLM cost: $${per.llm_cost.toFixed(4)}<br/>` +
+                             `<b>total cost: $${per.cost.toFixed(4)}</b>`;
+                  }
+              },
+              grid: { left: '70px', right: '90px', top: '55px', bottom: '60px' },
+              xAxis: {
+                  type: useLog ? 'log' : 'value',
+                  name: useLog ? 'Estimated total cost ($, log)' : 'Estimated total cost ($)',
+                  nameLocation: 'middle', nameGap: 35,
+                  nameTextStyle: { color: '#8b949e' },
+                  axisLabel: {
+                      color: '#8b949e',
+                      formatter: v => v >= 1 ? `$${v.toFixed(2)}` : `$${v.toExponential(0)}`
+                  },
+                  axisLine: { lineStyle: { color: '#30363d' } },
+                  splitLine: { lineStyle: { color: '#21262d' } }
+              },
+              yAxis: {
+                  type: 'value',
+                  name: METRIC_LABELS[metricKey],
+                  nameLocation: 'middle', nameGap: 50,
+                  nameTextStyle: { color: '#8b949e' },
+                  axisLabel: { color: '#8b949e' },
+                  axisLine: { lineStyle: { color: '#30363d' } },
+                  splitLine: { lineStyle: { color: '#21262d' } },
+                  scale: true, max: 1
+              },
+              visualMap: {
+                  min: 0, max: 1,
+                  dimension: 2, orient: 'vertical',
+                  right: 0, top: 'middle',
+                  text: ['100% transformer', '0% transformer'],
+                  textStyle: { color: '#8b949e', fontSize: 11 },
+                  inRange: { color: ['#388bfd', '#a371f7', '#f0883e'] },
+                  calculable: false,
+                  seriesIndex: [0]
+              },
+              series: [
+                  {
+                      name: `${activeLlm} cells`,
+                      type: 'scatter',
+                      data: cellPoints
+                  },
+                  {
+                      name: `${activeLlm} Pareto`,
+                      type: 'line',
+                      data: activeParetoLine,
+                      showSymbol: false,
+                      lineStyle: { color: activeColor, width: 2.5, type: 'dashed' },
+                      tooltip: { show: false },
+                      z: 2
+                  },
+                  ...overlaySeries,
+                  ...cascadeSeries,
+                  {
+                      name: 'Reference points',
+                      type: 'scatter',
+                      data: referenceData,
+                      z: 4
+                  }
+              ]
+          };
+      }
+
+      function renderParetoTable(metricKey, activeLlm, runSize, budget) {
+          const cells = data.cells;
+          const rows = data.pareto_indices_by_llm[activeLlm][metricKey]
+              .map(i => cells[i])
+              .slice()
+              .sort((a, b) => cellCost(a, activeLlm) - cellCost(b, activeLlm));
+
+          const spec = data.llm_specs.find(s => s.name === activeLlm);
+          const scale = runSize / data.n_total;
+          const projected = rows.map(c => {
+              const projCalls = Math.round(c.n_frontier * scale);
+              const projTransformerCost = runSize * data.transformer_cost_per_call;
+              const projLlmCost = projCalls * spec.cost_per_call;
+              const projCost = projTransformerCost + projLlmCost;
+              return { cell: c, projCalls, projTransformerCost, projLlmCost, projCost };
+          });
+
+          let recommendedIdx = -1;
+          if (budget !== null && Number.isFinite(budget)) {
+              let bestMetric = -Infinity;
+              projected.forEach((p, i) => {
+                  const m = cellMetric(p.cell, activeLlm, metricKey);
+                  if (p.projCost <= budget && m > bestMetric) {
+                      bestMetric = m;
+                      recommendedIdx = i;
+                  }
+              });
+          }
+
+          const tbody = document.getElementById('paretoTableBody');
+          tbody.innerHTML = projected.map((p, i) => {
+              const c = p.cell;
+              const per = c.per_llm[activeLlm];
+              const overBudget = budget !== null && Number.isFinite(budget) && p.projCost > budget;
+              const recommended = i === recommendedIdx;
+              const cls = recommended ? 'recommended' : (overBudget ? 'over-budget' : '');
+              return `<tr class="${cls}">
+                <td style="text-align:left">${c.pos_t.toFixed(3)}</td>
+                <td style="text-align:left">${c.neg_t.toFixed(3)}</td>
+                <td>${per.f1.toFixed(3)}</td>
+                <td>${per.precision.toFixed(3)}</td>
+                <td>${per.recall.toFixed(3)}</td>
+                <td>${per.accuracy.toFixed(3)}</td>
+                <td>${(c.coverage * 100).toFixed(1)}%</td>
+                <td>${p.projCalls.toLocaleString()}</td>
+                <td>$${p.projCost.toFixed(4)}</td>
+              </tr>`;
+          }).join('');
+
+          const statusEl = document.getElementById('budgetStatus');
+          const prefix = `[${activeLlm}] `;
+          if (budget === null || !Number.isFinite(budget)) {
+              statusEl.className = 'budget-status';
+              statusEl.textContent = `${prefix}Projecting to ${runSize.toLocaleString()} samples — set a max cost to highlight a recommended row.`;
+          } else if (recommendedIdx === -1) {
+              statusEl.className = 'budget-status warn';
+              const cheapest = projected[0];
+              const cheapestMetric = cellMetric(cheapest.cell, activeLlm, metricKey);
+              statusEl.textContent =
+                `${prefix}No Pareto row fits $${budget.toFixed(2)} at ${runSize.toLocaleString()} samples. ` +
+                `Cheapest option: $${cheapest.projCost.toFixed(4)} ` +
+                `(${metricKey} = ${cheapestMetric.toFixed(3)}).`;
+          } else {
+              const rec = projected[recommendedIdx];
+              const recMetric = cellMetric(rec.cell, activeLlm, metricKey);
+              statusEl.className = 'budget-status';
+              statusEl.textContent =
+                `${prefix}★ Best row within $${budget.toFixed(2)} at ${runSize.toLocaleString()} samples: ` +
+                `${metricKey} = ${recMetric.toFixed(3)}, ` +
+                `projected cost $${rec.projCost.toFixed(4)} ` +
+                `(${rec.projCalls.toLocaleString()} LLM calls).`;
+          }
+      }
+
+      let currentMetric = 'f1';
+      let currentLlm = data.primary_llm;
+      let currentXScale = 'log';
+
+      function readBudget() {
+          const v = parseFloat(document.getElementById('budgetInput').value);
+          return Number.isFinite(v) && v >= 0 ? v : null;
+      }
+      function readRunSize() {
+          const v = parseInt(document.getElementById('runSizeInput').value, 10);
+          return Number.isFinite(v) && v > 0 ? v : data.default_run_size;
+      }
+      function rerender() {
+          chart.setOption(buildOption(currentMetric, currentLlm, currentXScale), true);
+          renderParetoTable(currentMetric, currentLlm, readRunSize(), readBudget());
+      }
+
+      function renderRoutingMix(cell) {
+          const el = document.getElementById('routingMix');
+          if (!data.cascade || !cell || !cell.tier_counts) {
+              el.className = 'routing-mix empty';
+              el.innerHTML = 'Hover a multi-tier cascade point (yellow line) above to see its routing mix.';
+              return;
+          }
+          const tn = data.cascade.tier_names;
+          const total = cell.tier_counts.reduce((s, n) => s + n, 0);
+          if (total === 0) return;
+          const segments = cell.tier_counts.map((n, i) => {
+              const pct = (n / total) * 100;
+              return { name: tn[i], n: n, pct: pct, color: tierColor(i) };
+          });
+          const barHtml = segments
+              .filter(s => s.pct > 0)
+              .map(s => `<div class="routing-mix-segment"
+                              style="width:${s.pct}%; background:${s.color};"
+                              title="${s.name}: ${s.n} (${s.pct.toFixed(1)}%)">${
+                                  s.pct >= 6 ? Math.round(s.pct) + '%' : ''
+                              }</div>`)
+              .join('');
+          const legendHtml = segments.map(s =>
+              `<span><span class="swatch" style="background:${s.color};"></span>${
+                  s.name}: ${s.n.toLocaleString()} (${s.pct.toFixed(1)}%)</span>`).join('');
+          el.className = 'routing-mix';
+          el.innerHTML =
+              `<div class="routing-mix-title">Routing for hovered cascade cell — ` +
+              `<b>cost $${cell.cost.toFixed(4)}</b>, ` +
+              `<b>${currentMetric}=${cell[currentMetric].toFixed(3)}</b></div>` +
+              `<div class="routing-mix-bar">${barHtml}</div>` +
+              `<div class="routing-mix-legend">${legendHtml}</div>`;
+      }
+
+      chart.on('mouseover', function (p) {
+          if (p && p.data && p.data.cascade && p.data.cell) {
+              renderRoutingMix(p.data.cell);
+          }
+      });
+
+      rerender();
+
+      document.getElementById('metricSelect').addEventListener('change', e => {
+          currentMetric = e.target.value;
+          rerender();
+      });
+      document.getElementById('llmSelect').addEventListener('change', e => {
+          currentLlm = e.target.value;
+          rerender();
+      });
+      document.getElementById('xScaleSelect').addEventListener('change', e => {
+          currentXScale = e.target.value;
+          rerender();
+      });
+      document.getElementById('runSizeInput').addEventListener('input', rerender);
+      document.getElementById('budgetInput').addEventListener('input', rerender);
+
+      window.addEventListener('resize', () => chart.resize());
+    </script>
+  </body>
+</html>

@@ -513,7 +513,7 @@ class TestEvaluateTransformer:
 
         with patch("valtron_core.transformer_wrapper.TransformerModelWrapper") as MockW:
             mock_w = Mock()
-            mock_w.predict = Mock(return_value='{"sentiment": "positive"}')
+            mock_w.predict_with_confidence = Mock(return_value=('{"sentiment": "positive"}', 0.95))
             MockW.return_value = mock_w
             result = await eval_._evaluate_transformer(eval_.models[0], docs, None)
 

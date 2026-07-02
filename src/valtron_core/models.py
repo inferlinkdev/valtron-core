@@ -111,6 +111,7 @@ class PredictionResult(BaseModel):
     model: str = Field(..., description="Model used for prediction")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     field_metrics: EvalResult | None = Field(default=None, description="Per-field accuracy metrics")
+    confidence_score: float | None = Field(default=None, description="Classifier confidence for the predicted label (transformer models only)")
 
 
 class EvaluationMetrics(BaseModel):

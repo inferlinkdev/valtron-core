@@ -56,6 +56,21 @@ class TransformerModelWrapper:
         self.prediction_count += 1
         return label
 
+    def predict_with_confidence(self, document: str) -> tuple[str, float]:
+        """
+        Classify a single document and return the confidence score for the predicted label.
+
+        Args:
+            document: Text to classify.
+
+        Returns:
+            (predicted_label, confidence) where confidence is the softmax probability
+            for the winning class (0.0 to 1.0).
+        """
+        label, scores = self._classifier.predict_with_scores([document])[0]
+        self.prediction_count += 1
+        return label, scores[label]
+
     def batch_predict(self, documents: list[str]) -> list[str]:
         """
         Classify multiple documents.

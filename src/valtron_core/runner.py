@@ -80,6 +80,8 @@ def save_single_model_result(
         }
         if p.field_metrics:
             pred_dict["field_metrics"] = p.field_metrics.model_dump()
+        if p.confidence_score is not None:
+            pred_dict["confidence_score"] = p.confidence_score
         predictions.append(pred_dict)
 
     model_data: dict[str, Any] = {
@@ -469,6 +471,7 @@ class EvaluationRunner:
                         evaluation_cost=p.get("evaluation_cost", 0.0),
                         model=model_name,
                         field_metrics=field_metrics,
+                        confidence_score=p.get("confidence_score"),
                     )
                 )
 

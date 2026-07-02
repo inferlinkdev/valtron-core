@@ -259,6 +259,34 @@ class TransformerClassifier:
 
         return [self.id_to_label[pred] for pred in predictions]
 
+    def predict_with_scores(self, texts: list[str]) -> list[tuple[str, dict[str, float]]]:
+        """Classify a batch of texts and return per-class softmax probabilities.
+
+        Args:
+            texts: Input strings.
+
+        Returns:
+            List of (predicted_label, {label: probability}) for each text.
+        """
+        if self.model is None or self.tokenizer is None:
+            raise ValueError("No model loaded. Call train() or load_model() first.")
+
+        import torch.nn.functional as F
+
+        inputs = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
+
+        self.model.eval()
+        with torch.no_grad():
+            outputs = self.model(**inputs)
+            probs = F.softmax(outputs.logits, dim=-1)
+
+        results = []
+        for i, prob_row in enumerate(probs.tolist()):
+            scores = {self.id_to_label[j]: p for j, p in enumerate(prob_row)}
+            pred_label = max(scores, key=lambda k: scores[k])
+            results.append((pred_label, scores))
+        return results
+
     def predict_single(self, text: str) -> str:
         """Classify a single text.
 
