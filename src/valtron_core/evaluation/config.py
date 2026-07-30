@@ -221,4 +221,20 @@ class BaseRecipeConfig(BaseModel):
 
 
 class ModelEvalConfig(BaseRecipeConfig):
+    """Config for ``ModelEval``: general-purpose model comparison and evaluation."""
+
     use_case: str = "model evaluation"
+
+
+class ClassificationConfig(ModelEvalConfig):
+    """Config for ``ClassificationExperiment``: classification-shaped data with plain string labels."""
+
+    infer_schema: bool = Field(
+        default=True,
+        description=(
+            "When no response_format is provided (neither the constructor arg nor "
+            "response_format_schema), auto-infer a single-field label schema constrained to the "
+            "unique label values seen in the data. Set False to keep the model unconstrained "
+            "(plain text output) instead."
+        ),
+    )
