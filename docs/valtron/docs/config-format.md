@@ -146,9 +146,17 @@ Controls automatic few-shot example generation. When enabled, Valtron generates 
 |---|---|---|---|
 | `enabled` | `bool` | `false` | Enable few-shot generation |
 | `generator_model` | `string` | `"gpt-4o-mini"` | LLM used to generate synthetic examples |
-| `num_examples` | `int` | `50` | Number of synthetic examples to attempt generating |
+| `num_examples` | `int` | `10` | Number of synthetic examples to attempt generating |
 | `max_seed_examples` | `int` | `10` | Max real data rows to use as seeds |
 | `max_few_shots` | `int` | `10` | Max examples injected into each prompt |
+| `max_concurrent_generations` | `int` | `10` | Max generation/validation LLM calls in flight |
+
+This phase runs before any model comparison, so it delays the start of a run. Every
+generation call inlines reference documents, so with large documents the cost is
+dominated by input tokens: raising `max_concurrent_generations` is limited by your
+provider's tokens-per-minute quota well before its requests-per-minute quota. Raising
+`num_examples` well above `max_few_shots` mostly buys wall-clock, since only the
+validated best are ever injected.
 
 ```json
 {
