@@ -44,6 +44,30 @@ _DEFAULT_INSTANCE_HOURLY: float = 0.085
 _DEFAULT_SAMPLES_PER_SECOND: float = 8.0
 
 
+def _unwrap_label(value: str) -> str:
+    """Normalize a classification label to its bare scalar form.
+
+    Structured-output classification wraps single-field labels as JSON
+    (e.g. ``{"label": "positive"}``) so the LLM's response schema and the
+    auto-wrapped ground truth compare correctly during evaluation (see
+    ``ModelEval._auto_wrap_string_labels``). But the LLM's own JSON
+    serialization (key order, whitespace) isn't guaranteed to match the
+    ground truth's ``json.dumps`` output byte-for-byte, and the transformer
+    predicts bare strings. TradeoffAnalyzer needs every label -- transformer
+    and LLM, predicted and ground truth -- reduced to the same canonical
+    scalar so downstream ``==`` comparisons against ``pos_label``/``neg_label``
+    are meaningful. Falls back to the original value when it isn't a
+    single-key JSON object (e.g. it's already a bare string).
+    """
+    try:
+        parsed = json.loads(value)
+    except (json.JSONDecodeError, TypeError):
+        return value
+    if isinstance(parsed, dict) and len(parsed) == 1:
+        return str(next(iter(parsed.values())))
+    return value
+
+
 def _sweep_to_json_dict(sweep: dict[str, Any]) -> dict[str, Any]:
     """Return a copy of sweep with all values JSON-serializable.
 
@@ -168,9 +192,9 @@ class TradeoffAnalyzer:
 
         tradeoff_rows = [
             TradeoffRow(
-                pred_label=p.predicted_value,
+                pred_label=_unwrap_label(p.predicted_value),
                 confidence=p.confidence_score,  # type: ignore[arg-type]
-                ground_truth=p.expected_value,
+                ground_truth=_unwrap_label(p.expected_value),
             )
             for p in predictions
         ]
@@ -208,17 +232,21 @@ class TradeoffAnalyzer:
             for pred in llm_result.predictions:
                 idx = doc_id_to_idx.get(pred.document_id)
                 if idx is not None:
-                    per_example[idx] = pred.predicted_value
+                    per_example[idx] = _unwrap_label(pred.predicted_value)
 
-            n_correct = sum(
-                1 for p in llm_result.predictions if p.predicted_value == p.expected_value
+            # Reuse is_correct from evaluation rather than re-deriving it here:
+            # it was already scored via JsonEvaluator (or exact match) against
+            # the auto-wrapped ground truth, so it's robust to JSON formatting
+            # differences between the LLM's raw output and our own json.dumps.
+            n_correct = sum(1 for p in llm_result.predictions if p.is_correct)
+            llm_specs.append(
+                LLMSpec(
+                    name=llm_result.model,
+                    cost_per_call=_estimate_cost_per_call(llm_result.model),
+                    accuracy=n_correct / n_total if n_total > 0 else 1.0,
+                    predictions=per_example,
+                )
             )
-            llm_specs.append(LLMSpec(
-                name=llm_result.model,
-                cost_per_call=_estimate_cost_per_call(llm_result.model),
-                accuracy=n_correct / n_total if n_total > 0 else 1.0,
-                predictions=per_example,
-            ))
 
         precomputed = {
             "tradeoff_rows": tradeoff_rows,
