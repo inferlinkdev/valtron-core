@@ -17,16 +17,23 @@ def mock_validate_environment():
     ):
         yield
 
-from valtron_core.evaluation.model_eval import ModelEval
+
+from valtron_core.evaluation.model_eval import ClassificationExperiment, ExtractionExperiment, ModelEval
 from valtron_core.schema_synthesis import synthesize_pydantic_model
 from valtron_core.decompose import find_split_point
 from valtron_core.evaluation.config import (
+    ClassificationConfig,
     ModelEvalConfig,
     LLMModelConfig,
     Manipulation,
     STRUCTURED_MANIPULATIONS,
 )
-from valtron_core.models import EvaluationResult, EvaluationMetrics, FieldMetricsConfig, PredictionResult
+from valtron_core.models import (
+    EvaluationResult,
+    EvaluationMetrics,
+    FieldMetricsConfig,
+    PredictionResult,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -844,9 +851,7 @@ class TestAddModels:
 
     def test_add_structured_manip_allowed_with_config_response_format_schema(self):
         eval_ = ModelEval(config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "pos"}])
-        eval_.add_models(
-            [{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}]
-        )
+        eval_.add_models([{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}])
         assert eval_.models[-1].label == "new"
 
     def test_add_structured_manip_allowed_with_pydantic_response_format(self):
@@ -856,9 +861,7 @@ class TestAddModels:
             data=[{"content": "T", "label": "pos"}],
             response_format=SampleSchema,
         )
-        eval_.add_models(
-            [{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}]
-        )
+        eval_.add_models([{"name": "gpt-4o", "label": "new", "prompt_manipulation": ["decompose"]}])
         assert eval_.models[-1].label == "new"
 
     def test_add_updates_config_models(self):
@@ -1140,6 +1143,285 @@ class TestIncrementalEvaluation:
 
 
 # ===========================================================================
+# infer_schema (auto-inferred label schema for classification-shaped data)
+# ===========================================================================
+
+
+class TestInferSchema:
+    """ClassificationExperiment's infer_schema=True (default) auto-builds a single-field
+    `label` schema from unique plain-string labels when no response_format/
+    response_format_schema is otherwise provided. Plain ModelEval never does this,
+    and it raises upfront for data that isn't plain-string-labeled."""
+
+    @pytest.mark.unit
+    def test_infers_literal_enum_from_unique_labels(self):
+        import typing
+
+        config = {"models": [{"name": "gpt-4o-mini"}], "prompt": "Classify: {content}"}
+        eval_ = ClassificationExperiment(
+            config=config,
+            data=[{"content": "T", "label": "positive"}, {"content": "U", "label": "negative"}],
+        )
+        assert eval_.response_format is not None
+        fields = eval_.response_format.model_fields
+        assert list(fields) == ["label"]
+        annotation = fields["label"].annotation
+        assert typing.get_origin(annotation) is typing.Literal
+        assert set(typing.get_args(annotation)) == {"positive", "negative"}
+
+    @pytest.mark.unit
+    def test_falls_back_to_plain_str_beyond_50_uniques(self):
+        config = {"models": [{"name": "gpt-4o-mini"}], "prompt": "Classify: {content}"}
+        data = [{"content": str(i), "label": f"label_{i}"} for i in range(51)]
+        eval_ = ClassificationExperiment(config=config, data=data)
+        assert eval_.response_format is not None
+        assert eval_.response_format.model_fields["label"].annotation is str
+
+    @pytest.mark.unit
+    def test_constructor_response_format_takes_priority_over_inference(self):
+        eval_ = ClassificationExperiment(
+            config={"models": [{"name": "gpt-4o-mini"}], "prompt": "Classify: {content}"},
+            data=[{"content": "T", "label": "positive"}],
+            response_format=SampleSchema,
+        )
+        assert eval_.response_format is SampleSchema
+
+    @pytest.mark.unit
+    def test_config_response_format_schema_takes_priority_over_inference(self):
+        # _LABEL_SCHEMA has no enum constraint -- confirms the config schema was
+        # synthesized as-is rather than replaced by the inferred Literal enum.
+        import typing
+
+        eval_ = ClassificationExperiment(
+            config=CLASSIFY_CONFIG, data=[{"content": "T", "label": "positive"}]
+        )
+        assert eval_.response_format is not None
+        annotation = eval_.response_format.model_fields["label"].annotation
+        assert annotation is str
+        assert typing.get_origin(annotation) is not typing.Literal
+
+    @pytest.mark.unit
+    def test_dict_labels_raise(self):
+        config = {"models": [{"name": "gpt-4o-mini"}], "prompt": "Extract: {content}"}
+        with pytest.raises(ValueError, match="ExtractionExperiment"):
+            ClassificationExperiment(config=config, data=[{"content": "T", "label": {"field": "value"}}])
+
+    @pytest.mark.unit
+    def test_json_object_string_labels_raise(self):
+        config = {"models": [{"name": "gpt-4o-mini"}], "prompt": "Extract: {content}"}
+        with pytest.raises(ValueError, match="ExtractionExperiment"):
+            ClassificationExperiment(
+                config=config,
+                data=[{"content": "T", "label": '{"name": "Apple Inc.", "city": "Cupertino"}'}],
+            )
+
+    @pytest.mark.unit
+    def test_json_array_string_labels_raise(self):
+        config = {"models": [{"name": "gpt-4o-mini"}], "prompt": "Extract: {content}"}
+        with pytest.raises(ValueError, match="ExtractionExperiment"):
+            ClassificationExperiment(config=config, data=[{"content": "T", "label": '["a", "b"]'}])
+
+    @pytest.mark.unit
+    def test_non_json_string_labels_still_infer(self):
+        import typing
+
+        config = {"models": [{"name": "gpt-4o-mini"}], "prompt": "Classify: {content}"}
+        eval_ = ClassificationExperiment(
+            config=config,
+            data=[{"content": "T", "label": "positive"}, {"content": "U", "label": "negative"}],
+        )
+        assert eval_.response_format is not None
+        annotation = eval_.response_format.model_fields["label"].annotation
+        assert typing.get_origin(annotation) is typing.Literal
+
+    @pytest.mark.unit
+    def test_empty_data_skips_inference(self):
+        config = {"models": [{"name": "gpt-4o-mini"}], "prompt": "Classify: {content}"}
+        eval_ = ClassificationExperiment(config=config, data=[])
+        assert eval_.response_format is None
+
+    @pytest.mark.unit
+    def test_infer_schema_false_matches_pre_feature_behavior(self):
+        config = {
+            "models": [{"name": "gpt-4o-mini"}],
+            "prompt": "Classify: {content}",
+            "infer_schema": False,
+        }
+        eval_ = ClassificationExperiment(
+            config=config,
+            data=[{"content": "T", "label": "positive"}, {"content": "U", "label": "negative"}],
+        )
+        assert eval_.response_format is None
+        assert eval_.decomposed_evaluator is None
+        eval_._preflight_check()
+        assert eval_._auto_wrap_string_labels is False
+        _, labels = eval_._load_documents_and_labels()
+        assert labels[0].value == "positive"
+
+    @pytest.mark.unit
+    def test_inferred_schema_enables_auto_wrap(self):
+        config = {"models": [{"name": "gpt-4o-mini"}], "prompt": "Classify: {content}"}
+        eval_ = ClassificationExperiment(
+            config=config,
+            data=[{"content": "T", "label": "positive"}, {"content": "U", "label": "negative"}],
+        )
+        eval_._preflight_check()
+        assert eval_._auto_wrap_string_labels is True
+        _, labels = eval_._load_documents_and_labels()
+        assert labels[0].value == json.dumps({"label": "positive"})
+
+    @pytest.mark.unit
+    def test_infer_schema_defaults_to_true(self):
+        config = ClassificationConfig(
+            models=[LLMModelConfig(name="gpt-4o-mini")],
+            prompt="Classify: {content}",
+        )
+        assert config.infer_schema is True
+
+    @pytest.mark.unit
+    def test_model_eval_never_infers(self):
+        """Plain ModelEval never auto-builds a schema, even for plain-string labels."""
+        config = {"models": [{"name": "gpt-4o-mini"}], "prompt": "Classify: {content}"}
+        eval_ = ModelEval(
+            config=config,
+            data=[{"content": "T", "label": "positive"}, {"content": "U", "label": "negative"}],
+        )
+        assert eval_.response_format is None
+
+    @pytest.mark.unit
+    def test_load_experiment_results_does_not_reinfer_schema(self, tmp_path):
+        """A run saved with no response_format_schema reloads via plain ModelEval,
+        which never infers a schema, so response_format stays None."""
+        run_dir = tmp_path / "run"
+        models_dir = run_dir / "models"
+        models_dir.mkdir(parents=True)
+        metadata = {
+            "use_case": "test",
+            "original_prompt": "Classify: {content}",
+            "field_config": None,
+            "response_format_schema": None,
+            "documents": [
+                {"id": "d1", "content": "Hello", "label": "positive"},
+                {"id": "d2", "content": "Bye", "label": "negative"},
+            ],
+        }
+        with open(run_dir / "metadata.json", "w") as f:
+            json.dump(metadata, f)
+        model_data = {
+            "run_id": "abc-123",
+            "model": "gpt-4o-mini",
+            "prompt_template": "Classify: {content}",
+            "llm_config": {"model": "gpt-4o-mini"},
+            "metrics": None,
+            "predictions": [],
+        }
+        with open(models_dir / "gpt-4o-mini.json", "w") as f:
+            json.dump(model_data, f)
+
+        loaded = ModelEval.load_experiment_results(run_dir)
+        assert loaded.response_format is None
+
+
+# ===========================================================================
+# ExtractionExperiment (requires a schema upfront)
+# ===========================================================================
+
+
+class TestExtractionExperiment:
+    """ExtractionExperiment requires a schema, either response_format or
+    config.response_format_schema, and fails immediately if neither is given."""
+
+    @pytest.mark.unit
+    def test_works_with_explicit_response_format(self):
+        eval_ = ExtractionExperiment(
+            config=EXTRACT_CONFIG,
+            data=[{"content": "T", "label": {"name": "Apple Inc.", "value": "x"}}],
+            response_format=SampleSchema,
+        )
+        assert eval_.response_format is SampleSchema
+
+    @pytest.mark.unit
+    def test_works_with_config_response_format_schema(self):
+        eval_ = ExtractionExperiment(
+            config=CLASSIFY_CONFIG,
+            data=[{"content": "T", "label": "positive"}],
+        )
+        assert eval_.response_format is not None
+
+    @pytest.mark.unit
+    def test_no_schema_with_dict_labels_raises_generic_message(self):
+        with pytest.raises(ValueError, match="requires a schema"):
+            ExtractionExperiment(
+                config=EXTRACT_CONFIG,
+                data=[{"content": "T", "label": {"name": "Apple Inc."}}],
+            )
+
+    @pytest.mark.unit
+    def test_no_schema_with_plain_string_labels_suggests_classification_eval(self):
+        with pytest.raises(ValueError, match="ClassificationExperiment"):
+            ExtractionExperiment(
+                config=EXTRACT_CONFIG,
+                data=[{"content": "T", "label": "positive"}],
+            )
+
+    @pytest.mark.unit
+    def test_no_schema_with_empty_data_raises_generic_message(self):
+        with pytest.raises(ValueError, match="requires a schema"):
+            ExtractionExperiment(config=EXTRACT_CONFIG, data=[])
+
+    @pytest.mark.unit
+    def test_load_experiment_results_restores_saved_schema_before_init(self, tmp_path):
+        """A saved extraction run's response_format_schema must be visible to
+        ExtractionExperiment.__init__ at construction time, since it raises
+        immediately if no schema is present. Loading the schema onto the
+        instance only *after* construction (as load_experiment_results used to)
+        meant ExtractionExperiment.load_experiment_results always raised, even
+        for a run that had a perfectly valid saved schema."""
+        run_dir = tmp_path / "run"
+        models_dir = run_dir / "models"
+        models_dir.mkdir(parents=True)
+        metadata = {
+            "use_case": "test",
+            "original_prompt": "Extract: {content}",
+            "response_format_schema": {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "SampleSchema",
+                    "strict": True,
+                    "schema": {
+                        "type": "object",
+                        "title": "SampleSchema",
+                        "properties": {
+                            "name": {"type": "string"},
+                            "value": {"type": "string"},
+                        },
+                        "required": ["name", "value"],
+                        "additionalProperties": False,
+                    },
+                },
+            },
+            "documents": [
+                {"id": "d1", "content": "Hello", "label": {"name": "Apple Inc.", "value": "x"}},
+            ],
+        }
+        with open(run_dir / "metadata.json", "w") as f:
+            json.dump(metadata, f)
+        model_data = {
+            "run_id": "abc-123",
+            "model": "gpt-4o-mini",
+            "prompt_template": "Extract: {content}",
+            "llm_config": {"model": "gpt-4o-mini"},
+            "metrics": None,
+            "predictions": [],
+        }
+        with open(models_dir / "gpt-4o-mini.json", "w") as f:
+            json.dump(model_data, f)
+
+        loaded = ExtractionExperiment.load_experiment_results(run_dir)
+        assert loaded.response_format is not None
+
+
+# ===========================================================================
 # aevaluate schema resolution priority
 # ===========================================================================
 
@@ -1157,7 +1439,9 @@ class TestAevaluateSchemaPriority:
             data=[{"content": "T", "label": "pos"}],
             response_format=MySchema,
         )
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+        ):
             await eval_.aevaluate()
         assert eval_._response_format_schema is not None
         assert eval_._response_format_schema["type"] == "json_schema"
@@ -1167,11 +1451,22 @@ class TestAevaluateSchemaPriority:
     async def test_config_response_format_schema_used_when_no_constructor_format(self):
         schema = {
             "type": "json_schema",
-            "json_schema": {"name": "MyModel", "strict": True, "schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
+            "json_schema": {
+                "name": "MyModel",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            },
         }
         cfg = {**CLASSIFY_CONFIG, "response_format_schema": schema}
         eval_ = ModelEval(config=cfg, data=[{"content": "T", "label": "pos"}])
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+        ):
             await eval_.aevaluate()
         assert eval_._response_format_schema == schema
 
@@ -1179,12 +1474,23 @@ class TestAevaluateSchemaPriority:
     async def test_loaded_schema_preserved_when_no_other_source(self):
         loaded_schema = {
             "type": "json_schema",
-            "json_schema": {"name": "Loaded", "strict": True, "schema": {"type": "object", "properties": {}, "required": [], "additionalProperties": False}},
+            "json_schema": {
+                "name": "Loaded",
+                "strict": True,
+                "schema": {
+                    "type": "object",
+                    "properties": {},
+                    "required": [],
+                    "additionalProperties": False,
+                },
+            },
         }
         cfg_no_schema = {**CLASSIFY_CONFIG, "response_format_schema": None}
         eval_ = ModelEval(config=cfg_no_schema, data=[{"content": "T", "label": "pos"}])
         eval_._response_format_schema = loaded_schema
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+        ):
             await eval_.aevaluate()
         assert eval_._response_format_schema == loaded_schema
 
@@ -1195,7 +1501,9 @@ class TestAevaluateSchemaPriority:
             config=cfg_no_schema,
             data=[{"content": "T", "label": "pos"}],
         )
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+        ):
             await eval_.aevaluate()
         assert eval_._response_format_schema is None
 
@@ -1206,7 +1514,9 @@ class TestAevaluateSchemaPriority:
             config=cfg_no_schema,
             data=[{"content": "T", "label": {"field": "value"}}],
         )
-        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()):
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+        ):
             await eval_.aevaluate()
         assert eval_._response_format_schema is None
 
@@ -2042,7 +2352,9 @@ class TestReevaluate:
         mock_result.score = 0.9
         mock_result.is_correct = True
 
-        with patch("valtron_core.evaluator.JsonEvaluator.evaluate", return_value=(mock_result, 0.0)):
+        with patch(
+            "valtron_core.evaluator.JsonEvaluator.evaluate", return_value=(mock_result, 0.0)
+        ):
             result = ModelEval._rescore_prediction(prediction, field_metrics_config=fmc)
 
         assert result.field_metrics is mock_result
