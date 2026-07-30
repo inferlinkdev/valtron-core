@@ -1,7 +1,8 @@
 """Recipes for common ML optimization tasks."""
 
-from .model_eval import ModelEval
+from .model_eval import ClassificationExperiment, ExtractionExperiment, ModelEval
 from .config import (
+    ClassificationConfig,
     ModelEvalConfig,
     ModelConfig,
     LLMModelConfig,
@@ -14,7 +15,10 @@ from .config import (
 
 __all__ = [
     "ModelEval",
+    "ClassificationExperiment",
+    "ExtractionExperiment",
     "ModelEvalConfig",
+    "ClassificationConfig",
     "ModelConfig",
     "LLMModelConfig",
     "TransformerModelConfig",

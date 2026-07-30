@@ -8,7 +8,7 @@ import time
 import uuid
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import litellm
 import structlog
@@ -36,8 +36,9 @@ from valtron_core.models import Document, FieldMetricsConfig, Label, PredictionR
 from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
 from valtron_core.progress import ProgressTracker, write_status
 from valtron_core.prompt_optimizer import ExplanationEnhancer
-from valtron_core.evaluation.base import BaseRecipe
+from valtron_core.evaluation.base import BaseRecipe, _normalize_label
 from valtron_core.evaluation.config import (
+    ClassificationConfig,
     Manipulation,
     ModelEvalConfig,
     STRUCTURED_MANIPULATIONS,
@@ -63,16 +64,12 @@ class ModelEval(BaseRecipe):
     3. Evaluate all models concurrently
     4. Generate a comprehensive report with metrics
 
-    Behavior depends on whether ``response_format`` is provided:
-
-    - ``response_format=None`` (default) — **label/classification mode**
-      Labels are plain strings or simple JSON. The recipe auto-generates Pydantic
-      validators from the label schema. Transformer models are supported.
-
-    - ``response_format=SomePydanticModel`` — **structured extraction mode**
-      Labels are nested JSON objects. The provided Pydantic schema constrains
-      LLM output for strict validation. Enables the structured-only manipulations:
-      ``decompose``, ``hallucination_filter``, and ``multi_pass``.
+    ``ModelEval`` itself never guesses a schema and never validates label shape;
+    it just uses whatever ``response_format`` it's given (or none). Use
+    ``ClassificationExperiment`` for label-mode data with schema auto-inference and
+    upfront validation that every label is a plain string, or ``ExtractionExperiment``
+    for extraction-mode data with upfront validation that a schema was actually
+    given.
     """
 
     def __init__(
@@ -462,7 +459,11 @@ class ModelEval(BaseRecipe):
                 "Pass the directory written by save_experiment_results()."
             )
 
-        config_dict, data, response_format_schema = cls._config_and_data_from_metadata(metadata_path)
+        config_dict, data, response_format_schema = cls._config_and_data_from_metadata(
+            metadata_path
+        )
+        if response_format_schema:
+            config_dict["response_format_schema"] = response_format_schema
 
         model_files = sorted((dir_path / "models").glob("*.json"))
         if not model_files:
@@ -491,7 +492,11 @@ class ModelEval(BaseRecipe):
                     instance._auto_wrap_string_labels = instance._compute_auto_wrap_string_labels()
 
         label_map = {
-            str(d.get("id", "")): json.dumps(d["label"]) if isinstance(d.get("label"), (dict, list)) else str(d.get("label", ""))
+            str(d.get("id", "")): (
+                json.dumps(d["label"])
+                if isinstance(d.get("label"), (dict, list))
+                else str(d.get("label", ""))
+            )
             for d in data
         }
 
@@ -588,7 +593,7 @@ class ModelEval(BaseRecipe):
             field_config = infer_field_config(first_label)
             return FieldMetricsConfig(config=field_config.model_dump())
         except (json.JSONDecodeError, TypeError):
-            if not self._auto_wrap_string_labels:
+            if not self._is_single_label_field_schema():
                 return None
             field_config = infer_field_config(json.dumps({"label": first_label}))
             return FieldMetricsConfig(config=field_config.model_dump())
@@ -1658,3 +1663,127 @@ class ModelEval(BaseRecipe):
             header = f"[DECOMPOSED SUB-PROMPT: {field_name}]"
             parts.append(f"{header}\n{prompt}")
         return separator.join(parts)
+
+
+class ClassificationExperiment(ModelEval):
+    """Recipe for classification-shaped data: plain string labels, compared by exact match.
+
+    Every label must be a plain string, not a dict, a list, or a string that itself
+    parses as a JSON object or array; use ``ExtractionExperiment`` for that kind of data
+    instead. A ``response_format`` is optional here (unlike ``ExtractionExperiment``, which
+    requires one): when neither it nor ``config.response_format_schema`` is given, a
+    single-field ``label`` schema is auto-inferred from the unique label values (see
+    ``ClassificationConfig.infer_schema``). Pass ``response_format`` yourself to
+    constrain output with your own schema instead, e.g. a single-``label``-field
+    schema for structured output over the same plain string labels.
+    """
+
+    def __init__(
+        self,
+        config: ClassificationConfig | dict[str, Any] | str | Path,
+        data: list[dict[str, Any]] | str | Path,
+        response_format: type[BaseModel] | None = None,
+    ):
+        """
+        Initialize the classification recipe.
+
+        Args:
+            config: Configuration dict, ClassificationConfig, or path (str/Path) to a
+                JSON config file. Same keys as ``ModelEvalConfig`` plus ``infer_schema``
+                (default ``True``): auto-infers a single-field ``label`` schema from the
+                unique label values when neither ``response_format`` nor
+                ``response_format_schema`` was given. Set to ``False`` to leave the
+                model unconstrained (plain text output) in that case.
+            data: List of dicts ``[{"id": ..., "content": ..., "label": ...}]`` with
+                plain string labels, or a path to a JSON file with the same structure.
+            response_format: Optional Pydantic model class for structured output
+                validation. Takes priority over ``config.response_format_schema`` and
+                schema inference.
+        """
+        if isinstance(config, (str, Path)):
+            with open(config) as f:
+                config = json.load(f)
+        if isinstance(config, dict):
+            config = ClassificationConfig.model_validate(config)
+        super().__init__(config=config, data=data, response_format=response_format)
+        self._validate_plain_string_labels()
+        if self.response_format is None and config.infer_schema:
+            self.response_format = self._infer_label_schema()
+
+    def _validate_plain_string_labels(self) -> None:
+        for item in self.data:
+            label = item.get("label", "")
+            if isinstance(_normalize_label(label), (dict, list)):
+                raise ValueError(
+                    f"ClassificationExperiment requires plain string labels, but record "
+                    f"id={item.get('id', '')!r} has a structured label. Use ExtractionExperiment "
+                    "for extraction-mode data instead."
+                )
+
+    def _infer_label_schema(self) -> type[BaseModel] | None:
+        """Build a single-field `label` schema from the unique label values.
+
+        The field is constrained to a `Literal` enum of the unique values seen, up to
+        50 distinct values; beyond that the enum would be unwieldy so the field falls
+        back to a plain `str`.
+        """
+        if not self.data:
+            return None
+
+        labels = [str(item.get("label", "")) for item in self.data]
+        unique_labels = sorted(set(labels))
+        annotation: Any = Literal[tuple(unique_labels)] if len(unique_labels) <= 50 else str
+
+        return create_model(
+            "ResponseModel",
+            __config__=ConfigDict(extra="forbid"),
+            label=(annotation, Field(..., description="Predicted class label")),
+        )
+
+
+class ExtractionExperiment(ModelEval):
+    """Recipe for structured extraction: labels are nested JSON objects, scored per field.
+
+    Requires a schema, either the ``response_format`` constructor argument or
+    ``config.response_format_schema``. Unlike ``ModelEval``, it fails immediately if
+    neither is given rather than running with an unconstrained model.
+    """
+
+    def __init__(
+        self,
+        config: ModelEvalConfig | dict[str, Any] | str | Path,
+        data: list[dict[str, Any]] | str | Path,
+        response_format: type[BaseModel] | None = None,
+    ):
+        """
+        Initialize the extraction recipe.
+
+        Args:
+            config: Configuration dict, ModelEvalConfig, or path (str/Path) to a JSON
+                config file. Same keys as ``ModelEvalConfig``.
+            data: List of dicts ``[{"id": ..., "content": ..., "label": ...}]`` with
+                dict, list, or JSON-string labels, or a path to a JSON file with the
+                same structure.
+            response_format: Pydantic model class constraining the LLM's structured
+                output. Required unless ``config.response_format_schema`` is given instead.
+        """
+        super().__init__(config=config, data=data, response_format=response_format)
+        if self.response_format is not None:
+            return
+
+        all_plain_strings = self.data and all(
+            not isinstance(_normalize_label(item.get("label", "")), (dict, list))
+            for item in self.data
+        )
+        if all_plain_strings:
+            raise ValueError(
+                "ExtractionExperiment requires a schema (response_format or "
+                "config.response_format_schema), but none was given, and every label "
+                "is a plain string. This looks like classification data; use "
+                "ClassificationExperiment instead, or pass response_format if you do want "
+                "structured output from these labels."
+            )
+        raise ValueError(
+            "ExtractionExperiment requires a schema (response_format or "
+            "config.response_format_schema); got neither."
+        )
