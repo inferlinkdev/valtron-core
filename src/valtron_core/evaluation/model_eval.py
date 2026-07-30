@@ -53,7 +53,6 @@ from valtron_core.utilities.field_config_generator import infer_field_config
 logger = structlog.get_logger()
 
 
-
 class ModelEval(BaseRecipe):
     """
     Recipe for evaluating and comparing multiple models on a structured task.
@@ -285,8 +284,7 @@ class ModelEval(BaseRecipe):
 
         if errors:
             raise ValueError(
-                f"Labels failed schema validation ({len(errors)} record(s)):\n"
-                + "\n".join(errors)
+                f"Labels failed schema validation ({len(errors)} record(s)):\n" + "\n".join(errors)
             )
 
     # -------------------------------------------------------------------------
@@ -326,7 +324,11 @@ class ModelEval(BaseRecipe):
         seen_in_batch: set[str] = set()
         for mc in normalized:
             label = mc.label or mc.name
-            label_source = f"label={mc.label!r}" if mc.label else f"name={mc.name!r} (label inferred from name)"
+            label_source = (
+                f"label={mc.label!r}"
+                if mc.label
+                else f"name={mc.name!r} (label inferred from name)"
+            )
             if label in existing_labels:
                 raise ValueError(
                     f"Duplicate model label {label!r} in config ({label_source}). "
@@ -694,11 +696,7 @@ class ModelEval(BaseRecipe):
                     serialized = str(label_raw)
                 new_label_map[str(item.get("id", ""))] = serialized
 
-            existing_ids: set[str] = {
-                p.document_id
-                for er in self.results
-                for p in er.predictions
-            }
+            existing_ids: set[str] = {p.document_id for er in self.results for p in er.predictions}
             for doc_id in new_label_map:
                 if doc_id not in existing_ids:
                     logger.warning(
@@ -709,9 +707,11 @@ class ModelEval(BaseRecipe):
 
             for eval_result in self.results:
                 eval_result.predictions = [
-                    p.model_copy(update={"expected_value": new_label_map[p.document_id]})
-                    if p.document_id in new_label_map
-                    else p
+                    (
+                        p.model_copy(update={"expected_value": new_label_map[p.document_id]})
+                        if p.document_id in new_label_map
+                        else p
+                    )
                     for p in eval_result.predictions
                 ]
 
@@ -845,7 +845,9 @@ class ModelEval(BaseRecipe):
         self._preflight_check()
 
         if self._response_format_schema is None and self.response_format is not None:
-            self._response_format_schema = self._serialize_response_format_schema(self.response_format)
+            self._response_format_schema = self._serialize_response_format_schema(
+                self.response_format
+            )
 
         field_metrics_config = self._get_field_metrics_config()
 
@@ -879,8 +881,6 @@ class ModelEval(BaseRecipe):
             else:
                 self.results = new_results
                 self._manipulations_applied = new_manipulations
-
-
 
     async def arun(self, output_dir: "str | Path | None" = None) -> Path:
         """Run the complete pipeline and save outputs according to config flags (async).
@@ -1325,7 +1325,8 @@ class ModelEval(BaseRecipe):
         if self.output_dir is not None:
             try:
                 progress_model_labels = [
-                    (mc.label or getattr(mc, "name", None) or "<unknown>") for mc in effective_models
+                    (mc.label or getattr(mc, "name", None) or "<unknown>")
+                    for mc in effective_models
                 ]
                 progress_tracker = ProgressTracker(
                     output_dir=self.output_dir,
@@ -1402,9 +1403,7 @@ class ModelEval(BaseRecipe):
             # Without this the bar starts at 0 and cost shows $0.00 even though work
             # was already done, which is confusing on resume.
             if cached_preds:
-                prior_cost = sum(
-                    p.llm_cost + p.evaluation_cost for p in cached_preds.values()
-                )
+                prior_cost = sum(p.llm_cost + p.evaluation_cost for p in cached_preds.values())
                 running_cost[0] += prior_cost
                 shared_bar.update(len(cached_preds))
                 shared_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
@@ -1439,12 +1438,15 @@ class ModelEval(BaseRecipe):
 
             # --- Transformer branch (label mode only; guarded at __init__) ---
             if model_config.type == "transformer":
+
                 def _on_doc_transformer(pred: PredictionResult) -> None:
                     _on_doc_with_progress(pred)
                     shared_bar.update(1)
 
                 result = await self._evaluate_transformer(
-                    model_config, remaining_docs, field_metrics_config,
+                    model_config,
+                    remaining_docs,
+                    field_metrics_config,
                     on_document_complete=_on_doc_transformer,
                 )
                 if cached_preds:
@@ -1466,7 +1468,6 @@ class ModelEval(BaseRecipe):
                 effective_rf = self._response_format_schema
             else:
                 effective_rf = None
-
 
             updated_prompt = None
 

@@ -46,6 +46,13 @@ class TransformerClassifier:
         model_name: str = "distilbert-base-uncased",
         output_dir: str | Path = "./transformer_models",
     ) -> None:
+        """Initialize the classifier.
+
+        Args:
+            model_name: HuggingFace model id to load for training; ignored if load_model() is
+                called afterward with a previously trained model.
+            output_dir: Directory where trained model artifacts are saved; created if missing.
+        """
         self.model_name = model_name
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -187,7 +194,9 @@ class TransformerClassifier:
             compute_metrics=compute_metrics,
         )
 
-        logger.info("training_started", model=self.model_name, epochs=num_epochs, batch_size=batch_size)
+        logger.info(
+            "training_started", model=self.model_name, epochs=num_epochs, batch_size=batch_size
+        )
         train_result = trainer.train()
         eval_result = trainer.evaluate()
 

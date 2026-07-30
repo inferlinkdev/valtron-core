@@ -34,7 +34,7 @@ from valtron_core.analysis._report import (
     _estimate_cost_per_call,
     _estimate_transformer_cost_per_call,
     _jinja_env,
-    compute_tradeoff_sweep
+    compute_tradeoff_sweep,
 )
 
 if TYPE_CHECKING:
@@ -53,8 +53,7 @@ def _sweep_to_json_dict(sweep: dict[str, Any]) -> dict[str, Any]:
     result = dict(sweep)
     if "llm_specs" in result:
         result["llm_specs"] = [
-            dataclasses.asdict(s) if dataclasses.is_dataclass(s) else s
-            for s in result["llm_specs"]
+            dataclasses.asdict(s) if dataclasses.is_dataclass(s) else s for s in result["llm_specs"]
         ]
     return result
 
@@ -91,6 +90,16 @@ class TradeoffAnalyzer:
         _precomputed: dict[str, Any] | None = None,
         _render_kwargs: dict[str, Any] | None = None,
     ) -> None:
+        """Initialize with precomputed state.
+
+        Prefer from_model_eval() or from_data() over calling this constructor directly.
+
+        Args:
+            _precomputed: Intermediate values (tradeoff rows, LLM specs, labels) assembled by
+                from_model_eval().
+            _render_kwargs: Pre-built sweep-rendering kwargs assembled by from_data(); mutually
+                exclusive with _precomputed.
+        """
         self._precomputed = _precomputed
         self._render_kwargs = _render_kwargs
         self._sweep: dict[str, Any] | None = None
@@ -124,9 +133,11 @@ class TradeoffAnalyzer:
         from valtron_core.models import EvaluationResult, PredictionResult
 
         # --- Separate results by model type ---
-        transformer_configs = [m for m in model_eval.config.models if isinstance(m, TransformerModelConfig)]
+        transformer_configs = [
+            m for m in model_eval.config.models if isinstance(m, TransformerModelConfig)
+        ]
         llm_labels: set[str] = {
-            m.label for m in model_eval.config.models if isinstance(m, LLMModelConfig)
+            m.label or m.name for m in model_eval.config.models if isinstance(m, LLMModelConfig)
         }
         transformer_labels: set[str] = {m.label for m in transformer_configs}
 
@@ -143,9 +154,7 @@ class TradeoffAnalyzer:
                 f"found {len(transformer_results)}."
             )
         if not llm_results:
-            raise ValueError(
-                "from_model_eval() requires at least one LLM model in the experiment."
-            )
+            raise ValueError("from_model_eval() requires at least one LLM model in the experiment.")
 
         # --- Transformer predictions -> TradeoffRows + label detection ---
         transformer_config: TransformerModelConfig = transformer_configs[0]
@@ -259,7 +268,12 @@ class TradeoffAnalyzer:
         asyncio.run(self.aanalyze())
 
     async def aanalyze(self) -> None:
-        """Async variant of analyze()."""
+        """Async variant of analyze().
+
+        Note: analyze() uses asyncio.run() internally, so it cannot be called from within a
+        running event loop. Use ``await analyzer.aanalyze()`` in async contexts (e.g. Jupyter
+        notebooks).
+        """
         if self._render_kwargs is not None:
             self._sweep = compute_tradeoff_sweep(**self._render_kwargs)
             return
@@ -373,6 +387,11 @@ class TradeoffAnalyzer:
         return self.save_html_report(output_path)
 
     async def arun(self, output_path: Path | str) -> Path:
-        """Async variant of run()."""
+        """Async variant of run().
+
+        Note: run() uses asyncio.run() internally, so it cannot be called from within a running
+        event loop. Use ``await analyzer.arun(output_path)`` in async contexts (e.g. Jupyter
+        notebooks).
+        """
         await self.aanalyze()
         return self.save_html_report(output_path)
