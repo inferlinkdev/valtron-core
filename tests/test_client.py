@@ -286,6 +286,69 @@ class TestLLMClientStats:
         assert stats["total_cost"] == 0.0
 
 
+class TestOutputTruncationWarning:
+    """Tests for the output-token-ceiling warning (issue #25)."""
+
+    @staticmethod
+    def _response(finish_reason: Any) -> Mock:
+        response = Mock(spec=ModelResponse)
+        response.choices = [Mock()]
+        response.choices[0].message = Mock()
+        response.choices[0].message.content = "truncated output"
+        response.choices[0].finish_reason = finish_reason
+        response._hidden_params = {"response_cost": 0.0001}
+        return response
+
+    @pytest.mark.asyncio
+    async def test_warns_when_output_hits_the_ceiling(
+        self,
+        mock_env_vars: dict[str, str],
+        sample_messages: list[dict[str, str]],
+    ) -> None:
+        client = LLMClient()
+        response = self._response("length")
+
+        with patch("valtron_core.client.acompletion", new=AsyncMock(return_value=response)):
+            with patch("valtron_core.client.logger") as mock_logger:
+                await client.complete(model="gpt-3.5-turbo", messages=sample_messages)
+
+        warned = [c.args[0] for c in mock_logger.warning.call_args_list if c.args]
+        assert "llm_output_truncated" in warned
+
+    @pytest.mark.asyncio
+    async def test_no_warning_on_normal_completion(
+        self,
+        mock_env_vars: dict[str, str],
+        sample_messages: list[dict[str, str]],
+    ) -> None:
+        client = LLMClient()
+        response = self._response("stop")
+
+        with patch("valtron_core.client.acompletion", new=AsyncMock(return_value=response)):
+            with patch("valtron_core.client.logger") as mock_logger:
+                await client.complete(model="gpt-3.5-turbo", messages=sample_messages)
+
+        warned = [c.args[0] for c in mock_logger.warning.call_args_list if c.args]
+        assert "llm_output_truncated" not in warned
+
+    @pytest.mark.asyncio
+    async def test_missing_finish_reason_is_not_an_error(
+        self,
+        mock_env_vars: dict[str, str],
+        sample_messages: list[dict[str, str]],
+    ) -> None:
+        """Providers that omit finish_reason must not break the call."""
+        client = LLMClient()
+        response = Mock(spec=ModelResponse)
+        response.choices = []
+        response._hidden_params = {"response_cost": 0.0001}
+
+        with patch("valtron_core.client.acompletion", new=AsyncMock(return_value=response)):
+            result = await client.complete(model="gpt-3.5-turbo", messages=sample_messages)
+
+        assert result is response
+
+
 class TestLLMClientStreaming:
     """Tests for streaming responses."""
 

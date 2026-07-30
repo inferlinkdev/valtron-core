@@ -103,9 +103,17 @@ class FewShotConfig(BaseModel):
 
     enabled: bool = False
     generator_model: str = "gpt-4o-mini"
-    num_examples: int = 50
+    # Only the first few consensus-correct examples are ever used for few-shot
+    # prompting (see ModelEval._generate_few_shot_data), so generating dozens is
+    # wasted wall-clock: this phase blocks the run start. Keep a safety margin
+    # over what is kept, not an order of magnitude. See issue #25.
+    num_examples: int = 10
     max_seed_examples: int = 10
     max_few_shots: int = 10
+    # Cap on in-flight generation/validation calls. Raising this is bounded by the
+    # provider's tokens-per-minute limit rather than requests-per-minute, because
+    # each generation call inlines reference documents and can be very large.
+    max_concurrent_generations: int = 10
 
 
 class BaseRecipeConfig(BaseModel):

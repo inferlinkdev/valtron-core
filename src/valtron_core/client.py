@@ -237,6 +237,23 @@ class LLMClient:
             cost=cost,
         )
 
+        # A response truncated at the output-token ceiling is both a correctness problem
+        # (the tail of the answer is simply missing, so JSON labels fail to parse) and a
+        # latency one (generating to the cap is the slowest possible outcome). Neither is
+        # visible without saying so explicitly. See issue #25.
+        if not stream:
+            try:
+                finish_reason = response.choices[0].finish_reason
+            except (AttributeError, IndexError, TypeError):
+                finish_reason = None
+            if finish_reason == "length":
+                logger.warning(
+                    "llm_output_truncated",
+                    model=model_name,
+                    completion_tokens=getattr(usage, "completion_tokens", None),
+                    hint="response hit the output-token ceiling and is incomplete",
+                )
+
         return response
 
     def complete_sync(

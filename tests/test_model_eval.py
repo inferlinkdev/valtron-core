@@ -25,6 +25,7 @@ from valtron_core.recipes.config import (
     LLMModelConfig,
     Manipulation,
     STRUCTURED_MANIPULATIONS,
+    FewShotConfig,
 )
 from valtron_core.models import EvaluationResult, EvaluationMetrics, FieldMetricsConfig, PredictionResult
 
@@ -761,6 +762,64 @@ class TestRun:
                     await eval_.arun()
 
         assert len(eval_.few_shot_examples) > 0
+
+    @pytest.mark.asyncio
+    async def test_few_shot_generation_wiring(self, tmp_path):
+        """The few-shot phase must receive response_format, concurrency, and progress.
+
+        Regressions here are silent: without response_format the generated labels are
+        never schema-validated, and without progress the phase looks hung (issue #25).
+        """
+        config = {
+            **CLASSIFY_CONFIG,
+            "output_dir": str(tmp_path),
+            "few_shot": {
+                "enabled": True,
+                "generator_model": "gpt-4o-mini",
+                "num_examples": 2,
+                "max_concurrent_generations": 3,
+            },
+        }
+        eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
+
+        with patch("valtron_core.recipes.model_eval.FewShotTrainingDataGenerator") as MockGen:
+            mock_gen = Mock()
+            mock_gen.generate_and_validate_examples = AsyncMock(
+                return_value={
+                    "examples": [{"document": "D", "label": "pos", "consensus": "correct"}],
+                    "costs": {"total_cost": 0.01},
+                }
+            )
+            MockGen.return_value = mock_gen
+
+            with patch.object(
+                eval_.runner, "evaluate", new_callable=AsyncMock, return_value=_mock_result()
+            ):
+                with patch.object(
+                    eval_.runner,
+                    "generate_report",
+                    new_callable=AsyncMock,
+                    return_value=tmp_path / "r.html",
+                ):
+                    await eval_.arun()
+
+        kwargs = mock_gen.generate_and_validate_examples.call_args.kwargs
+        assert kwargs["max_concurrent_generations"] == 3
+        assert kwargs["response_format"] is eval_.response_format
+        assert "response_format" in kwargs
+        assert callable(kwargs["progress_callback"])
+
+        # The callback must actually be usable — it writes into the run's progress file.
+        kwargs["progress_callback"]("Generating few-shot examples: 1/2")
+        progress = json.loads((tmp_path / "progress.json").read_text())
+        assert progress["status_message"] == "Generating few-shot examples: 1/2"
+
+    def test_few_shot_config_defaults(self):
+        """num_examples defaults low because only a handful are ever kept (issue #25)."""
+        config = FewShotConfig()
+
+        assert config.num_examples == 10
+        assert config.max_concurrent_generations == 10
 
     @pytest.mark.asyncio
     async def test_run_pdf_only_returns_run_dir(self, tmp_path):

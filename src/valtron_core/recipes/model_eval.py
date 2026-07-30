@@ -821,13 +821,7 @@ class ModelEval(BaseRecipe):
         # Best-effort progress status updates for the pre-evaluation setup window.
         # The ProgressTracker (initialised inside _run_evaluations) replaces this with
         # the full per-model schema once evaluation actually begins.
-        def _status(message: str) -> None:
-            if self.output_dir is None:
-                return
-            try:
-                write_status(self.output_dir, message)
-            except Exception:
-                pass
+        _status = self._write_status
 
         _status("Preparing run...")
 
@@ -900,6 +894,20 @@ class ModelEval(BaseRecipe):
         logger.info("model_eval_run_complete", report_path=str(report_path))
         return report_path
 
+    def _write_status(self, message: str) -> None:
+        """Best-effort setup-phase progress message for the caller's progress panel.
+
+        Never raises: a failed status write must not abort an evaluation.
+
+        :param message: Human-readable description of the current setup step.
+        """
+        if self.output_dir is None:
+            return
+        try:
+            write_status(self.output_dir, message)
+        except Exception:
+            pass
+
     # -------------------------------------------------------------------------
     # Few-shot data generation
     # -------------------------------------------------------------------------
@@ -923,6 +931,11 @@ class ModelEval(BaseRecipe):
         result = await generator.generate_and_validate_examples(
             generator_model=self.few_shot_config.generator_model,
             num_examples=self.few_shot_config.num_examples,
+            # Without this the generated labels are never schema-validated, so
+            # malformed checklists reach the voting stage and burn validator calls.
+            response_format=self.response_format,
+            max_concurrent_generations=self.few_shot_config.max_concurrent_generations,
+            progress_callback=self._write_status,
         )
 
         correct_examples = [ex for ex in result["examples"] if ex["consensus"] == "correct"]

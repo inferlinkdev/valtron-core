@@ -6,7 +6,7 @@ import random
 import time
 from collections import defaultdict
 from dataclasses import dataclass
-from typing import Any, List
+from typing import Any, Callable, List
 
 import structlog
 
@@ -22,6 +22,28 @@ class LabeledExample:
 
     document: str
     label: str | int | float | bool | Any
+
+
+def _as_label_object(label: Any) -> dict | list | None:
+    """Return a label as a dict/list, whether it arrives already parsed or as JSON text.
+
+    Extraction labels reach the generator as real ``dict`` objects, while
+    classification labels are plain scalars or JSON strings. Callers that want to
+    walk a label's structure need to handle both.
+
+    :param label: A label value of any supported type.
+    :return: The label as a ``dict``/``list``, or ``None`` if it is neither.
+    """
+    if isinstance(label, (dict, list)):
+        return label
+    if isinstance(label, str):
+        try:
+            parsed = json.loads(label)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(parsed, (dict, list)):
+            return parsed
+    return None
 
 
 class FewShotTrainingDataGenerator:
@@ -246,19 +268,16 @@ class FewShotTrainingDataGenerator:
         # Detect extractable attributes from seed labels
         attribute_names = []
         if self.examples:
-            try:
-                label_data = json.loads(self.examples[0].label)
-                queue = [label_data]
-                while queue:
-                    obj = queue.pop()
-                    if isinstance(obj, dict):
-                        for k, v in obj.items():
-                            if isinstance(v, list):
-                                attribute_names.append(k)
-                            elif isinstance(v, dict):
-                                queue.append(v)
-            except (json.JSONDecodeError, TypeError):
-                pass
+            label_data = _as_label_object(self.examples[0].label)
+            queue = [label_data] if label_data is not None else []
+            while queue:
+                obj = queue.pop()
+                if isinstance(obj, dict):
+                    for k, v in obj.items():
+                        if isinstance(v, list):
+                            attribute_names.append(k)
+                        elif isinstance(v, dict):
+                            queue.append(v)
 
         prompt_parts.append(f"\n\n{'='*60}")
         prompt_parts.append("GENERATE: Exactly ONE new document.")
@@ -473,9 +492,10 @@ class FewShotTrainingDataGenerator:
         self,
         generator_model: str = "gpt-4o-mini",
         validator_models: List[str] | None = None,
-        num_examples: int = 50,
+        num_examples: int = 10,
         response_format: Any = None,
         max_concurrent_generations: int = 10,
+        progress_callback: Callable[[str], None] | None = None,
     ) -> dict:
         """
         Generate examples and validate them using multiple models voting.
@@ -486,6 +506,11 @@ class FewShotTrainingDataGenerator:
                              Default: ["gpt-4o-mini", "gemini/gemini-2.5-flash", "gemini/gemini-3-flash-preview"]
             num_examples: Number of examples to generate
             max_concurrent_generations: Maximum concurrent generation/validation calls
+            progress_callback: Optional callable receiving human-readable progress
+                             messages as generation and validation advance. This phase
+                             blocks the run start, so without it the caller cannot tell
+                             a slow run from a hung one. Exceptions raised by the
+                             callback are swallowed.
 
         Returns:
             Dict with structure:
@@ -526,6 +551,26 @@ class FewShotTrainingDataGenerator:
         generation_cost = 0.0
         client = LLMClient()
         semaphore = asyncio.Semaphore(max_concurrent_generations)
+
+        def _emit(message: str) -> None:
+            """Best-effort progress report; a broken callback must not fail the run."""
+            if progress_callback is None:
+                return
+            try:
+                progress_callback(message)
+            except Exception as e:
+                logger.warning("progress_callback_failed", error=str(e))
+
+        completed = 0
+
+        async def _tracked(coro: Any, stage: str, total: int) -> Any:
+            """Await ``coro``, reporting completion counts as tasks land."""
+            nonlocal completed
+            try:
+                return await coro
+            finally:
+                completed += 1
+                _emit(f"{stage}: {completed}/{total}")
 
         # Get unique labels and calculate distribution
         from collections import defaultdict
@@ -607,7 +652,14 @@ class FewShotTrainingDataGenerator:
                         return i, None, cost
 
             extraction_results = await asyncio.gather(
-                *[_generate_extraction_example(i) for i in range(1, num_examples + 1)]
+                *[
+                    _tracked(
+                        _generate_extraction_example(i),
+                        "Generating few-shot examples",
+                        num_examples,
+                    )
+                    for i in range(1, num_examples + 1)
+                ]
             )
 
             for _, example_data, cost in sorted(extraction_results, key=lambda x: x[0]):
@@ -660,7 +712,14 @@ class FewShotTrainingDataGenerator:
                         return i, None, cost
 
             classification_results = await asyncio.gather(
-                *[_generate_classification_example(i, label) for i, label in enumerate(label_schedule, 1)]
+                *[
+                    _tracked(
+                        _generate_classification_example(i, label),
+                        "Generating few-shot examples",
+                        len(label_schedule),
+                    )
+                    for i, label in enumerate(label_schedule, 1)
+                ]
             )
 
             for _, example_data, cost in sorted(classification_results, key=lambda x: x[0]):
@@ -697,11 +756,16 @@ class FewShotTrainingDataGenerator:
                 )
                 return example_index, validator_model, vote, cost, explanation
 
-        validation_tasks = []
+        pending: list[Any] = []
         for i, example in enumerate(parsed_examples):
             logger.debug(f"validating_example_{i + 1}", total=len(parsed_examples))
             for validator_model in validator_models:
-                validation_tasks.append(_validate_one(i, example, validator_model))
+                pending.append(_validate_one(i, example, validator_model))
+
+        completed = 0  # restart the count for the validation phase
+        validation_tasks = [
+            _tracked(coro, "Validating few-shot examples", len(pending)) for coro in pending
+        ]
 
         val_start = time.perf_counter()
         validation_results = await asyncio.gather(*validation_tasks)

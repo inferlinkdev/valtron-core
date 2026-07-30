@@ -6,6 +6,7 @@ from unittest.mock import Mock, AsyncMock, patch
 from valtron_core.few_shot_training_data_generator import (
     LabeledExample,
     FewShotTrainingDataGenerator,
+    _as_label_object,
 )
 
 
@@ -495,3 +496,195 @@ class TestInternalLogic:
 
         schema = generator._extract_metadata_schema(None)
         assert schema is None
+
+
+class TestAsLabelObject:
+    """Tests for label coercion (issue #25)."""
+
+    def test_dict_label_passes_through(self):
+        label = {"entities": [{"name": "John"}]}
+        assert _as_label_object(label) is label
+
+    def test_list_label_passes_through(self):
+        label = [{"name": "John"}]
+        assert _as_label_object(label) is label
+
+    def test_json_string_is_parsed(self):
+        assert _as_label_object('{"entities": []}') == {"entities": []}
+
+    def test_non_json_string_returns_none(self):
+        assert _as_label_object("positive") is None
+
+    def test_scalar_labels_return_none(self):
+        assert _as_label_object(1) is None
+        assert _as_label_object(True) is None
+        assert _as_label_object(None) is None
+
+    def test_json_scalar_string_returns_none(self):
+        """A label of "1" parses as JSON but is not a structure to walk."""
+        assert _as_label_object("1") is None
+
+
+class TestAttributeDetectionFromDictLabels:
+    """Regression: attribute detection silently no-op'd on dict labels (issue #25)."""
+
+    def test_dict_label_attributes_reach_the_document_prompt(self):
+        """Labels arrive as dicts for extraction tasks, not JSON strings.
+
+        json.loads() on a dict raises TypeError, which was caught and ignored, so
+        the "must contain positive examples for each attribute" rule never fired.
+        """
+        generator = FewShotTrainingDataGenerator(
+            prompt="Extract entities",
+            examples=[
+                LabeledExample(
+                    document="John lives in New York",
+                    label={"entities": [{"name": "John"}], "places": [{"city": "NY"}]},
+                )
+            ],
+        )
+
+        prompt = generator.generate_document_prompt()
+
+        assert "MUST contain positive examples for EACH of these attributes" in prompt
+        assert "entities" in prompt
+        assert "places" in prompt
+
+    def test_json_string_label_still_works(self):
+        """The pre-existing JSON-string path must keep working."""
+        generator = FewShotTrainingDataGenerator(
+            prompt="Extract entities",
+            examples=[
+                LabeledExample(
+                    document="John lives in New York",
+                    label='{"entities": [{"name": "John"}]}',
+                )
+            ],
+        )
+
+        prompt = generator.generate_document_prompt()
+
+        assert "MUST contain positive examples for EACH of these attributes" in prompt
+        assert "entities" in prompt
+
+    def test_scalar_label_omits_the_attribute_rule(self):
+        """Classification labels have no attributes, so the rule must stay absent."""
+        generator = FewShotTrainingDataGenerator(
+            prompt="Classify",
+            examples=[LabeledExample(document="Great!", label="positive")],
+        )
+
+        prompt = generator.generate_document_prompt()
+
+        assert "MUST contain positive examples" not in prompt
+        assert "Output ONLY the document text" in prompt
+
+
+class TestProgressCallback:
+    """Tests for progress reporting during the blocking few-shot phase (issue #25)."""
+
+    @pytest.mark.asyncio
+    async def test_progress_callback_reports_generation_and_validation(self):
+        generator = FewShotTrainingDataGenerator(
+            prompt="Classify sentiment",
+            examples=[
+                LabeledExample(document="Great!", label="positive"),
+                LabeledExample(document="Bad!", label="negative"),
+            ],
+        )
+
+        messages = []
+
+        with patch("valtron_core.few_shot_training_data_generator.LLMClient") as MockClient:
+            mock_client = Mock()
+
+            gen_response = Mock()
+            gen_response.choices = [Mock()]
+            gen_response.choices[0].message = Mock()
+            gen_response.choices[0].message.content = "Document: New document text\nLabel: positive"
+
+            val_response = Mock()
+            val_response.choices = [Mock()]
+            val_response.choices[0].message = Mock()
+            val_response.choices[0].message.content = "CORRECT\nThe label matches."
+
+            mock_client.complete = AsyncMock(side_effect=[gen_response, val_response])
+            MockClient.return_value = mock_client
+
+            with patch(
+                "valtron_core.few_shot_training_data_generator.completion_cost", return_value=0.001
+            ):
+                await generator.generate_and_validate_examples(
+                    generator_model="gpt-4o-mini",
+                    validator_models=["gpt-4o-mini"],
+                    num_examples=1,
+                    progress_callback=messages.append,
+                )
+
+        assert "Generating few-shot examples: 1/1" in messages
+        assert "Validating few-shot examples: 1/1" in messages
+        # The validation count restarts rather than continuing the generation count.
+        assert not any("2/1" in m for m in messages)
+
+    @pytest.mark.asyncio
+    async def test_broken_progress_callback_does_not_fail_the_run(self):
+        generator = FewShotTrainingDataGenerator(
+            prompt="Classify sentiment",
+            examples=[LabeledExample(document="Great!", label="positive")],
+        )
+
+        def _explode(_message):
+            raise RuntimeError("progress panel is on fire")
+
+        with patch("valtron_core.few_shot_training_data_generator.LLMClient") as MockClient:
+            mock_client = Mock()
+
+            gen_response = Mock()
+            gen_response.choices = [Mock()]
+            gen_response.choices[0].message = Mock()
+            gen_response.choices[0].message.content = "Document: New doc\nLabel: positive"
+
+            val_response = Mock()
+            val_response.choices = [Mock()]
+            val_response.choices[0].message = Mock()
+            val_response.choices[0].message.content = "CORRECT\nFine."
+
+            mock_client.complete = AsyncMock(side_effect=[gen_response, val_response])
+            MockClient.return_value = mock_client
+
+            with patch(
+                "valtron_core.few_shot_training_data_generator.completion_cost", return_value=0.001
+            ):
+                result = await generator.generate_and_validate_examples(
+                    generator_model="gpt-4o-mini",
+                    validator_models=["gpt-4o-mini"],
+                    num_examples=1,
+                    progress_callback=_explode,
+                )
+
+        assert "examples" in result
+
+    @pytest.mark.asyncio
+    async def test_progress_reported_even_when_generation_fails(self):
+        """A failed example must still advance the counter, or progress stalls."""
+        generator = FewShotTrainingDataGenerator(
+            prompt="Classify sentiment",
+            examples=[LabeledExample(document="Great!", label="positive")],
+        )
+
+        messages = []
+
+        with patch("valtron_core.few_shot_training_data_generator.LLMClient") as MockClient:
+            mock_client = Mock()
+            mock_client.complete = AsyncMock(side_effect=RuntimeError("api down"))
+            MockClient.return_value = mock_client
+
+            result = await generator.generate_and_validate_examples(
+                generator_model="gpt-4o-mini",
+                validator_models=["gpt-4o-mini"],
+                num_examples=1,
+                progress_callback=messages.append,
+            )
+
+        assert "Generating few-shot examples: 1/1" in messages
+        assert result["examples"] == []
