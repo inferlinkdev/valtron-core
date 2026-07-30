@@ -11,7 +11,7 @@ Run:
 import json
 from pathlib import Path
 
-from valtron_core.evaluation import ModelEval
+from valtron_core.evaluation import ClassificationExperiment
 
 DATA = json.loads((Path(__file__).resolve().parent / "sentiment_data.json").read_text())
 
@@ -34,9 +34,11 @@ CONFIG = {
 if __name__ == "__main__":
     output_dir = Path(__file__).resolve().parent / "results" / "sentiment"
 
-    experiment = ModelEval(config=CONFIG, data=DATA)
+    experiment = ClassificationExperiment(config=CONFIG, data=DATA)
     report_path = experiment.run(output_dir=output_dir)
 
     print(f"\nReport: {report_path}\n")
     for result in experiment.results:
-        print(f"  {result.model:<40}  accuracy={result.metrics.accuracy:.0%}  cost=${result.metrics.total_cost:.4f}")
+        print(
+            f"  {result.model:<40}  accuracy={result.metrics.accuracy:.0%}  cost=${result.metrics.total_cost:.4f}"
+        )

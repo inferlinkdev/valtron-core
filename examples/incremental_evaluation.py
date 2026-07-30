@@ -10,14 +10,34 @@ Run:
 
 from pathlib import Path
 
-from valtron_core.evaluation import ModelEval
+from valtron_core.evaluation import ClassificationExperiment
 
 DATA = [
-    {"id": "1", "content": "An absolute masterpiece. I was on the edge of my seat the whole time.", "label": "positive"},
-    {"id": "2", "content": "Painfully boring. I walked out after thirty minutes.", "label": "negative"},
-    {"id": "3", "content": "Decent enough, a few good scenes but nothing memorable.", "label": "neutral"},
-    {"id": "4", "content": "The performances were outstanding and the writing was sharp.", "label": "positive"},
-    {"id": "5", "content": "Disappointing sequel that fails to live up to the original.", "label": "negative"},
+    {
+        "id": "1",
+        "content": "An absolute masterpiece. I was on the edge of my seat the whole time.",
+        "label": "positive",
+    },
+    {
+        "id": "2",
+        "content": "Painfully boring. I walked out after thirty minutes.",
+        "label": "negative",
+    },
+    {
+        "id": "3",
+        "content": "Decent enough, a few good scenes but nothing memorable.",
+        "label": "neutral",
+    },
+    {
+        "id": "4",
+        "content": "The performances were outstanding and the writing was sharp.",
+        "label": "positive",
+    },
+    {
+        "id": "5",
+        "content": "Disappointing sequel that fails to live up to the original.",
+        "label": "negative",
+    },
     {"id": "6", "content": "Not great, not terrible. Passes the time.", "label": "neutral"},
 ]
 
@@ -43,20 +63,24 @@ if __name__ == "__main__":
 
     # Step 1: Initial evaluation — one model, results saved to disk
     print("Step 1: Initial evaluation with GPT-4o mini...")
-    experiment = ModelEval(config=INITIAL_CONFIG, data=DATA)
+    experiment = ClassificationExperiment(config=INITIAL_CONFIG, data=DATA)
     experiment.run(output_dir=results_dir)
     print(f"  Saved to: {results_dir}")
 
     # Step 2: Load saved results and extend with a new model
     print("\nStep 2: Loading results and adding Claude Haiku...")
-    experiment = ModelEval.load_experiment_results(results_dir)
-    experiment.add_models([
-        {"name": "claude-haiku-4-5-20251001", "label": "Claude Haiku"},
-    ])
+    experiment = ClassificationExperiment.load_experiment_results(results_dir)
+    experiment.add_models(
+        [
+            {"name": "claude-haiku-4-5-20251001", "label": "Claude Haiku"},
+        ]
+    )
 
     # Only Claude Haiku is evaluated; GPT-4o mini results are reused
     experiment.run(output_dir=results_dir)
 
     print(f"\nUpdated report: {results_dir}\n")
     for result in experiment.results:
-        print(f"  {result.model:<40}  accuracy={result.metrics.accuracy:.0%}  cost=${result.metrics.total_cost:.4f}")
+        print(
+            f"  {result.model:<40}  accuracy={result.metrics.accuracy:.0%}  cost=${result.metrics.total_cost:.4f}"
+        )

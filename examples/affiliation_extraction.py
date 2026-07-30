@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from valtron_core.evaluation import ModelEval
+from valtron_core.evaluation import ExtractionExperiment
 
 
 class Institution(BaseModel):
@@ -31,8 +31,18 @@ DATA = [
         "content": "John Smith, Department of Computer Science, Stanford University, Stanford, CA, USA; Google Research, Mountain View, CA, USA",
         "label": {
             "institutions": [
-                {"name": "Stanford University", "city": "Stanford",      "state": "CA", "country": "USA"},
-                {"name": "Google Research",     "city": "Mountain View", "state": "CA", "country": "USA"},
+                {
+                    "name": "Stanford University",
+                    "city": "Stanford",
+                    "state": "CA",
+                    "country": "USA",
+                },
+                {
+                    "name": "Google Research",
+                    "city": "Mountain View",
+                    "state": "CA",
+                    "country": "USA",
+                },
             ]
         },
     },
@@ -41,9 +51,9 @@ DATA = [
         "content": "A. Kumar, Oxford Internet Institute, University of Oxford, Oxford, UK; DeepMind, London, UK; Alan Turing Institute, London, UK",
         "label": {
             "institutions": [
-                {"name": "University of Oxford",   "city": "Oxford", "state": "", "country": "UK"},
-                {"name": "DeepMind",               "city": "London", "state": "", "country": "UK"},
-                {"name": "Alan Turing Institute",  "city": "London", "state": "", "country": "UK"},
+                {"name": "University of Oxford", "city": "Oxford", "state": "", "country": "UK"},
+                {"name": "DeepMind", "city": "London", "state": "", "country": "UK"},
+                {"name": "Alan Turing Institute", "city": "London", "state": "", "country": "UK"},
             ]
         },
     },
@@ -52,8 +62,18 @@ DATA = [
         "content": "C. Martinez, Department of Biology, Harvard University, Cambridge, MA, USA; Broad Institute of MIT and Harvard, Cambridge, MA, USA",
         "label": {
             "institutions": [
-                {"name": "Harvard University",                   "city": "Cambridge", "state": "MA", "country": "USA"},
-                {"name": "Broad Institute of MIT and Harvard",   "city": "Cambridge", "state": "MA", "country": "USA"},
+                {
+                    "name": "Harvard University",
+                    "city": "Cambridge",
+                    "state": "MA",
+                    "country": "USA",
+                },
+                {
+                    "name": "Broad Institute of MIT and Harvard",
+                    "city": "Cambridge",
+                    "state": "MA",
+                    "country": "USA",
+                },
             ]
         },
     },
@@ -62,8 +82,13 @@ DATA = [
         "content": "E. Nguyen, Max Planck Institute for Intelligent Systems, Tübingen, Germany; ETH Zurich, Zurich, Switzerland",
         "label": {
             "institutions": [
-                {"name": "Max Planck Institute for Intelligent Systems", "city": "Tübingen", "state": "", "country": "Germany"},
-                {"name": "ETH Zurich",                                   "city": "Zurich",   "state": "", "country": "Switzerland"},
+                {
+                    "name": "Max Planck Institute for Intelligent Systems",
+                    "city": "Tübingen",
+                    "state": "",
+                    "country": "Germany",
+                },
+                {"name": "ETH Zurich", "city": "Zurich", "state": "", "country": "Switzerland"},
             ]
         },
     },
@@ -72,9 +97,19 @@ DATA = [
         "content": "G. Brown, Vector Institute, Toronto, ON, Canada; Department of Computer Science, University of Toronto, Toronto, ON, Canada; Canadian Institute for Advanced Research, Toronto, ON, Canada",
         "label": {
             "institutions": [
-                {"name": "Vector Institute",                      "city": "Toronto", "state": "ON", "country": "Canada"},
-                {"name": "University of Toronto",                 "city": "Toronto", "state": "ON", "country": "Canada"},
-                {"name": "Canadian Institute for Advanced Research", "city": "Toronto", "state": "ON", "country": "Canada"},
+                {"name": "Vector Institute", "city": "Toronto", "state": "ON", "country": "Canada"},
+                {
+                    "name": "University of Toronto",
+                    "city": "Toronto",
+                    "state": "ON",
+                    "country": "Canada",
+                },
+                {
+                    "name": "Canadian Institute for Advanced Research",
+                    "city": "Toronto",
+                    "state": "ON",
+                    "country": "Canada",
+                },
             ]
         },
     },
@@ -139,9 +174,11 @@ CONFIG = {
 if __name__ == "__main__":
     output_dir = Path(__file__).resolve().parent / "results" / "affiliation"
 
-    experiment = ModelEval(config=CONFIG, data=DATA, response_format=AffiliationResult)
+    experiment = ExtractionExperiment(config=CONFIG, data=DATA, response_format=AffiliationResult)
     report_path = experiment.run(output_dir=output_dir)
 
     print(f"\nReport: {report_path}\n")
     for result in experiment.results:
-        print(f"  {result.model:<40}  accuracy={result.metrics.accuracy:.0%}  cost=${result.metrics.total_cost:.4f}")
+        print(
+            f"  {result.model:<40}  accuracy={result.metrics.accuracy:.0%}  cost=${result.metrics.total_cost:.4f}"
+        )
