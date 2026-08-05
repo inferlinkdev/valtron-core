@@ -1,0 +1,48 @@
+[project]
+name = "valtron-docs"
+version = "0.0.0"
+description = "Sphinx documentation source for Valtron"
+requires-python = ">=3.12,<3.15"
+dependencies = [
+    # Doc-build tooling
+    "sphinx>=8,<10",
+    "pydata-sphinx-theme>=0.16",
+    "myst-parser>=4",
+    "sphinx-design>=0.6",
+    "sphinx-copybutton>=0.5",
+    # valtron_core's own runtime dependencies (mirrors [tool.poetry.dependencies]
+    # in ../pyproject.toml). autodoc imports the real package from ../src, so
+    # these need to be importable: this is NOT a "transformers" extra install,
+    # just what plain `import valtron_core` already requires.
+    "pydantic>=2.0,<3",
+    "pydantic-settings>=2.0,<3",
+    "litellm>=1.0.0",
+    "python-dotenv>=1.0.0,<2",
+    "structlog>=24.0.0",
+    "typer>=0.12,<0.26",
+    "rich>=13.0.0,<14",
+    "tqdm>=4.0,<5",
+    "rapidfuzz>=3.14.3,<4",
+    "scipy>=1.13,<2",
+    "requests>=2.31.0,<3",
+    "matplotlib>=3.8.0,<4",
+    "jinja2>=3.1.0,<4",
+    "flask>=3.0.0,<4",
+    "flask-cors>=4.0.0,<5",
+    "nltk>=3.9.2,<4",
+    "reportlab==4.4.10",
+    "jsonschema>=4.26.0,<5",
+]
+
+[dependency-groups]
+dev = ["sphinx-autobuild>=2024.10.3"]
+
+[tool.uv]
+# Content-only project: never built or published, just resolved and run
+# in place. Mirrors "not necessary to have a package for end users".
+package = false
+
+# Equivalent of the npm side's former `.npmrc` "min-release-age=7": excludes
+# any package version uploaded within the last 7 days at resolve time, as a
+# supply-chain safety buffer against newly-published/compromised releases.
+exclude-newer = "7 days"
