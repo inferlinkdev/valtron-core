@@ -5,7 +5,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from valtron_core.evaluation.json_eval import EvalResult
+from valtron_core.scoring.json_eval import EvalResult
 from valtron_core.models import Document, EvaluationResult, Label, PredictionResult
 
 

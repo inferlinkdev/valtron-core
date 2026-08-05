@@ -10,7 +10,7 @@ Run:
 
 from pathlib import Path
 
-from valtron_core.recipes import ModelEval
+from valtron_core.evaluation import ModelEval
 
 # Images are 2D structure diagrams served directly from PubChem.
 # The `content` field is empty — the question is fully in the prompt.

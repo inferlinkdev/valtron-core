@@ -3,7 +3,7 @@ from typing import Any
 import json
 import numpy as np
 
-from valtron_core.evaluation.json_eval.schema import MATCH_KEY_MAX_CHARS
+from valtron_core.scoring.json_eval.schema import MATCH_KEY_MAX_CHARS
 
 
 def _cosine_matrix(exp_vecs: list[list[float]], act_vecs: list[list[float]]) -> np.ndarray:

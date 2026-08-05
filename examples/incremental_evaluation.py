@@ -10,7 +10,7 @@ Run:
 
 from pathlib import Path
 
-from valtron_core.recipes import ModelEval
+from valtron_core.evaluation import ModelEval
 
 DATA = [
     {"id": "1", "content": "An absolute masterpiece. I was on the edge of my seat the whole time.", "label": "positive"},

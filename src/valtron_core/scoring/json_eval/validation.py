@@ -1,8 +1,8 @@
 from __future__ import annotations
 from typing import Any
 
-from valtron_core.evaluation.comparison_functions import element_compare_category
-from valtron_core.evaluation.json_eval.schema import (
+from valtron_core.scoring.comparison_functions import element_compare_category
+from valtron_core.scoring.json_eval.schema import (
     FieldConfig,
     LeafMetricConfig,
     _list_mc,

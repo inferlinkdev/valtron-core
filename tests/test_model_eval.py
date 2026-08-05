@@ -17,10 +17,10 @@ def mock_validate_environment():
     ):
         yield
 
-from valtron_core.recipes.model_eval import ModelEval
+from valtron_core.evaluation.model_eval import ModelEval
 from valtron_core.schema_synthesis import synthesize_pydantic_model
 from valtron_core.decompose import find_split_point
-from valtron_core.recipes.config import (
+from valtron_core.evaluation.config import (
     ModelEvalConfig,
     LLMModelConfig,
     Manipulation,
@@ -375,7 +375,9 @@ class TestLoadDocumentsAndLabels:
 
         assert docs[0].id == "doc-1"
         assert docs[1].id == "doc_1"
-        assert labels[0].value == "positive"
+        # CLASSIFY_CONFIG's response_format_schema is a single-label-field schema, so
+        # plain string labels are auto-wrapped as {"label": ...} for scoring.
+        assert labels[0].value == json.dumps({"label": "positive"})
         assert labels[0].document_id == "doc-1"
         assert labels[1].document_id == "doc_1"
 
@@ -513,7 +515,7 @@ class TestEvaluateTransformer:
 
         with patch("valtron_core.transformer_wrapper.TransformerModelWrapper") as MockW:
             mock_w = Mock()
-            mock_w.predict = Mock(return_value='{"sentiment": "positive"}')
+            mock_w.predict_with_confidence = Mock(return_value=('{"sentiment": "positive"}', 0.95))
             MockW.return_value = mock_w
             result = await eval_._evaluate_transformer(eval_.models[0], docs, None)
 
@@ -739,7 +741,7 @@ class TestRun:
         }
         eval_ = ModelEval(config=config, data=[{"id": "d1", "content": "T", "label": "pos"}])
 
-        with patch("valtron_core.recipes.model_eval.FewShotTrainingDataGenerator") as MockGen:
+        with patch("valtron_core.evaluation.model_eval.FewShotTrainingDataGenerator") as MockGen:
             mock_gen = Mock()
             mock_gen.generate_and_validate_examples = AsyncMock(
                 return_value={
@@ -1955,7 +1957,7 @@ class TestReevaluate:
             {"id": "d1", "content": "Hello", "label": "positive"},
             {"id": "UNKNOWN_ID", "content": "?", "label": "positive"},
         ]
-        with patch("valtron_core.recipes.model_eval.logger.warning") as mock_warn:
+        with patch("valtron_core.evaluation.model_eval.logger.warning") as mock_warn:
             me.reevaluate(data=new_data)
 
         warn_events = [call.args[0] for call in mock_warn.call_args_list]
@@ -1982,7 +1984,7 @@ class TestReevaluate:
         run_dir = _write_mock_run_dir(tmp_path)
         me = ModelEval.load_experiment_results(run_dir)
 
-        with patch("valtron_core.recipes.model_eval.logger.warning") as mock_warn:
+        with patch("valtron_core.evaluation.model_eval.logger.warning") as mock_warn:
             me.reevaluate(output_dir=run_dir)
 
         warn_events = [call.args[0] for call in mock_warn.call_args_list]

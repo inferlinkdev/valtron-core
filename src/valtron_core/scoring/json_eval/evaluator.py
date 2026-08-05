@@ -9,12 +9,12 @@ from litellm import completion, completion_cost, embedding, ModelResponse
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from valtron_core.evaluation.json_eval.alignment import (
+from valtron_core.scoring.json_eval.alignment import (
     _cosine_matrix,
     _match_key_text,
     _truncate_for_prompt,
 )
-from valtron_core.evaluation.json_eval.schema import (
+from valtron_core.scoring.json_eval.schema import (
     AlignmentConfig,
     AlignmentItem,
     EvalResult,
@@ -26,13 +26,13 @@ from valtron_core.evaluation.json_eval.schema import (
     _list_mc,
     _object_mc,
 )
-from valtron_core.evaluation.json_eval.registries import (
+from valtron_core.scoring.json_eval.registries import (
     DEFAULT_AGG_REGISTRY,
     DEFAULT_METRIC_REGISTRY,
     _run_comparator,
     _weighted_avg_field,
 )
-from valtron_core.evaluation.json_eval.validation import (
+from valtron_core.scoring.json_eval.validation import (
     _BUILTIN_METRIC_NAMES,
     _item_logic_uses_expensive_api,
     _scan_item_logic_for_expensive_metrics,

@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from valtron_core.recipes import ModelEval
+from valtron_core.evaluation import ModelEval
 
 
 class Institution(BaseModel):

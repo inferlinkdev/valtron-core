@@ -27,11 +27,11 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any
-from valtron_core.evaluation.json_eval import EvalResult, JsonEvaluator
+from valtron_core.scoring.json_eval import EvalResult, JsonEvaluator
 from valtron_core.cost_utils import _parse_time_unit_to_seconds, _get_fallback_rate_info, _fallback_cost
 from valtron_core.loader import DocumentLoader
 from valtron_core.models import EvaluationResult, EvaluationMetrics, FieldMetricsConfig, PredictionResult
-from valtron_core.evaluation.json_eval import ExpensiveListComparisonError
+from valtron_core.scoring.json_eval import ExpensiveListComparisonError
 from valtron_core.runner import EvaluationRunner, save_run_dir
 
 

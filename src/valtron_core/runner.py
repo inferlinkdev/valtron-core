@@ -14,7 +14,7 @@ from tqdm import tqdm  # type: ignore[import-untyped]
 
 from valtron_core.client import LLMClient
 from valtron_core.evaluator import PromptEvaluator
-from valtron_core.evaluation.json_eval import (
+from valtron_core.scoring.json_eval import (
     ExpensiveListComparisonError,
     collect_field_metric_llm_models,
     find_expensive_unordered_list_fields,
@@ -80,6 +80,8 @@ def save_single_model_result(
         }
         if p.field_metrics:
             pred_dict["field_metrics"] = p.field_metrics.model_dump()
+        if p.confidence_score is not None:
+            pred_dict["confidence_score"] = p.confidence_score
         predictions.append(pred_dict)
 
     model_data: dict[str, Any] = {
@@ -414,7 +416,7 @@ class EvaluationRunner:
         self, run_dir: Path
     ) -> "tuple[list[EvaluationResult], dict[str, Any]]":
         """Load results from new-format run directory (metadata.json + models/)."""
-        from valtron_core.evaluation.json_eval import EvalResult
+        from valtron_core.scoring.json_eval import EvalResult
 
         with open(run_dir / "metadata.json") as f:
             meta = json.load(f)
@@ -469,6 +471,7 @@ class EvaluationRunner:
                         evaluation_cost=p.get("evaluation_cost", 0.0),
                         model=model_name,
                         field_metrics=field_metrics,
+                        confidence_score=p.get("confidence_score"),
                     )
                 )
 

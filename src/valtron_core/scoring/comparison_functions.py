@@ -1,7 +1,7 @@
 """Comparison functions for evaluating LLM predictions against ground truth.
 
 DEPRECATED: This module is deprecated. Use the standalone functions in
-`valtron_core.evaluation.comparisons` instead, and register them directly in
+`valtron_core.scoring.comparisons` instead, and register them directly in
 `JsonEvaluator.metric_registry`. This file will be removed in a future release.
 """
 
@@ -121,7 +121,7 @@ class Comparator:
         """
         warnings.warn(
             "Comparator is deprecated; use the standalone functions in "
-            "valtron_core.evaluation.comparisons and register them in "
+            "valtron_core.scoring.comparisons and register them in "
             "JsonEvaluator.metric_registry instead.",
             DeprecationWarning,
             stacklevel=2,

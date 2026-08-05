@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from valtron_core.models import FieldMetricsConfig
-from valtron_core.recipes.config import BaseRecipeConfig, ModelConfig
+from valtron_core.evaluation.config import BaseRecipeConfig, ModelConfig
 from valtron_core.runner import EvaluationRunner
 
 

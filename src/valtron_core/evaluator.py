@@ -13,7 +13,7 @@ from litellm import BaseModel, completion_cost
 from litellm.utils import ModelResponse  # type: ignore[attr-defined]
 
 from valtron_core.client import LLMClient
-from valtron_core.evaluation.json_eval import JsonEvaluator
+from valtron_core.scoring.json_eval import JsonEvaluator
 from valtron_core.models import (
     Document,
     EvaluationInput,

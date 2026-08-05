@@ -7,7 +7,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 
-from valtron_core.evaluation.comparison_functions import (
+from valtron_core.scoring.comparison_functions import (
     Comparator,
     element_compare_category,
 )
@@ -210,9 +210,9 @@ class TestTextSimilarityCompare:
         mock_response2 = Mock()
         mock_response2.data = [{"embedding": [1.0, 0.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparison_functions.embedding") as mock_embedding:
+        with patch("valtron_core.scoring.comparison_functions.embedding") as mock_embedding:
             mock_embedding.side_effect = [mock_response1, mock_response2]
-            with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+            with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                 result = comparator._text_similarity_compare("hello", "hello")
 
         assert result == pytest.approx(1.0)
@@ -238,9 +238,9 @@ class TestLLMCompare:
             comparator = Comparator(element_compare="llm")
         mock_response = self._mock_completion("YES")
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     result = comparator._llm_compare("NYC", "New York City")
 
         assert result is True
@@ -250,9 +250,9 @@ class TestLLMCompare:
             comparator = Comparator(element_compare="llm")
         mock_response = self._mock_completion("NO")
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     result = comparator._llm_compare("apple", "orange")
 
         assert result is False
@@ -262,9 +262,9 @@ class TestLLMCompare:
             comparator = Comparator(element_compare="llm")
         mock_response = self._mock_completion('{"match": true}')
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=True):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     result = comparator._llm_compare("NYC", "New York City")
 
         assert result is True
@@ -274,9 +274,9 @@ class TestLLMCompare:
             comparator = Comparator(element_compare="llm")
         mock_response = self._mock_completion('{"match": false}')
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=True):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     result = comparator._llm_compare("apple", "orange")
 
         assert result is False
@@ -286,9 +286,9 @@ class TestLLMCompare:
             comparator = Comparator(element_compare="llm")
         mock_response = self._mock_completion("yes.")
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=True):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     result = comparator._llm_compare("a", "a")
 
         assert result is True
@@ -299,9 +299,9 @@ class TestLLMCompare:
 
         for content in ("yes", "Yes", "YES", "yes because they match", "YES, correct"):
             mock_response = self._mock_completion(content)
-            with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-                    with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.0):
+            with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response):
+                    with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.0):
                         assert comparator._llm_compare("a", "a") is True, f"failed for {content!r}"
 
     def test_llm_compare_text_fallback_rejects_no_response(self) -> None:
@@ -310,21 +310,21 @@ class TestLLMCompare:
 
         for content in ("no", "No", "NO", "no they differ"):
             mock_response = self._mock_completion(content)
-            with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
-                with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-                    with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.0):
+            with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=False):
+                with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response):
+                    with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.0):
                         assert comparator._llm_compare("a", "b") is False, f"failed for {content!r}"
 
     def test_llm_compare_structured_output_passes_response_format(self) -> None:
-        from valtron_core.evaluation.comparison_functions import _MatchResult
+        from valtron_core.scoring.comparison_functions import _MatchResult
 
         with pytest.warns(DeprecationWarning):
             comparator = Comparator(element_compare="llm")
         mock_response = self._mock_completion('{"match": true}')
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=True):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=True):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     comparator._llm_compare("a", "a")
 
         _, kwargs = mock_completion.call_args
@@ -335,9 +335,9 @@ class TestLLMCompare:
             comparator = Comparator(element_compare="llm")
         mock_response = self._mock_completion("YES")
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     comparator._llm_compare("a", "a")
 
         _, kwargs = mock_completion.call_args
@@ -348,9 +348,9 @@ class TestLLMCompare:
             comparator = Comparator(element_compare="llm")
         mock_response = self._mock_completion("YES")
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.005):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.005):
                     comparator._llm_compare("a", "a")
 
         assert comparator.total_comparison_cost == pytest.approx(0.005)
@@ -360,9 +360,9 @@ class TestLLMCompare:
             comparator = Comparator(element_compare="llm")
         mock_response = self._mock_completion("YES")
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", side_effect=Exception("unknown model")):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", side_effect=Exception("unknown model")):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     result = comparator._llm_compare("a", "a")
 
         assert result is True
@@ -373,9 +373,9 @@ class TestLLMCompare:
             comparator = Comparator(element_compare="llm", llm_prompt_template=template)
         mock_response = self._mock_completion("YES")
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     result = comparator._llm_compare("NYC", "New York")
 
         assert result is True
@@ -392,9 +392,9 @@ class TestLLMCompare:
             )
         mock_response = self._mock_completion("YES")
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     comparator._llm_compare("Paris", "Paris")
 
         sent_prompt = mock_completion.call_args[1]["messages"][0]["content"]
@@ -406,9 +406,9 @@ class TestLLMCompare:
             comparator = Comparator(element_compare="llm")
         mock_response = self._mock_completion("YES")
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response) as mock_completion:
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response) as mock_completion:
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     comparator._llm_compare("NYC", "New York")
 
         sent_prompt = mock_completion.call_args[1]["messages"][0]["content"]
@@ -437,9 +437,9 @@ class TestEmbeddingCompare:
         mock_response2 = Mock()
         mock_response2.data = [{"embedding": [1.0, 0.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparison_functions.embedding") as mock_embedding:
+        with patch("valtron_core.scoring.comparison_functions.embedding") as mock_embedding:
             mock_embedding.side_effect = [mock_response1, mock_response2]
-            with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+            with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                 result = comparator._embedding_compare("hello", "hello")
 
         assert result == pytest.approx(1.0)
@@ -453,9 +453,9 @@ class TestEmbeddingCompare:
         mock_response2 = Mock()
         mock_response2.data = [{"embedding": [1.0, 0.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparison_functions.embedding") as mock_embedding:
+        with patch("valtron_core.scoring.comparison_functions.embedding") as mock_embedding:
             mock_embedding.side_effect = [mock_response1, mock_response2]
-            with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+            with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                 result = comparator._embedding_compare("hello", "hello")
 
         assert result is True
@@ -469,9 +469,9 @@ class TestEmbeddingCompare:
         mock_response2 = Mock()
         mock_response2.data = [{"embedding": [0.5, 1.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparison_functions.embedding") as mock_embedding:
+        with patch("valtron_core.scoring.comparison_functions.embedding") as mock_embedding:
             mock_embedding.side_effect = [mock_response1, mock_response2]
-            with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+            with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                 result = comparator._embedding_compare("hello", "world")
 
         assert isinstance(result, float)
@@ -486,9 +486,9 @@ class TestEmbeddingCompare:
         mock_response2 = Mock()
         mock_response2.data = [{"embedding": [1.0, 0.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparison_functions.embedding") as mock_embedding:
+        with patch("valtron_core.scoring.comparison_functions.embedding") as mock_embedding:
             mock_embedding.side_effect = [mock_response1, mock_response2]
-            with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.002):
+            with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.002):
                 comparator._embedding_compare("hello", "hello")
 
         assert comparator.total_comparison_cost == pytest.approx(0.004)
@@ -515,9 +515,9 @@ class TestComparatorCompare:
         mock_response.choices = [Mock()]
         mock_response.choices[0].message.content = "YES"
 
-        with patch("valtron_core.evaluation.comparison_functions.litellm.supports_response_schema", return_value=False):
-            with patch("valtron_core.evaluation.comparison_functions.completion", return_value=mock_response):
-                with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+        with patch("valtron_core.scoring.comparison_functions.litellm.supports_response_schema", return_value=False):
+            with patch("valtron_core.scoring.comparison_functions.completion", return_value=mock_response):
+                with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                     result = comparator.compare("NYC", "New York")
 
         assert result is True
@@ -531,9 +531,9 @@ class TestComparatorCompare:
         mock_response2 = Mock()
         mock_response2.data = [{"embedding": [1.0, 0.0, 0.0]}]
 
-        with patch("valtron_core.evaluation.comparison_functions.embedding") as mock_embedding:
+        with patch("valtron_core.scoring.comparison_functions.embedding") as mock_embedding:
             mock_embedding.side_effect = [mock_response1, mock_response2]
-            with patch("valtron_core.evaluation.comparison_functions.completion_cost", return_value=0.001):
+            with patch("valtron_core.scoring.comparison_functions.completion_cost", return_value=0.001):
                 result = comparator.compare("hello", "hello")
 
         assert result == pytest.approx(1.0)

@@ -2,17 +2,17 @@ from __future__ import annotations
 from typing import Any
 import warnings
 
-from valtron_core.evaluation.comparison_functions import (
+from valtron_core.scoring.comparison_functions import (
     Comparator,
     element_compare_category,
 )
-from valtron_core.evaluation.comparisons import (
+from valtron_core.scoring.comparisons import (
     _exact_compare,
     _embedding_compare,
     _llm_compare,
     _text_similarity_compare,
 )
-from valtron_core.evaluation.json_eval.schema import EvalResult
+from valtron_core.scoring.json_eval.schema import EvalResult
 
 
 def _score_to_result(result: bool | float, params: dict[str, Any]) -> tuple[float, bool]:

@@ -273,7 +273,7 @@ class TestPartialResultStore:
         assert len(result) == 20
 
     def test_field_metrics_serialized_and_recovered(self, tmp_path: Path):
-        from valtron_core.evaluation.json_eval import EvalResult
+        from valtron_core.scoring.json_eval import EvalResult
 
         store = PartialResultStore(tmp_path)
         pred = _make_pred("doc-1")

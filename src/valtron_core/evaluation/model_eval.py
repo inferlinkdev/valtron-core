@@ -27,7 +27,7 @@ from valtron_core.decompose import (
     generate_sub_prompts,
     inject_few_shot_into_sub_prompts,
 )
-from valtron_core.evaluation.json_eval import JsonEvaluator
+from valtron_core.scoring.json_eval import JsonEvaluator
 from valtron_core.few_shot_training_data_generator import (
     FewShotTrainingDataGenerator,
     LabeledExample,
@@ -36,8 +36,8 @@ from valtron_core.models import Document, FieldMetricsConfig, Label, PredictionR
 from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
 from valtron_core.progress import ProgressTracker, write_status
 from valtron_core.prompt_optimizer import ExplanationEnhancer
-from valtron_core.recipes.base import BaseRecipe
-from valtron_core.recipes.config import (
+from valtron_core.evaluation.base import BaseRecipe
+from valtron_core.evaluation.config import (
     Manipulation,
     ModelEvalConfig,
     STRUCTURED_MANIPULATIONS,
@@ -147,7 +147,7 @@ class ModelEval(BaseRecipe):
         self._manipulations_applied: dict[str, list[Any]] | None = None
         self._model_prompts: dict[str, str] | None = None
         self._model_override_prompts: dict[str, str] | None = None
-        self._auto_wrap_string_labels: bool = False
+        self._auto_wrap_string_labels: bool = self._compute_auto_wrap_string_labels()
 
         logger.info(
             "model_eval_initialized",
@@ -167,24 +167,23 @@ class ModelEval(BaseRecipe):
         self._validate_labels_against_schema()
 
     def _check_model_param_support(self) -> None:
-        from valtron_core.recipes.config import LLMModelConfig
+        from valtron_core.evaluation.config import LLMModelConfig
 
         wants_response_format = self.response_format is not None
 
-        if wants_response_format and self.data:
+        self._auto_wrap_string_labels = self._compute_auto_wrap_string_labels()
+
+        if wants_response_format and self.data and not self._auto_wrap_string_labels:
             all_plain_string_labels = all(
                 not isinstance(item.get("label"), (dict, list)) for item in self.data
             )
             if all_plain_string_labels:
-                if self._is_single_label_field_schema():
-                    self._auto_wrap_string_labels = True
-                else:
-                    logger.warning(
-                        "plain_string_labels_with_response_format",
-                        action="scoring_may_be_incorrect",
-                        detail="response_format is set but labels are plain strings -- "
-                        "model outputs will be JSON but expected values will not match",
-                    )
+                logger.warning(
+                    "plain_string_labels_with_response_format",
+                    action="scoring_may_be_incorrect",
+                    detail="response_format is set but labels are plain strings -- "
+                    "model outputs will be JSON but expected values will not match",
+                )
 
         for mc in self.models:
             if not isinstance(mc, LLMModelConfig):
@@ -210,6 +209,21 @@ class ModelEval(BaseRecipe):
                     model=mc.name,
                     action="structured_output_will_be_skipped",
                 )
+
+    def _compute_auto_wrap_string_labels(self) -> bool:
+        """Return True if plain string labels should be auto-wrapped as ``{"label": ...}``.
+
+        Requires a resolved response schema with exactly one field named ``label``
+        (str or Enum) and every document in ``self.data`` having a plain (non-dict/list)
+        label. This is a pure function of ``response_format`` and ``data`` -- called at
+        every entry point where either can change (construction, ``load_experiment_results``,
+        ``reevaluate``) so the flag never depends on ``_preflight_check`` having run first.
+        """
+        if self.response_format is None or not self.data:
+            return False
+        if not self._is_single_label_field_schema():
+            return False
+        return all(not isinstance(item.get("label"), (dict, list)) for item in self.data)
 
     def _is_single_label_field_schema(self) -> bool:
         """Return True if the response schema has exactly one field named 'label' (str or Enum)."""
@@ -295,7 +309,7 @@ class ModelEval(BaseRecipe):
             ValueError: Duplicate label or structured manipulation without
                 ``response_format``.
         """
-        from valtron_core.recipes.config import LLMModelConfig, TransformerModelConfig
+        from valtron_core.evaluation.config import LLMModelConfig, TransformerModelConfig
 
         normalized = []
         for m in models:
@@ -472,6 +486,7 @@ class ModelEval(BaseRecipe):
                 if synthesized is not None:
                     instance.response_format = synthesized
                     instance.decomposed_evaluator = DecomposedEvaluator(client=instance.client)
+                    instance._auto_wrap_string_labels = instance._compute_auto_wrap_string_labels()
 
         label_map = {
             str(d.get("id", "")): json.dumps(d["label"]) if isinstance(d.get("label"), (dict, list)) else str(d.get("label", ""))
@@ -491,7 +506,7 @@ class ModelEval(BaseRecipe):
                 model_override_prompts[model_label] = md["override_prompt"]
 
             try:
-                from valtron_core.evaluation.json_eval import EvalResult
+                from valtron_core.scoring.json_eval import EvalResult
 
                 _eval_result_cls = EvalResult
             except ImportError:
@@ -571,6 +586,8 @@ class ModelEval(BaseRecipe):
             field_config = infer_field_config(first_label)
             return FieldMetricsConfig(config=field_config.model_dump())
         except (json.JSONDecodeError, TypeError):
+            if not self._auto_wrap_string_labels:
+                return None
             field_config = infer_field_config(json.dumps({"label": first_label}))
             return FieldMetricsConfig(config=field_config.model_dump())
 
@@ -663,19 +680,15 @@ class ModelEval(BaseRecipe):
 
         # Update ground truth labels from caller-supplied data
         if data is not None:
-            auto_wrap = (
-                self.response_format is not None
-                and bool(data)
-                and all(not isinstance(item.get("label"), (dict, list)) for item in data)
-                and self._is_single_label_field_schema()
-            )
+            self.data = data
+            self._auto_wrap_string_labels = self._compute_auto_wrap_string_labels()
 
             new_label_map: dict[str, str] = {}
             for item in data:
                 label_raw = item.get("label", "")
                 if isinstance(label_raw, (dict, list)):
                     serialized = json.dumps(label_raw)
-                elif auto_wrap:
+                elif self._auto_wrap_string_labels:
                     serialized = json.dumps({"label": str(label_raw)})
                 else:
                     serialized = str(label_raw)
@@ -701,8 +714,6 @@ class ModelEval(BaseRecipe):
                     else p
                     for p in eval_result.predictions
                 ]
-
-            self.data = data
 
         # Resolve the effective FieldMetricsConfig and update stored config
         effective_fmc: FieldMetricsConfig | None
@@ -1203,7 +1214,7 @@ class ModelEval(BaseRecipe):
             expected_label = label_map.get(doc.id, "")
 
             pred_start = time.time()
-            prediction = transformer.predict(doc.content)
+            prediction, confidence = transformer.predict_with_confidence(doc.content)
             pred_time = time.time() - pred_start
 
             if self._auto_wrap_string_labels:
@@ -1235,6 +1246,7 @@ class ModelEval(BaseRecipe):
                 llm_cost=0.0,
                 model=model_name,
                 metadata={"content": doc.content},
+                confidence_score=confidence,
             )
             result.add_prediction(pred_result)
             if on_document_complete is not None:
@@ -1427,9 +1439,13 @@ class ModelEval(BaseRecipe):
 
             # --- Transformer branch (label mode only; guarded at __init__) ---
             if model_config.type == "transformer":
+                def _on_doc_transformer(pred: PredictionResult) -> None:
+                    _on_doc_with_progress(pred)
+                    shared_bar.update(1)
+
                 result = await self._evaluate_transformer(
                     model_config, remaining_docs, field_metrics_config,
-                    on_document_complete=_on_doc_with_progress,
+                    on_document_complete=_on_doc_transformer,
                 )
                 if cached_preds:
                     result.predictions = list(cached_preds.values()) + result.predictions
