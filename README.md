@@ -105,7 +105,7 @@ The config accepts a dict, a JSON file path, or a typed `ModelEvalConfig` object
 - `"hallucination_filter"` — drop extracted values not grounded in the source text *(structured extraction only)*
 - `"multi_pass"` — call the model twice and merge results *(structured extraction only)*
 
-See the [User Guide](https://valtron.ai/docs/user-guide/) for the full config reference, including field-level metrics, structured extraction, and few-shot settings.
+See [Config Format](https://valtron.ai/docs/config-format) for the full reference, including field-level metrics, structured extraction, and few-shot settings.
 
 **Prefer a guided setup?** The Configuration Wizard is a browser-based UI that builds your config file step by step:
 
@@ -209,13 +209,13 @@ Once opted in, the evaluation strategy depends on the leaf:
 
 The optimal-assignment design solves alignment globally rather than per-item: it can make trades a greedy or per-item matcher can't (sacrificing one item's best local pick to rescue another), and it is deterministic. The semantic judgment that an LLM is good at is applied later, at leaf-judging, where it decides whether two matched field values mean the same thing.
 
-Full documentation lives in [docs/](https://valtron.ai/docs/). To build the docs site locally:
+Full documentation lives in [docs/valtron/](https://valtron.ai/docs/intro). To run the docs site locally:
 
 ```bash
-cd docs && ./build.sh
+cd docs/valtron && docker compose up
 ```
 
-Then open `docs/_build/html/index.html`. For a live-reloading dev server, use `./build.sh -b live` instead.
+Then open `http://localhost:3000`.
 
 ## Contributing
 
