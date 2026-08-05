@@ -209,13 +209,13 @@ Once opted in, the evaluation strategy depends on the leaf:
 
 The optimal-assignment design solves alignment globally rather than per-item: it can make trades a greedy or per-item matcher can't (sacrificing one item's best local pick to rescue another), and it is deterministic. The semantic judgment that an LLM is good at is applied later, at leaf-judging, where it decides whether two matched field values mean the same thing.
 
-Full documentation lives in [docs/valtron/](https://valtron.ai/docs/intro). To run the docs site locally:
+Full documentation lives in [docs/](https://valtron.ai/docs). To run the docs site locally:
 
 ```bash
-cd docs/valtron && docker compose up
+cd docs && ./build.sh -b live
 ```
 
-Then open `http://localhost:3000`.
+This watches for file changes and rebuilds automatically in the browser. See [docs/README.md](docs/README.md) for details.
 
 ## Contributing
 
