@@ -375,7 +375,9 @@ class TestLoadDocumentsAndLabels:
 
         assert docs[0].id == "doc-1"
         assert docs[1].id == "doc_1"
-        assert labels[0].value == "positive"
+        # CLASSIFY_CONFIG's response_format_schema is a single-label-field schema, so
+        # plain string labels are auto-wrapped as {"label": ...} for scoring.
+        assert labels[0].value == json.dumps({"label": "positive"})
         assert labels[0].document_id == "doc-1"
         assert labels[1].document_id == "doc_1"
 
