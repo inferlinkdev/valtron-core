@@ -6,7 +6,7 @@
     <p align="center">Proudly built and backed by <a href="https://inferlink.com" target="_blank">InferLink</a>.</p>
 </p>
 
-<h4 align="center"><a href="https://valtron.ai" target="_blank">Website</a> | <a href="https://valtron.ai/docs/intro" target="_blank">Documentation</a> | <a href="https://valtron.ai/docs/getting-started/quick-start" target="_blank">Quick Start</a> | <a href="https://valtron.ai/docs/examples/" target="_blank">Examples</a> | <a href="#contributing">Contributing</a></h4>
+<h4 align="center"><a href="https://valtron.ai" target="_blank">Website</a> | <a href="https://valtron.ai/docs/" target="_blank">Documentation</a> | <a href="https://valtron.ai/docs/getting-started/installation" target="_blank">Quick Start</a> | <a href="https://valtron.ai/docs/examples/" target="_blank">Examples</a> | <a href="#contributing">Contributing</a></h4>
 <h4 align="center">
     <a href="https://pypi.org/project/valtron-core/" target="_blank">
         <img src="https://img.shields.io/pypi/v/valtron-core.svg" alt="PyPI Version">
@@ -105,7 +105,7 @@ The config accepts a dict, a JSON file path, or a typed `ModelEvalConfig` object
 - `"hallucination_filter"` — drop extracted values not grounded in the source text *(structured extraction only)*
 - `"multi_pass"` — call the model twice and merge results *(structured extraction only)*
 
-See [Config Format](https://valtron.ai/docs/config-format) for the full reference, including field-level metrics, structured extraction, and few-shot settings.
+See the [User Guide](https://valtron.ai/docs/user-guide/) for the full config reference, including field-level metrics, structured extraction, and few-shot settings.
 
 **Prefer a guided setup?** The Configuration Wizard is a browser-based UI that builds your config file step by step:
 
@@ -209,13 +209,13 @@ Once opted in, the evaluation strategy depends on the leaf:
 
 The optimal-assignment design solves alignment globally rather than per-item: it can make trades a greedy or per-item matcher can't (sacrificing one item's best local pick to rescue another), and it is deterministic. The semantic judgment that an LLM is good at is applied later, at leaf-judging, where it decides whether two matched field values mean the same thing.
 
-Full documentation lives in [docs/valtron/](https://valtron.ai/docs/intro). To run the docs site locally:
+Full documentation lives in [docs/](https://valtron.ai/docs/). To build the docs site locally:
 
 ```bash
-cd docs/valtron && docker compose up
+cd docs && ./build.sh
 ```
 
-Then open `http://localhost:3000`.
+Then open `docs/_build/html/index.html`. For a live-reloading dev server, use `./build.sh -b live` instead.
 
 ## Contributing
 
