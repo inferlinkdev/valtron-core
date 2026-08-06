@@ -576,7 +576,9 @@ class ModelEval(BaseRecipe):
         If ``field_metrics_config`` was provided in the recipe config, that is
         validated and returned. Otherwise the config is inferred from label data:
         JSON labels use the label structure directly; plain-text labels are wrapped
-        in the ``{"label": ...}`` shape used by the string-label wrapper.
+        in the ``{"label": ...}`` shape used by the string-label wrapper. Wrapping is
+        only applied when ``_auto_wrap_string_labels`` holds for the whole dataset,
+        matching the wrapping actually applied elsewhere during the run.
         """
         if self._field_metrics_config_raw is not None:
             return FieldMetricsConfig.model_validate(self._field_metrics_config_raw)
@@ -593,7 +595,7 @@ class ModelEval(BaseRecipe):
             field_config = infer_field_config(first_label)
             return FieldMetricsConfig(config=field_config.model_dump())
         except (json.JSONDecodeError, TypeError):
-            if not self._is_single_label_field_schema():
+            if not self._auto_wrap_string_labels:
                 return None
             field_config = infer_field_config(json.dumps({"label": first_label}))
             return FieldMetricsConfig(config=field_config.model_dump())
