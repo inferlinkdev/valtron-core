@@ -38,11 +38,6 @@ dependencies = [
 dev = ["sphinx-autobuild>=2024.10.3"]
 
 [tool.uv]
-# Content-only project: never built or published, just resolved and run
-# in place. Mirrors "not necessary to have a package for end users".
 package = false
 
-# Equivalent of the npm side's former `.npmrc` "min-release-age=7": excludes
-# any package version uploaded within the last 7 days at resolve time, as a
-# supply-chain safety buffer against newly-published/compromised releases.
 exclude-newer = "7 days"
