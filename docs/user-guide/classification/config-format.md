@@ -2,6 +2,8 @@
 
 The evaluation config is where you set up the experiment: which models to compare, what prompt they receive, and any manipulations to layer on top of each one.
 
+To run this, set your provider API keys in a `.env` file. See LiteLLM's [provider documentation](https://docs.litellm.ai/docs/providers) for the available providers and their key names, for example `OPENAI_API_KEY` or `ANTHROPIC_API_KEY`.
+
 You can pass a config as a Python dict or a path to a JSON file. It validates as [`ClassificationConfig`](../../api/classification_config), which extends `ModelEvalConfig`.
 
 You can also generate configs like these with the [Configuration Wizard](../../getting-started/configuration-wizard) instead of hand-writing them.
