@@ -21,7 +21,16 @@ class HtmlReportGenerator(_ReportBase):
         use_case: str = "general purpose",
         recommendation_model: str = "gpt-4o",
     ) -> str | None:
-        """Generate LLM-powered recommendation for best model."""
+        """Generate LLM-powered recommendation for best model.
+
+        Args:
+            results: Evaluation results to compare, one per model.
+            use_case: Free-text description of the task, included in the recommendation prompt.
+            recommendation_model: Model used to generate the recommendation text.
+
+        Returns:
+            Recommendation text, or None if no result has metrics to compare.
+        """
         metrics_summary = []
         for result in results:
             if not result.metrics:
@@ -93,7 +102,13 @@ Format your response as Markdown using headers, bullet points, and bold text whe
                         precision.append(round(field_metric.precision * 100, 2))
                         recall.append(round(field_metric.recall * 100, 2))
                         if field_metric.precision is not None and field_metric.recall is not None:
-                            f1 = 2 * (field_metric.precision * field_metric.recall) / (field_metric.precision + field_metric.recall) if (field_metric.precision + field_metric.recall) > 0 else 0
+                            f1 = (
+                                2
+                                * (field_metric.precision * field_metric.recall)
+                                / (field_metric.precision + field_metric.recall)
+                                if (field_metric.precision + field_metric.recall) > 0
+                                else 0
+                            )
                             f1_score.append(round(f1 * 100, 2))
                         else:
                             f1_score.append(0.0)
@@ -136,7 +151,13 @@ Format your response as Markdown using headers, bullet points, and bold text whe
                         if field_metric.recall > max_recall:
                             max_recall = field_metric.recall
                         if field_metric.precision is not None and field_metric.recall is not None:
-                            f1 = 2 * (field_metric.precision * field_metric.recall) / (field_metric.precision + field_metric.recall) if (field_metric.precision + field_metric.recall) > 0 else 0
+                            f1 = (
+                                2
+                                * (field_metric.precision * field_metric.recall)
+                                / (field_metric.precision + field_metric.recall)
+                                if (field_metric.precision + field_metric.recall) > 0
+                                else 0
+                            )
                             if f1 > max_f1:
                                 max_f1 = f1
 
@@ -221,9 +242,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
             return {"url": s, "mime_type": "", "type": "", "data": None}
 
     def _prepare_detailed_analysis_data(
-        self,
-        results: list[EvaluationResult],
-        documents: list[Any] | None = None
+        self, results: list[EvaluationResult], documents: list[Any] | None = None
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Prepare data for detailed input/output analysis page."""
         if not results:
@@ -235,9 +254,9 @@ Format your response as Markdown using headers, bullet points, and bold text whe
         if documents:
             for doc in documents:
                 doc_content_map[doc.id] = doc.content
-                if hasattr(doc, 'metadata') and doc.metadata:
+                if hasattr(doc, "metadata") and doc.metadata:
                     doc_metadata_map[f"doc{len(doc_content_map)}"] = doc.metadata
-                if hasattr(doc, 'attachments') and doc.attachments:
+                if hasattr(doc, "attachments") and doc.attachments:
                     doc_attachments_map[doc.id] = doc.attachments
 
         documents_map: dict[str, dict[str, Any]] = {}
@@ -248,14 +267,18 @@ Format your response as Markdown using headers, bullet points, and bold text whe
 
                 if doc_id not in documents_map:
                     content = doc_content_map.get(doc_id)
-                    if not content and hasattr(prediction, 'metadata') and prediction.metadata:
-                        content = prediction.metadata.get('content')
+                    if not content and hasattr(prediction, "metadata") and prediction.metadata:
+                        content = prediction.metadata.get("content")
                     if not content:
                         content = f"Document ID: {doc_id}"
 
                     raw_attachments = doc_attachments_map.get(doc_id)
-                    if not raw_attachments and hasattr(prediction, 'metadata') and prediction.metadata:
-                        raw_attachments = prediction.metadata.get('attachments', [])
+                    if (
+                        not raw_attachments
+                        and hasattr(prediction, "metadata")
+                        and prediction.metadata
+                    ):
+                        raw_attachments = prediction.metadata.get("attachments", [])
 
                     attachments = [
                         self._normalize_attachment(a) if isinstance(a, str) else a
@@ -271,30 +294,36 @@ Format your response as Markdown using headers, bullet points, and bold text whe
                         "model_results": [],
                     }
 
-                field_metrics_model_dump = prediction.field_metrics.model_dump() if prediction.field_metrics else None
+                field_metrics_model_dump = (
+                    prediction.field_metrics.model_dump() if prediction.field_metrics else None
+                )
 
-                documents_map[doc_id]["model_results"].append({
-                    "model": result.model,
-                    "predicted_value": prediction.predicted_value,
-                    "is_correct": prediction.is_correct,
-                    "response_time": prediction.response_time,
-                    "llm_cost": prediction.llm_cost,
-                    "evaluation_cost": prediction.evaluation_cost,
-                    "example_score": prediction.example_score,
-                    "field_metrics": field_metrics_model_dump
-                })
+                documents_map[doc_id]["model_results"].append(
+                    {
+                        "model": result.model,
+                        "predicted_value": prediction.predicted_value,
+                        "is_correct": prediction.is_correct,
+                        "response_time": prediction.response_time,
+                        "llm_cost": prediction.llm_cost,
+                        "evaluation_cost": prediction.evaluation_cost,
+                        "example_score": prediction.example_score,
+                        "field_metrics": field_metrics_model_dump,
+                    }
+                )
 
         metadata_lookup = {}
         for idx, doc_id in enumerate(documents_map.keys(), 1):
             if documents:
                 for doc in documents:
-                    if doc.id == doc_id and hasattr(doc, 'metadata') and doc.metadata:
+                    if doc.id == doc_id and hasattr(doc, "metadata") and doc.metadata:
                         metadata_lookup[f"doc{idx}"] = doc.metadata
                         break
 
         return list(documents_map.values()), metadata_lookup
 
-    def _extract_recommended_model(self, recommendation: str, results: list[EvaluationResult]) -> str | None:
+    def _extract_recommended_model(
+        self, recommendation: str, results: list[EvaluationResult]
+    ) -> str | None:
         """Extract the recommended model name from the AI recommendation text."""
         if not recommendation:
             return None
@@ -337,15 +366,29 @@ Format your response as Markdown using headers, bullet points, and bold text whe
         """
         Generate an HTML report with visualizations and recommendations.
 
+        Args:
+            results: Evaluation results to render, one per model.
+            output_path: Directory under which the html_report/ subdirectory is written.
+            use_case: Free-text description of the task, shown in the report and used in the
+                recommendation prompt.
+            include_recommendation: Whether to generate an LLM-powered model recommendation.
+            recommendation_model: Model used to generate the recommendation, if requested.
+            prompt_optimizations: Per-model list of suggested prompt improvements, keyed by
+                model name.
+            model_prompts: Effective prompt actually sent to each model, keyed by model name.
+            model_override_prompts: Per-model prompt overrides applied instead of the shared
+                prompt template.
+            original_prompt: The unmodified prompt template, used as a fallback when results
+                lack it.
+            documents: Source documents to display alongside predictions, if available.
+            field_config: Field-level scoring configuration used to render per-field breakdowns.
+
         Returns:
             Tuple of (Path to generated report, recommendation text or None)
         """
         output_path = Path(output_path) / "html_report"
 
-        results = sorted(
-            results,
-            key=lambda r: r.metrics.total_cost if r.metrics else float('inf')
-        )
+        results = sorted(results, key=lambda r: r.metrics.total_cost if r.metrics else float("inf"))
 
         recommendation = None
         recommended_model = None
@@ -419,8 +462,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
         analysis_path = output_path / "detailed_analysis.html"
         analysis_template = self._create_detailed_analysis_template()
         analysis_content = analysis_template.render(
-            documents_data=documents_data,
-            document_metadata=document_metadata
+            documents_data=documents_data, document_metadata=document_metadata
         )
         analysis_path.write_text(analysis_content, encoding="utf-8")
 

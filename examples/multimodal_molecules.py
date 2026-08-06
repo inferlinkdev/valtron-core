@@ -10,7 +10,7 @@ Run:
 
 from pathlib import Path
 
-from valtron_core.evaluation import ModelEval
+from valtron_core.evaluation import ClassificationExperiment
 
 # Images are 2D structure diagrams served directly from PubChem.
 # The `content` field is empty — the question is fully in the prompt.
@@ -19,37 +19,49 @@ DATA = [
         "id": "methanol",
         "content": "",
         "label": "1",
-        "attachments": ["https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=887&width=300&height=300"],
+        "attachments": [
+            "https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=887&width=300&height=300"
+        ],
     },
     {
         "id": "ethanol",
         "content": "",
         "label": "2",
-        "attachments": ["https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=702&width=300&height=300"],
+        "attachments": [
+            "https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=702&width=300&height=300"
+        ],
     },
     {
         "id": "acetone",
         "content": "",
         "label": "3",
-        "attachments": ["https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=180&width=300&height=300"],
+        "attachments": [
+            "https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=180&width=300&height=300"
+        ],
     },
     {
         "id": "benzene",
         "content": "",
         "label": "6",
-        "attachments": ["https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=241&width=300&height=300"],
+        "attachments": [
+            "https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=241&width=300&height=300"
+        ],
     },
     {
         "id": "caffeine",
         "content": "",
         "label": "8",
-        "attachments": ["https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=2519&width=300&height=300"],
+        "attachments": [
+            "https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=2519&width=300&height=300"
+        ],
     },
     {
         "id": "aspirin",
         "content": "",
         "label": "9",
-        "attachments": ["https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=2244&width=300&height=300"],
+        "attachments": [
+            "https://pubchem.ncbi.nlm.nih.gov/image/imagefly.cgi?cid=2244&width=300&height=300"
+        ],
     },
 ]
 
@@ -70,9 +82,11 @@ CONFIG = {
 if __name__ == "__main__":
     output_dir = Path(__file__).resolve().parent / "results" / "multimodal_molecules"
 
-    experiment = ModelEval(config=CONFIG, data=DATA)
+    experiment = ClassificationExperiment(config=CONFIG, data=DATA)
     report_path = experiment.run(output_dir=output_dir)
 
     print(f"\nReport: {report_path}\n")
     for result in experiment.results:
-        print(f"  {result.model:<40}  accuracy={result.metrics.accuracy:.0%}  cost=${result.metrics.total_cost:.4f}")
+        print(
+            f"  {result.model:<40}  accuracy={result.metrics.accuracy:.0%}  cost=${result.metrics.total_cost:.4f}"
+        )

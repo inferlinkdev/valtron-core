@@ -93,7 +93,6 @@ class EvaluationInput(BaseModel):
     max_tokens: int | None = Field(default=None, description="Max tokens to generate")
 
 
-
 class PredictionResult(BaseModel):
     """Result of a single prediction."""
 
@@ -105,13 +104,24 @@ class PredictionResult(BaseModel):
         default=0.0, description="Continuous score (0-1) indicating prediction quality"
     )
     response_time: float = Field(..., description="Time taken for prediction in seconds")
-    original_cost: float = Field(default=0.0, description="Cost as reported by litellm; never overwritten by cost_rate")
-    llm_cost: float = Field(default=0.0, description="Effective inference cost; initially equals original_cost, overwritten when cost_rate is applied")
-    evaluation_cost: float = Field(default=0.0, description="LLM-as-judge / embedding comparison cost incurred while scoring this prediction")
+    original_cost: float = Field(
+        default=0.0, description="Cost as reported by litellm; never overwritten by cost_rate"
+    )
+    llm_cost: float = Field(
+        default=0.0,
+        description="Effective inference cost; initially equals original_cost, overwritten when cost_rate is applied",
+    )
+    evaluation_cost: float = Field(
+        default=0.0,
+        description="LLM-as-judge / embedding comparison cost incurred while scoring this prediction",
+    )
     model: str = Field(..., description="Model used for prediction")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Additional metadata")
     field_metrics: EvalResult | None = Field(default=None, description="Per-field accuracy metrics")
-    confidence_score: float | None = Field(default=None, description="Classifier confidence for the predicted label (transformer models only)")
+    confidence_score: float | None = Field(
+        default=None,
+        description="Classifier confidence for the predicted label (transformer models only)",
+    )
 
 
 class EvaluationMetrics(BaseModel):
@@ -120,8 +130,13 @@ class EvaluationMetrics(BaseModel):
     total_documents: int = Field(..., description="Total number of documents evaluated")
     correct_predictions: int = Field(..., description="Number of correct predictions")
     accuracy: float = Field(..., description="Accuracy score (0-1)")
-    average_example_score: float = Field(0.0, description="Mean per-document score (0-1), using continuous field scores when available")
-    total_cost: float = Field(..., description="Total cost of all API calls (LLM inference + evaluation)")
+    average_example_score: float = Field(
+        0.0,
+        description="Mean per-document score (0-1), using continuous field scores when available",
+    )
+    total_cost: float = Field(
+        ..., description="Total cost of all API calls (LLM inference + evaluation)"
+    )
     cost: dict[str, float] = Field(
         default_factory=dict,
         description="Cost breakdown: total_llm_cost (inference) and total_evaluation_cost (judge/embedding)",
@@ -185,7 +200,9 @@ class EvaluationResult(BaseModel):
         except Exception:
             logger.exception("Failed to aggregate field metrics")
 
-        avg_example_score = sum(p.example_score for p in self.predictions) / total_docs if total_docs > 0 else 0.0
+        avg_example_score = (
+            sum(p.example_score for p in self.predictions) / total_docs if total_docs > 0 else 0.0
+        )
 
         self.metrics = EvaluationMetrics(
             total_documents=total_docs,
@@ -285,8 +302,8 @@ class EvaluationResult(BaseModel):
                     if align.result and align.result.children:
                         children.extend(align.result.children.values())
 
-            path_base = re.sub(r'\[\d+\]', '', res.path) if "[" in res.path else res.path
-            path_base = re.sub(r'^root\.', '', path_base)
+            path_base = re.sub(r"\[\d+\]", "", res.path) if "[" in res.path else res.path
+            path_base = re.sub(r"^root\.", "", path_base)
 
             if path_base == "root" and res.metric in list_metrics:
                 key = "[*]"
@@ -309,7 +326,9 @@ class EvaluationResult(BaseModel):
             if not a["weight"]:
                 a["weight"] = res.weight
             # Prefer real metric names over synthetic ones
-            if a["metric"] is None or (a["metric"] in synthetic_metrics and res.metric not in synthetic_metrics):
+            if a["metric"] is None or (
+                a["metric"] in synthetic_metrics and res.metric not in synthetic_metrics
+            ):
                 a["metric"] = res.metric
             if a["params"] is None and res.params is not None:
                 a["params"] = res.params
@@ -334,16 +353,29 @@ class EvaluationResult(BaseModel):
             if result.metric and result.metric.startswith("agg:"):
                 prefix = path + "."
                 direct_children = [
-                    v for p, v in aggregated.items()
-                    if p.startswith(prefix) and "." not in p[len(prefix):]
+                    v
+                    for p, v in aggregated.items()
+                    if p.startswith(prefix) and "." not in p[len(prefix) :]
                 ]
                 if direct_children:
                     total_weight = sum(c.weight for c in direct_children) or 1.0
-                    result.precision = sum(c.precision * c.weight for c in direct_children) / total_weight
+                    result.precision = (
+                        sum(c.precision * c.weight for c in direct_children) / total_weight
+                    )
                     result.recall = sum(c.recall * c.weight for c in direct_children) / total_weight
 
 
 class FieldMetricsConfig(BaseModel):
-    config: dict[str, Any]
-    custom_metrics: dict[str, Callable[[Any, Any, dict[str, Any]], tuple[float, bool]]] = Field(default_factory=dict)
-    custom_aggs: dict[str, Callable[[list[EvalResult]], float]] = Field(default_factory=dict)
+    """Parsed field-level metrics configuration, including custom scoring and aggregation callables."""
+
+    config: dict[str, Any] = Field(
+        description="Per-field FieldConfig tree, as accepted by valtron_core.scoring.json_eval."
+    )
+    custom_metrics: dict[str, Callable[[Any, Any, dict[str, Any]], tuple[float, bool]]] = Field(
+        default_factory=dict,
+        description="Custom leaf metrics registered by name, callable as metric_config.metric.",
+    )
+    custom_aggs: dict[str, Callable[[list[EvalResult]], float]] = Field(
+        default_factory=dict,
+        description="Custom aggregation functions registered by name for combining child EvalResults.",
+    )
