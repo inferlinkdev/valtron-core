@@ -1,0 +1,191 @@
+{
+  "run_id": "4247075c-d719-4138-a32e-cd78a274b491",
+  "model": "GPT-4o mini",
+  "started_at": "2026-08-13 16:07:02.719605",
+  "completed_at": "2026-08-13 16:07:05.212012",
+  "status": "completed",
+  "prompt_template": "Classify the sentiment of the following movie review as exactly one of: positive, negative, or neutral. Reply with only the single word label.\n\nReview: {content}",
+  "prompt_manipulations": [],
+  "override_prompt": null,
+  "llm_config": {
+    "model": "gpt-4o-mini",
+    "temperature": 0.0
+  },
+  "metrics": {
+    "total_documents": 3,
+    "correct_predictions": 3,
+    "accuracy": 1.0,
+    "average_example_score": 1.0,
+    "total_cost": 5.5799999999999994e-05,
+    "cost": {
+      "total_llm_cost": 5.5799999999999994e-05,
+      "total_evaluation_cost": 0.0
+    },
+    "total_time": 7.383044004440308,
+    "average_time_per_document": 2.461014668146769,
+    "average_cost_per_document": 1.8599999999999998e-05,
+    "model": "GPT-4o mini",
+    "aggregated_field_metrics": {
+      "label": {
+        "path": "label",
+        "score": 1.0,
+        "weight": 1.0,
+        "is_correct": false,
+        "tp": 3.0,
+        "tn": 0.0,
+        "fp": 0.0,
+        "fn": 0.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "metric": "exact",
+        "params": {},
+        "details": {
+          "aggregation": "avg_score",
+          "num_examples": 3
+        },
+        "children": {},
+        "alignment": null
+      }
+    }
+  },
+  "predictions": [
+    {
+      "document_id": "doc_1",
+      "predicted_value": "{\"label\":\"positive\"}",
+      "expected_value": "{\"label\": \"positive\"}",
+      "original_cost": 1.8599999999999998e-05,
+      "llm_cost": 1.8599999999999998e-05,
+      "evaluation_cost": 0.0,
+      "response_time": 2.4914438724517822,
+      "is_correct": true,
+      "example_score": 1.0,
+      "field_metrics": {
+        "path": "root",
+        "score": 1.0,
+        "weight": 1.0,
+        "is_correct": true,
+        "tp": 0.0,
+        "tn": 0.0,
+        "fp": 0.0,
+        "fn": 0.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "metric": "agg:weighted_avg",
+        "params": {},
+        "details": {},
+        "children": {
+          "label": {
+            "path": "root.label",
+            "score": 1.0,
+            "weight": 1.0,
+            "is_correct": true,
+            "tp": 1.0,
+            "tn": 0.0,
+            "fp": 0.0,
+            "fn": 0.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "metric": "exact",
+            "params": {},
+            "details": {},
+            "children": {},
+            "alignment": null
+          }
+        },
+        "alignment": null
+      }
+    },
+    {
+      "document_id": "doc_2",
+      "predicted_value": "{\"label\":\"negative\"}",
+      "expected_value": "{\"label\": \"negative\"}",
+      "original_cost": 1.89e-05,
+      "llm_cost": 1.89e-05,
+      "evaluation_cost": 0.0,
+      "response_time": 2.433072090148926,
+      "is_correct": true,
+      "example_score": 1.0,
+      "field_metrics": {
+        "path": "root",
+        "score": 1.0,
+        "weight": 1.0,
+        "is_correct": true,
+        "tp": 0.0,
+        "tn": 0.0,
+        "fp": 0.0,
+        "fn": 0.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "metric": "agg:weighted_avg",
+        "params": {},
+        "details": {},
+        "children": {
+          "label": {
+            "path": "root.label",
+            "score": 1.0,
+            "weight": 1.0,
+            "is_correct": true,
+            "tp": 1.0,
+            "tn": 0.0,
+            "fp": 0.0,
+            "fn": 0.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "metric": "exact",
+            "params": {},
+            "details": {},
+            "children": {},
+            "alignment": null
+          }
+        },
+        "alignment": null
+      }
+    },
+    {
+      "document_id": "doc_3",
+      "predicted_value": "{\"label\":\"neutral\"}",
+      "expected_value": "{\"label\": \"neutral\"}",
+      "original_cost": 1.8299999999999998e-05,
+      "llm_cost": 1.8299999999999998e-05,
+      "evaluation_cost": 0.0,
+      "response_time": 2.4585280418395996,
+      "is_correct": true,
+      "example_score": 1.0,
+      "field_metrics": {
+        "path": "root",
+        "score": 1.0,
+        "weight": 1.0,
+        "is_correct": true,
+        "tp": 0.0,
+        "tn": 0.0,
+        "fp": 0.0,
+        "fn": 0.0,
+        "precision": 1.0,
+        "recall": 1.0,
+        "metric": "agg:weighted_avg",
+        "params": {},
+        "details": {},
+        "children": {
+          "label": {
+            "path": "root.label",
+            "score": 1.0,
+            "weight": 1.0,
+            "is_correct": true,
+            "tp": 1.0,
+            "tn": 0.0,
+            "fp": 0.0,
+            "fn": 0.0,
+            "precision": 1.0,
+            "recall": 1.0,
+            "metric": "exact",
+            "params": {},
+            "details": {},
+            "children": {},
+            "alignment": null
+          }
+        },
+        "alignment": null
+      }
+    }
+  ]
+}

@@ -1,0 +1,78 @@
+{
+  "timestamp": "20260813_160705",
+  "use_case": "movie review sentiment classification",
+  "original_prompt": "Classify the sentiment of the following movie review as exactly one of: positive, negative, or neutral. Reply with only the single word label.\n\nReview: {content}",
+  "field_metrics_config": {
+    "config": {
+      "type": "object",
+      "weight": 1.0,
+      "optional": false,
+      "metric_config": {
+        "propagation": "weighted_avg"
+      },
+      "fields": {
+        "label": {
+          "type": "leaf",
+          "weight": 1.0,
+          "optional": false,
+          "metric_config": {
+            "metric": "exact",
+            "params": {}
+          },
+          "fields": null
+        }
+      }
+    }
+  },
+  "response_format_schema": {
+    "type": "json_schema",
+    "json_schema": {
+      "name": "ResponseModel",
+      "strict": true,
+      "schema": {
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "description": "Predicted class label",
+            "enum": [
+              "negative",
+              "neutral",
+              "positive"
+            ],
+            "title": "Label",
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ],
+        "title": "ResponseModel",
+        "type": "object"
+      }
+    }
+  },
+  "documents": [
+    {
+      "id": "doc_1",
+      "content": "This movie was a total delight from start to finish.",
+      "label": "positive"
+    },
+    {
+      "id": "doc_2",
+      "content": "I want my two hours back, what a waste of time.",
+      "label": "negative"
+    },
+    {
+      "id": "doc_3",
+      "content": "It was fine, nothing special either way.",
+      "label": "neutral"
+    }
+  ],
+  "total_cost": 5.5799999999999994e-05,
+  "cost": {
+    "GPT-4o mini": {
+      "llm_cost": 5.5799999999999994e-05,
+      "evaluation_cost": 0.0
+    }
+  }
+}
