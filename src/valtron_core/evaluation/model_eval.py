@@ -36,6 +36,7 @@ from valtron_core.models import Document, FieldMetricsConfig, Label, PredictionR
 from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
 from valtron_core.progress import ProgressTracker, write_status
 from valtron_core.prompt_optimizer import ExplanationEnhancer
+from valtron_core.content_resolution import resolve_content
 from valtron_core.evaluation.base import BaseRecipe, _normalize_label
 from valtron_core.evaluation.config import (
     ClassificationConfig,
@@ -102,6 +103,7 @@ class ModelEval(BaseRecipe):
             config = ModelEvalConfig.model_validate(config)
         self.config = config
 
+        self._data_base_dir = self._resolve_data_base_dir(data)
         if isinstance(data, (str, Path)):
             with open(data) as f:
                 data = json.load(f)
@@ -987,7 +989,7 @@ class ModelEval(BaseRecipe):
             documents.append(
                 Document(
                     id=doc_id,
-                    content=item["content"],
+                    content=resolve_content(item, self._data_base_dir),
                     metadata=item.get("metadata", {}),
                     attachments=item.get("attachments", []),
                 )

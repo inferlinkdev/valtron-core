@@ -6,6 +6,7 @@ from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any
 
+from valtron_core.content_resolution import absolutize_local_path, is_local_path, resolve_content
 from valtron_core.models import FieldMetricsConfig
 from valtron_core.evaluation.config import BaseRecipeConfig, ModelConfig
 from valtron_core.runner import EvaluationRunner
@@ -35,6 +36,8 @@ class BaseRecipe(ABC):
         self.output_dir   : Path
         self.use_case     : str
         self.prompt_template : str
+        self._data_base_dir  : Path  (via ``_resolve_data_base_dir(data)``, before
+                                       ``data`` is loaded from a path)
 
     After calling ``evaluate()``, the following are populated:
         self.results               : list[EvaluationResult]
@@ -49,6 +52,7 @@ class BaseRecipe(ABC):
     output_dir: Path
     use_case: str
     prompt_template: str
+    _data_base_dir: Path
 
     # Populated by evaluate()
     results: list[Any] | None
@@ -56,6 +60,18 @@ class BaseRecipe(ABC):
     _model_prompts: dict[str, str] | None
     _model_override_prompts: dict[str, str] | None
     _response_format_schema: dict[str, Any] | None
+
+    @staticmethod
+    def _resolve_data_base_dir(data: "list[dict[str, Any]] | str | Path") -> Path:
+        """Return the directory a data record's content_path/attachments resolve against.
+
+        Call with the constructor's ``data`` argument before it gets replaced by the
+        parsed JSON list, when ``data`` is a path -- otherwise the file's own
+        directory is no longer recoverable.
+        """
+        if isinstance(data, (str, Path)):
+            return Path(data).resolve().parent
+        return Path.cwd()
 
     @abstractmethod
     def _get_field_metrics_config(self) -> FieldMetricsConfig | None: ...
@@ -71,7 +87,9 @@ class BaseRecipe(ABC):
         """
         self._check_unique_model_labels()
         field_metrics_config = self._get_field_metrics_config()
-        self.runner._preflight_check(field_metrics_config, len(self.data), len(self.models), self.models)
+        self.runner._preflight_check(
+            field_metrics_config, len(self.data), len(self.models), self.models
+        )
 
     def _check_unique_model_labels(self) -> None:
         labels = [m.label or m.name for m in self.models]
@@ -89,16 +107,30 @@ class BaseRecipe(ABC):
             )
 
     def _build_save_documents(self) -> list[dict[str, Any]]:
-        """Build the document list used when writing the run directory."""
+        """Build the document list used when writing the run directory.
+
+        A local (non-URL, non-data-URI) content_path or attachment path is
+        written out as an absolute path -- resolved now, while ``_data_base_dir``
+        is still known -- so a later ``load_experiment_results()`` from a
+        different working directory still finds the same file.
+        """
         documents: list[dict[str, Any]] = []
         for item in self.data:
             doc_entry: dict[str, Any] = {
                 "id": str(item.get("id", "")),
-                "content": item.get("content", ""),
                 "label": _normalize_label(item.get("label", "")),
             }
+            if item.get("content_path") is not None:
+                doc_entry["content_path"] = str(
+                    absolutize_local_path(item["content_path"], self._data_base_dir)
+                )
+            else:
+                doc_entry["content"] = item.get("content", "")
             if item.get("attachments"):
-                doc_entry["attachments"] = item["attachments"]
+                doc_entry["attachments"] = [
+                    (str(absolutize_local_path(a, self._data_base_dir)) if is_local_path(a) else a)
+                    for a in item["attachments"]
+                ]
             documents.append(doc_entry)
         return documents
 
@@ -170,7 +202,7 @@ class BaseRecipe(ABC):
         documents = [
             Document(
                 id=str(d.get("id", "")),
-                content=d.get("content", ""),
+                content=resolve_content(d, self._data_base_dir),
                 metadata={},
                 attachments=d.get("attachments", []),
             )
@@ -211,7 +243,7 @@ class BaseRecipe(ABC):
         documents = [
             Document(
                 id=str(d.get("id", "")),
-                content=d.get("content", ""),
+                content=resolve_content(d, self._data_base_dir),
                 metadata={},
                 attachments=d.get("attachments", []),
             )

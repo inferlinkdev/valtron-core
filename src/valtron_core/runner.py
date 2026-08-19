@@ -13,6 +13,7 @@ from rich.table import Table
 from tqdm import tqdm  # type: ignore[import-untyped]
 
 from valtron_core.client import LLMClient
+from valtron_core.content_resolution import resolve_content
 from valtron_core.evaluator import PromptEvaluator
 from valtron_core.scoring.json_eval import (
     ExpensiveListComparisonError,
@@ -422,10 +423,13 @@ class EvaluationRunner:
             meta = json.load(f)
 
         label_map = {d["id"]: d["label"] for d in meta.get("documents", [])}
+        # content_path entries in metadata.json were absolutized when saved (see
+        # _build_save_documents), so the base_dir here is never actually used --
+        # passed anyway to satisfy resolve_content's signature.
         documents = [
             Document(
                 id=d["id"],
-                content=d.get("content", ""),
+                content=resolve_content(d, run_dir),
                 metadata={},
                 attachments=d.get("attachments", []),
             )
