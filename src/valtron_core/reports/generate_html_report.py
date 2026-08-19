@@ -307,6 +307,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
                         "llm_cost": prediction.llm_cost,
                         "evaluation_cost": prediction.evaluation_cost,
                         "example_score": prediction.example_score,
+                        "task_scores": prediction.task_scores,
                         "field_metrics": field_metrics_model_dump,
                     }
                 )
