@@ -3,13 +3,13 @@
 The full three-stage workflow::
 
     from valtron_core.training import TransformerClassifier
-    from valtron_core.evaluation import ModelEval
+    from valtron_core.evaluation import ReferencedEval
     from valtron_core.analysis import TradeoffAnalyzer
 
     clf = TransformerClassifier(output_dir="./model")
     clf.train(documents, labels)
 
-    eval = ModelEval(config={...}, data="eval.json")
+    eval = ReferencedEval(config={...}, data="eval.json")
     eval.run()
 
     TradeoffAnalyzer.from_model_eval(eval).run("report.html")
@@ -38,7 +38,7 @@ from valtron_core.analysis._report import (
 )
 
 if TYPE_CHECKING:
-    from valtron_core.evaluation.model_eval import ModelEval
+    from valtron_core.evaluation.referenced_eval import ReferencedEval
 
 _DEFAULT_INSTANCE_HOURLY: float = 0.085
 _DEFAULT_SAMPLES_PER_SECOND: float = 8.0
@@ -50,7 +50,7 @@ def _unwrap_label(value: str) -> str:
     Structured-output classification wraps single-field labels as JSON
     (e.g. ``{"label": "positive"}``) so the LLM's response schema and the
     auto-wrapped ground truth compare correctly during evaluation (see
-    ``ModelEval._auto_wrap_string_labels``). But the LLM's own JSON
+    ``ReferencedEval._auto_wrap_string_labels``). But the LLM's own JSON
     serialization (key order, whitespace) isn't guaranteed to match the
     ground truth's ``json.dumps`` output byte-for-byte, and the transformer
     predicts bare strings. TradeoffAnalyzer needs every label -- transformer
@@ -88,7 +88,7 @@ class TradeoffAnalyzer:
 
     Instantiate via one of two factory methods::
 
-        # Primary path: reuse a completed ModelEval run -- no re-evaluation
+        # Primary path: reuse a completed ReferencedEval run -- no re-evaluation
         analyzer = TradeoffAnalyzer.from_model_eval(model_eval)
 
         # Standalone path: provide data + transformer path directly
@@ -102,7 +102,7 @@ class TradeoffAnalyzer:
 
         analyzer.run("report.html")
 
-    Or use the ModelEval-style step-by-step API to save in multiple formats::
+    Or use the ReferencedEval-style step-by-step API to save in multiple formats::
 
         analyzer.analyze()
         analyzer.save_html_report("report.html")
@@ -131,17 +131,17 @@ class TradeoffAnalyzer:
     @classmethod
     def from_model_eval(
         cls,
-        model_eval: "ModelEval",
+        model_eval: "ReferencedEval",
         transformer_instance_hourly: float = _DEFAULT_INSTANCE_HOURLY,
         transformer_samples_per_second: float = _DEFAULT_SAMPLES_PER_SECOND,
     ) -> "TradeoffAnalyzer":
-        """Build a TradeoffAnalyzer from a completed ModelEval run.
+        """Build a TradeoffAnalyzer from a completed ReferencedEval run.
 
         Reuses the predictions already stored in model_eval.results -- no
         re-evaluation of the transformer or LLMs.
 
         Args:
-            model_eval: A ModelEval instance after evaluate() or run() has been called.
+            model_eval: A ReferencedEval instance after evaluate() or run() has been called.
                 Must contain exactly one TransformerModelConfig and at least one
                 LLMModelConfig.
             transformer_instance_hourly: Hourly instance cost in USD used to compute
@@ -187,7 +187,7 @@ class TradeoffAnalyzer:
         if any(p.confidence_score is None for p in predictions):
             raise ValueError(
                 "Transformer predictions are missing confidence scores. Re-run the "
-                "ModelEval with the current version of valtron_core to populate them."
+                "ReferencedEval with the current version of valtron_core to populate them."
             )
         if any(
             not isinstance(p.predicted_value, str) or p.expected_value is None for p in predictions
@@ -305,7 +305,7 @@ class TradeoffAnalyzer:
         """Compute the tradeoff sweep and store results in memory.
 
         Must be called before save_html_report() or save_json_report().
-        Equivalent to ModelEval.evaluate() -- separates computation from saving.
+        Equivalent to ReferencedEval.evaluate() -- separates computation from saving.
         """
         asyncio.run(self.aanalyze())
 

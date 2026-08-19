@@ -1,378 +1,232 @@
-"""Unified recipe for model evaluation tasks (classification and structured extraction)."""
+"""Generic base for evaluations that run multiple models/prompts and score the results.
+
+``ModelEval`` and a ``SummarizationExperiment`` (not built yet, but the reason this
+class exists in this shape) share the same shape: documents go in, a list of
+models/prompts get run against them, and the results come back scored and
+comparable. What varies -- output shape, whether groundtruth is required, which
+statistics matter -- is entirely up to each concrete subclass; this base class makes
+no assumption about any of it.
+
+Public contract::
+
+    ModelEval(config, data)
+    .add_models([...])              # string, dict, or config object; callable again later
+    .evaluate() / .run(...)         # sync
+    .aevaluate() / .arun(...)       # async; run()/arun() also persist to output_dir
+    ModelEval.load_experiment_results(dir_path)  # reload a persisted run
+    .get_traces(model=None)         # per-call records already collected
+    .reevaluate(...)                # optional: rescore without new LLM calls
+
+Every internal seam has a concrete default except one: ``_evaluate_model_documents``,
+the method that actually calls a model and scores its output. A subclass need only
+implement that to get a working evaluation; every other hook is overridden only to
+specialize behavior.
+
+Persistence is symmetric: ``_run_evaluations`` writes each model's results as soon as
+it finishes, ``save_experiment_results()`` writes the full run directory (documents +
+metrics + predictions), and ``load_experiment_results()`` reads it back later. There is
+no separate "trace" format -- a trace is a ``PredictionResult``, and ``get_traces()``
+just exposes the ones already in ``self.results``. Rich HTML/PDF reports
+(``save_html_report``/``save_pdf_report``) are *not* provided here -- they assume a
+correctness/accuracy notion that this class explicitly makes no assumption about;
+see ``ReferencedEval`` for the concrete implementation classification/extraction use.
+"""
 
 import asyncio
 import json
-import re
 import sys
-import time
-import uuid
-from datetime import datetime
+from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Sequence
 
-import litellm
 import structlog
-from pydantic import BaseModel, ConfigDict, Field, create_model
-
-from valtron_core.client import LLMClient
-from valtron_core.schema_synthesis import synthesize_pydantic_model
-from valtron_core.cost_utils import _parse_time_unit_to_seconds
-from valtron_core.decompose import (
-    DecomposedEvaluator,
-    cleanup_few_shot_sub_prompts,
-    create_sub_schemas,
-    decompose_few_shot_examples,
-    filter_hallucinated_values,
-    find_split_point,
-    generate_sub_prompts,
-    inject_few_shot_into_sub_prompts,
-)
-from valtron_core.scoring.json_eval import JsonEvaluator
-from valtron_core.few_shot_training_data_generator import (
-    FewShotTrainingDataGenerator,
-    LabeledExample,
-)
-from valtron_core.models import Document, FieldMetricsConfig, Label, PredictionResult
-from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
-from valtron_core.progress import ProgressTracker, write_status
-from valtron_core.prompt_optimizer import ExplanationEnhancer
-from valtron_core.content_resolution import resolve_content
-from valtron_core.evaluation.base import BaseRecipe, _normalize_label
-from valtron_core.evaluation.config import (
-    ClassificationConfig,
-    Manipulation,
-    ModelEvalConfig,
-    STRUCTURED_MANIPULATIONS,
-)
 from tqdm import tqdm  # type: ignore[import-untyped]
 
-from valtron_core.evaluator import _score_prediction
+from valtron_core.client import LLMClient
+from valtron_core.content_resolution import absolutize_local_path, is_local_path, resolve_content
+from valtron_core.evaluation.config import BaseRecipeConfig, LLMModelConfig, ModelEvalConfig
+from valtron_core.models import Document, FieldMetricsConfig, PredictionResult
+from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
+from valtron_core.progress import ProgressTracker, write_status
 from valtron_core.runner import EvaluationResult, EvaluationRunner, PreflightError
-
-from valtron_core.utilities.field_config_generator import infer_field_config
-
 
 logger = structlog.get_logger()
 
 
-class ModelEval(BaseRecipe):
-    """
-    Recipe for evaluating and comparing multiple models on a structured task.
+def _normalize_label(label: Any) -> Any:
+    if isinstance(label, (dict, list)):
+        return label
+    if isinstance(label, str):
+        try:
+            parsed = json.loads(label)
+            if isinstance(parsed, (dict, list)):
+                return parsed
+        except (json.JSONDecodeError, ValueError):
+            pass
+    return str(label)
 
-    Handles the complete pipeline for both classification and extraction tasks:
-    1. Optional: Generate additional training data via few-shot learning
-    2. Optimize prompts per model (explanations, few-shot injection, repetition)
-    3. Evaluate all models concurrently
-    4. Generate a comprehensive report with metrics
 
-    ``ModelEval`` itself never guesses a schema and never validates label shape;
-    it just uses whatever ``response_format`` it's given (or none). Use
-    ``ClassificationExperiment`` for label-mode data with schema auto-inference and
-    upfront validation that every label is a plain string, or ``ExtractionExperiment``
-    for extraction-mode data with upfront validation that a schema was actually
-    given.
+class ModelEval(ABC):
+    """Shared pipeline for evaluations that run multiple models/prompts and score the results.
+
+    The only required override is ``_evaluate_model_documents``. Everything else has
+    a default suitable for a plain "one LLM model, one prompt, optional groundtruth,
+    no field-level scoring" evaluation.
+
+    Populated after ``__init__``: ``self.runner``, ``self.client``, ``self.config``,
+    ``self.data``, ``self._data_base_dir``, ``self.models``, ``self.prompt_template``,
+    ``self.output_dir``, ``self.use_case``, ``self.temperature``.
+
+    Populated after ``aevaluate()`` / ``evaluate()``: ``self.results``,
+    ``self._manipulations_applied``, ``self._model_prompts``, ``self._task_statistics``.
     """
+
+    client: LLMClient
+    config: BaseRecipeConfig
+    models: list[Any]
+    data: list[dict[str, Any]]
+    _data_base_dir: Path
+    output_dir: Path | None
+    use_case: str
+    prompt_template: str
+    results: list[EvaluationResult] | None
+    _manipulations_applied: dict[str, list[Any]] | None
+    _model_prompts: dict[str, str] | None
+    _model_override_prompts: dict[str, str] | None
+    _task_statistics: dict[str, Any] | None
+
+    # -------------------------------------------------------------------------
+    # Construction
+    # -------------------------------------------------------------------------
 
     def __init__(
         self,
-        config: ModelEvalConfig | dict[str, Any] | str | Path,
-        data: list[dict[str, Any]] | str | Path,
-        response_format: type[BaseModel] | None = None,
-    ):
-        """
-        Initialize the model evaluation recipe.
+        config: "BaseRecipeConfig | dict[str, Any] | str | Path",
+        data: "list[dict[str, Any]] | str | Path",
+    ) -> None:
+        """Load config/data and build the model list; task setup happens in ``_post_init``.
 
         Args:
-            config: Configuration dict, ModelEvalConfig, or path (str/Path) to a JSON config file.
-                Required keys: ``models``, ``prompt`` (must contain ``{content}``).
-                Optional keys: ``output_dir``, ``use_case``, ``temperature``, ``few_shot``,
-                ``field_metrics_config``, ``response_format_schema``, ``output_formats``.
-                ``response_format_schema`` accepts the litellm format:
-                ``{"type": "json_schema", "json_schema": {"name": ..., "strict": true, "schema": {...}}}``.
-            data: List of dicts ``[{"id": ..., "content": ..., "label": ...}]``,
-                or a path to a JSON file with the same structure.
-            response_format: Optional Pydantic model class for structured output validation.
-                When provided, enables extraction mode and the structured manipulations
-                (``decompose``, ``hallucination_filter``, ``multi_pass``).
-                Takes priority over ``config.response_format_schema``.
+            config: Config dict, a ``BaseRecipeConfig`` instance (the type returned
+                by ``_config_model()``), or a path to a JSON config file.
+            data: List of document dicts, or a path to a JSON file with the same
+                structure. Each dict needs at least ``content`` or ``content_path``;
+                ``id``, ``label``, ``metadata``, ``attachments`` are optional
+                (see ``_load_documents_and_labels``).
         """
-        if isinstance(config, (str, Path)):
-            with open(config) as f:
-                config = json.load(f)
-        if isinstance(config, dict):
-            config = ModelEvalConfig.model_validate(config)
-        self.config = config
+        self.config = self._validate_config(config)
 
         self._data_base_dir = self._resolve_data_base_dir(data)
         if isinstance(data, (str, Path)):
             with open(data) as f:
-                data = json.load(f)
-        self.data = data
-        self.response_format = response_format
-        if self.response_format is None and config.response_format_schema is not None:
-            synthesized = synthesize_pydantic_model(config.response_format_schema)
-            if synthesized is not None:
-                self.response_format = synthesized
-
-        # Dict schema kept for API calls (synthesis fallback) and metadata serialization.
-        # Only capture the config dict when no Pydantic model was passed; aevaluate()
-        # will serialize from self.response_format in the user-passed-model case.
-        self._response_format_schema: dict[str, Any] | None = (
-            config.response_format_schema if response_format is None else None
-        )
+                self.data = json.load(f)
+        else:
+            self.data = data
 
         self.runner = EvaluationRunner()
-        self.enhancer = ExplanationEnhancer()
         self.client = LLMClient()
-        # DecomposedEvaluator is only needed in extraction mode
-        self.decomposed_evaluator = (
-            DecomposedEvaluator(client=self.client) if self.response_format is not None else None
-        )
 
-        # Parse configuration — add_models validates guards and populates self.models
-        self.models: list[Any] = []
-        self.add_models(config.models)
-        self.prompt_template = config.prompt
-        self.few_shot_config = config.few_shot
-        self.output_dir = Path(config.output_dir) if config.output_dir else None
-        self.use_case = config.use_case
-        self.temperature = config.temperature
-        self._field_metrics_config_raw = config.field_metrics_config
+        self.models = []
+        self.add_models(self.config.models)
 
-        # Storage
-        self.few_shot_examples: list[Any] = []
-        self.results: list[Any] | None = None
-        self._manipulations_applied: dict[str, list[Any]] | None = None
-        self._model_prompts: dict[str, str] | None = None
-        self._model_override_prompts: dict[str, str] | None = None
-        self._auto_wrap_string_labels: bool = self._compute_auto_wrap_string_labels()
+        self.prompt_template = self.config.prompt
+        self.output_dir = Path(self.config.output_dir) if self.config.output_dir else None
+        self.use_case = self.config.use_case
+        self.temperature = self.config.temperature
+
+        self.results = None
+        self._manipulations_applied = None
+        self._model_prompts = None
+        self._model_override_prompts = None
+        self._task_statistics = None
+
+        self._post_init()
 
         logger.info(
-            "model_eval_initialized",
+            "evaluation_initialized",
+            evaluation=type(self).__name__,
             num_models=len(self.models),
             num_documents=len(self.data),
-            few_shot_enabled=self.few_shot_config is not None and self.few_shot_config.enabled,
-            has_response_format=response_format is not None,
         )
 
-    # -------------------------------------------------------------------------
-    # Preflight
-    # -------------------------------------------------------------------------
+    @classmethod
+    def _config_model(cls) -> type[BaseRecipeConfig]:
+        """Return the Pydantic config class to validate a dict/JSON-file config against.
 
-    def _preflight_check(self) -> None:
-        super()._preflight_check()
-        self._check_model_param_support()
-        self._validate_labels_against_schema()
-
-    def _check_model_param_support(self) -> None:
-        from valtron_core.evaluation.config import LLMModelConfig
-
-        wants_response_format = self.response_format is not None
-
-        self._auto_wrap_string_labels = self._compute_auto_wrap_string_labels()
-
-        if wants_response_format and self.data and not self._auto_wrap_string_labels:
-            all_plain_string_labels = all(
-                not isinstance(item.get("label"), (dict, list)) for item in self.data
-            )
-            if all_plain_string_labels:
-                logger.warning(
-                    "plain_string_labels_with_response_format",
-                    action="scoring_may_be_incorrect",
-                    detail="response_format is set but labels are plain strings -- "
-                    "model outputs will be JSON but expected values will not match",
-                )
-
-        for mc in self.models:
-            if not isinstance(mc, LLMModelConfig):
-                continue
-            try:
-                kwargs: dict[str, Any] = {"model": mc.name}
-                provider = mc.params.get("custom_llm_provider")
-                if provider:
-                    kwargs["custom_llm_provider"] = provider
-                supported = litellm.get_supported_openai_params(**kwargs) or []
-            except Exception:
-                continue
-
-            if "temperature" not in supported:
-                logger.warning(
-                    "temperature_not_supported",
-                    model=mc.name,
-                    action="temperature_will_be_dropped",
-                )
-            if wants_response_format and "response_format" not in supported:
-                logger.warning(
-                    "response_format_not_supported",
-                    model=mc.name,
-                    action="structured_output_will_be_skipped",
-                )
-
-    def _compute_auto_wrap_string_labels(self) -> bool:
-        """Return True if plain string labels should be auto-wrapped as ``{"label": ...}``.
-
-        Requires a resolved response schema with exactly one field named ``label``
-        (str or Enum) and every document in ``self.data`` having a plain (non-dict/list)
-        label. This is a pure function of ``response_format`` and ``data`` -- called at
-        every entry point where either can change (construction, ``load_experiment_results``,
-        ``reevaluate``) so the flag never depends on ``_preflight_check`` having run first.
+        Default is ``ModelEvalConfig`` (a no-op subclass of the truly generic
+        ``BaseRecipeConfig``, kept for continuity with the config hierarchy's naming).
+        Override to return a subclass carrying additional task-specific fields.
         """
-        if self.response_format is None or not self.data:
-            return False
-        if not self._is_single_label_field_schema():
-            return False
-        return all(not isinstance(item.get("label"), (dict, list)) for item in self.data)
+        return ModelEvalConfig
 
-    def _is_single_label_field_schema(self) -> bool:
-        """Return True if the response schema has exactly one field named 'label' (str or Enum)."""
-        import enum
-        from typing import Literal, get_origin
+    @classmethod
+    def _validate_config(
+        cls, config: "BaseRecipeConfig | dict[str, Any] | str | Path"
+    ) -> BaseRecipeConfig:
+        """Normalize config into a validated instance of ``_config_model()``.
 
-        if self.response_format is None:
-            return False
-        fields = self.response_format.model_fields
-        if len(fields) != 1 or "label" not in fields:
-            return False
-        annotation = fields["label"].annotation
-        return (
-            annotation is str
-            or get_origin(annotation) is Literal
-            or (isinstance(annotation, type) and issubclass(annotation, enum.Enum))
-        )
-
-    def _validate_labels_against_schema(self) -> None:
-        """Validate each label against the response schema, raising if any fail.
-
-        Handles both Pydantic response_format (via model_validate_json) and
-        response_format_schema dicts (via jsonschema). Auto-wrap is applied before
-        validation so plain string labels destined for wrapping are checked in their
-        final form. Plain string labels without auto-wrap are skipped -- they are not
-        JSON-structured and are already covered by the warning in _check_model_param_support.
+        A no-op when ``config`` is already a validated model instance (of any
+        subclass) -- safe to call more than once in a constructor chain, e.g. from a
+        subclass's own ``__init__`` before it calls ``super().__init__()`` to resolve
+        something that must be known earlier (see ``ReferencedEval.__init__``, which
+        needs its config validated before ``add_models()`` runs so its own
+        ``response_format`` guard has something to check).
         """
-        import jsonschema  # type: ignore[import-untyped]
+        if isinstance(config, (str, Path)):
+            with open(config) as f:
+                loaded: dict[str, Any] = json.load(f)
+            return cls._config_model().model_validate(loaded)
+        if isinstance(config, dict):
+            return cls._config_model().model_validate(config)
+        return config
 
-        if self.response_format is None and self._response_format_schema is None:
-            return
+    @staticmethod
+    def _resolve_data_base_dir(data: "list[dict[str, Any]] | str | Path") -> Path:
+        """Return the directory a data record's content_path/attachments resolve against.
 
-        json_schema: dict[str, Any] | None = None
-        if self.response_format is None:
-            try:
-                json_schema = self._response_format_schema["json_schema"]["schema"]  # type: ignore[index]
-            except (KeyError, TypeError):
-                return
-
-        errors: list[str] = []
-        for idx, item in enumerate(self.data):
-            record_id = item.get("id", f"index {idx}")
-            label_raw = item.get("label", "")
-
-            if isinstance(label_raw, (dict, list)):
-                label_obj: Any = label_raw
-            elif self._auto_wrap_string_labels:
-                label_obj = {"label": str(label_raw)}
-            else:
-                continue
-
-            try:
-                if self.response_format is not None:
-                    self.response_format.model_validate_json(json.dumps(label_obj))
-                elif json_schema is not None:
-                    jsonschema.validate(instance=label_obj, schema=json_schema)
-            except Exception as exc:
-                errors.append(f"  record {record_id!r}: label={label_raw!r} -- {exc}")
-
-        if errors:
-            raise ValueError(
-                f"Labels failed schema validation ({len(errors)} record(s)):\n" + "\n".join(errors)
-            )
-
-    # -------------------------------------------------------------------------
-    # Model management
-    # -------------------------------------------------------------------------
-
-    def add_models(self, models: "list[dict[str, Any] | Any]") -> None:
-        """Add new models to the experiment.
-
-        All model validation (uniqueness, structured-manipulation guards) is
-        handled here — ``__init__`` delegates to this method for its own model
-        initialization.  On the next ``evaluate()`` / ``run()`` call only newly
-        added models are evaluated; models that already have results are skipped
-        automatically.
-
-        Args:
-            models: List of model config dicts or ``ModelConfig`` objects.
-
-        Raises:
-            ValueError: Duplicate label or structured manipulation without
-                ``response_format``.
+        Called with the constructor's ``data`` argument before it gets replaced by
+        the parsed JSON list, when ``data`` is a path -- otherwise the file's own
+        directory is no longer recoverable.
         """
-        from valtron_core.evaluation.config import LLMModelConfig, TransformerModelConfig
+        if isinstance(data, (str, Path)):
+            return Path(data).resolve().parent
+        return Path.cwd()
 
-        normalized = []
-        for m in models:
-            if isinstance(m, dict):
-                model_type = m.get("type", "llm")
-                if model_type == "transformer":
-                    normalized.append(TransformerModelConfig.model_validate(m))
-                else:
-                    normalized.append(LLMModelConfig.model_validate(m))
-            else:
-                normalized.append(m)
+    def _post_init(self) -> None:
+        """Extension point for setup that needs the fields ``__init__`` just populated.
 
-        existing_labels = {mc.label or mc.name for mc in self.models}
-        seen_in_batch: set[str] = set()
-        for mc in normalized:
-            label = mc.label or mc.name
-            label_source = (
-                f"label={mc.label!r}"
-                if mc.label
-                else f"name={mc.name!r} (label inferred from name)"
-            )
-            if label in existing_labels:
-                raise ValueError(
-                    f"Duplicate model label {label!r} in config ({label_source}). "
-                    "Each model entry must have a unique label. "
-                    "You can use the same model twice by giving one entry a distinct label "
-                    "(e.g. label='gpt-5-mini-v2')."
-                )
-            if label in seen_in_batch:
-                raise ValueError(
-                    f"Duplicate model label {label!r} in config ({label_source}). "
-                    "Each model entry must have a unique label. "
-                    "You can use the same model twice by giving one entry a distinct label "
-                    "(e.g. label='gpt-5-mini-v2')."
-                )
-            seen_in_batch.add(label)
-
-        structured_requested = [
-            (mc.label or mc.name, manip)
-            for mc in normalized
-            for manip in getattr(mc, "prompt_manipulation", [])
-            if manip in STRUCTURED_MANIPULATIONS
-        ]
-        has_schema = self.response_format is not None
-        if structured_requested and not has_schema:
-            bad_models = sorted({name for name, _ in structured_requested})
-            bad_manips = sorted({manip.value for _, manip in structured_requested})
-            raise ValueError(
-                f"Model(s) {bad_models} use structured manipulation(s) {bad_manips}, "
-                "which require response_format to be provided."
-            )
-
-        self.models.extend(normalized)
-        self.config.models.extend(normalized)
+        Default is a no-op. Must not re-assign ``self.models`` wholesale (use
+        ``add_models`` for that).
+        """
+        return None
 
     # -------------------------------------------------------------------------
-    # Parsing helpers (used by load_experiment_results)
+    # Load from disk (the read side of save_experiment_results)
     # -------------------------------------------------------------------------
+
+    @classmethod
+    def _restore_config(cls, meta: "dict[str, Any]") -> "dict[str, Any]":
+        """Return task-specific extra config fields to restore from a saved ``metadata.json``.
+
+        Default is ``{}``. Override to pull additional config fields out of ``meta``
+        so a reloaded instance matches the one that produced the run.
+        """
+        return {}
+
+    def _post_restore(self, meta: "dict[str, Any]") -> None:
+        """Extension point for post-construction fixup during ``load_experiment_results``.
+
+        The reload counterpart to ``_post_init``: called once, right after
+        construction (so after ``_post_init`` has already run), before predictions
+        are reconstructed. Default is a no-op.
+        """
+        return None
 
     @staticmethod
     def _model_data_from_file(model_file: Path) -> "dict[str, Any]":
-        """Read one models/<name>.json and return all its data.
+        """Read one ``models/<name>.json``, returning both its config and result fields.
 
-        Returns a dict with both model-config fields (for ``add_models``) and
-        evaluation-result fields (predictions, metrics, etc.) so that
-        ``load_experiment_results`` can reconstruct both from a single parse.
+        The saved-file shape is shared across every task, so this needs no override.
         """
         with open(model_file) as f:
             raw = json.load(f)
@@ -381,7 +235,6 @@ class ModelEval(BaseRecipe):
         model_name = llm_config.get("model") or raw.get("model", "")
         model_label = raw.get("model", model_name)
         params = {k: v for k, v in llm_config.items() if k != "model"}
-        override_prompt = raw.get("override_prompt")
         manipulations = raw.get("prompt_manipulations") or []
 
         return {
@@ -389,7 +242,7 @@ class ModelEval(BaseRecipe):
             "name": model_name,
             "label": model_label if model_label != model_name else None,
             "params": params,
-            "prompt": override_prompt,
+            "prompt": raw.get("override_prompt"),
             "prompt_manipulation": manipulations,
             # Result fields
             "run_id": raw.get("run_id", ""),
@@ -400,58 +253,60 @@ class ModelEval(BaseRecipe):
             "metrics": raw.get("metrics"),
             "predictions": raw.get("predictions", []),
             "prompt_template": raw.get("prompt_template", ""),
-            "override_prompt": override_prompt,
         }
 
     @staticmethod
-    def _config_and_data_from_metadata(
-        metadata_path: Path,
-    ) -> "tuple[dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]":
-        """Read metadata.json and return ``(config_dict, data, response_format_schema)``.
+    def _stringify_label(label: Any) -> str:
+        """Coerce a raw label/reference into a plain string for display/logging.
 
-        ``config_dict`` contains the keys needed to construct a ``ModelEvalConfig``
-        (minus ``models``, which the caller fills in).  ``data`` is the raw
-        document list ``[{"id": ..., "content": ..., "label": ...}]``.
-        ``response_format_schema`` is the Pydantic JSON Schema stored from the
-        original run, or ``None`` if absent.
+        ``None`` (missing groundtruth) becomes ``""``; anything else is ``str()``'d.
+        This makes no assumption about the label's shape -- a task whose labels are
+        structured (e.g. dicts) is responsible for serializing them itself before
+        they reach this point.
+        """
+        if label is None:
+            return ""
+        return str(label)
+
+    @classmethod
+    def _config_and_data_from_metadata(
+        cls, metadata_path: Path
+    ) -> "tuple[dict[str, Any], list[dict[str, Any]]]":
+        """Read ``metadata.json`` and return ``(config_dict, data)`` for reconstruction.
+
+        ``models`` is filled in separately by the caller from the model files.
+        Task-specific extras come from ``_restore_config``.
         """
         with open(metadata_path) as f:
             meta = json.load(f)
 
-        original_prompt = meta.get("original_prompt") or "{content}"
         config_dict: dict[str, Any] = {
-            "prompt": original_prompt,
-            "use_case": meta.get("use_case", "model evaluation"),
+            "prompt": meta.get("original_prompt") or "{content}",
+            "use_case": meta.get("use_case", "evaluation"),
         }
-        if meta.get("field_metrics_config"):
-            config_dict["field_metrics_config"] = meta["field_metrics_config"]
+        config_dict.update(cls._restore_config(meta))
 
         data: list[dict[str, Any]] = meta.get("documents", [])
-        return config_dict, data, meta.get("response_format_schema")
-
-    # -------------------------------------------------------------------------
-    # Load from disk
-    # -------------------------------------------------------------------------
+        return config_dict, data
 
     @classmethod
     def load_experiment_results(cls, dir_path: "str | Path") -> "ModelEval":
-        """Restore a previously saved experiment from disk.
+        """Restore a run written by ``save_experiment_results()`` into a live instance.
 
-        Returns a ``ModelEval`` instance in the same state as after
-        ``evaluate()`` — ``self.results``, ``self._model_prompts``,
-        ``self._manipulations_applied``, and ``self._model_override_prompts``
-        are all populated.  The instance is ready for ``save_html_report()``,
-        ``add_models()`` + ``run()``, or any other post-evaluate operation.
+        Reconstructs an instance in the same state as right after ``aevaluate()``
+        (``self.results``, ``self._model_prompts``, ``self._manipulations_applied``
+        all populated) -- ready for more ``add_models()`` + ``run()``,
+        ``save_html_report()`` (if implemented), or ``reevaluate()``.
 
         Args:
-            dir_path: Directory previously written by ``save_experiment_results()``.
-                Must contain ``metadata.json`` and a ``models/`` sub-directory.
+            dir_path: Directory previously written by ``save_experiment_results()``;
+                must contain ``metadata.json`` and a ``models/`` sub-directory.
 
         Raises:
             FileNotFoundError: ``metadata.json`` is absent.
             ValueError: ``models/`` directory is empty.
         """
-        from valtron_core.models import EvaluationMetrics, EvaluationResult
+        from valtron_core.models import EvaluationMetrics
 
         dir_path = Path(dir_path)
         metadata_path = dir_path / "metadata.json"
@@ -461,11 +316,7 @@ class ModelEval(BaseRecipe):
                 "Pass the directory written by save_experiment_results()."
             )
 
-        config_dict, data, response_format_schema = cls._config_and_data_from_metadata(
-            metadata_path
-        )
-        if response_format_schema:
-            config_dict["response_format_schema"] = response_format_schema
+        config_dict, data = cls._config_and_data_from_metadata(metadata_path)
 
         model_files = sorted((dir_path / "models").glob("*.json"))
         if not model_files:
@@ -484,40 +335,24 @@ class ModelEval(BaseRecipe):
         ]
 
         instance = cls(config=config_dict, data=data)
-        if response_format_schema:
-            instance._response_format_schema = response_format_schema
-            if instance.response_format is None:
-                synthesized = synthesize_pydantic_model(response_format_schema)
-                if synthesized is not None:
-                    instance.response_format = synthesized
-                    instance.decomposed_evaluator = DecomposedEvaluator(client=instance.client)
-                    instance._auto_wrap_string_labels = instance._compute_auto_wrap_string_labels()
+        with open(metadata_path) as f:
+            instance._post_restore(json.load(f))
 
-        label_map = {
-            str(d.get("id", "")): (
-                json.dumps(d["label"])
-                if isinstance(d.get("label"), (dict, list))
-                else str(d.get("label", ""))
-            )
-            for d in data
-        }
+        label_map = {str(d.get("id", "")): cls._stringify_label(d.get("label")) for d in data}
 
         results: list[EvaluationResult] = []
         model_prompts: dict[str, str] = {}
-        manipulations_applied: dict[str, list] = {}
-        model_override_prompts: dict[str, str] = {}
+        manipulations_applied: dict[str, list[Any]] = {}
 
         for md in all_model_data:
             model_label = md["label"] or md["name"]
             model_prompts[model_label] = md["prompt_template"]
             manipulations_applied[model_label] = md["prompt_manipulation"]
-            if md.get("override_prompt"):
-                model_override_prompts[model_label] = md["override_prompt"]
 
             try:
                 from valtron_core.scoring.json_eval import EvalResult
 
-                _eval_result_cls = EvalResult
+                _eval_result_cls: Any = EvalResult
             except ImportError:
                 _eval_result_cls = None
 
@@ -533,9 +368,11 @@ class ModelEval(BaseRecipe):
                     PredictionResult(
                         document_id=p["document_id"],
                         predicted_value=p["predicted_value"],
-                        expected_value=p.get("expected_value", label_map.get(p["document_id"], "")),
-                        is_correct=p.get("is_correct", False),
-                        example_score=p.get("example_score", 0.0),
+                        expected_value=p.get("expected_value", label_map.get(p["document_id"])),
+                        is_correct=p.get("is_correct"),
+                        example_score=p.get("example_score"),
+                        error=p.get("error"),
+                        task_scores=p.get("task_scores"),
                         response_time=p.get("response_time", 0.0),
                         original_cost=p.get("original_cost", 0.0),
                         llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
@@ -565,427 +402,128 @@ class ModelEval(BaseRecipe):
         instance.results = results
         instance._model_prompts = model_prompts
         instance._manipulations_applied = manipulations_applied
-        instance._model_override_prompts = model_override_prompts or None
         return instance
 
     # -------------------------------------------------------------------------
-    # Field metrics
+    # Model management
     # -------------------------------------------------------------------------
 
-    def _get_field_metrics_config(self) -> FieldMetricsConfig | None:
-        """Return a FieldMetricsConfig, either from explicit config or auto-inferred.
+    def _build_model_config(self, entry: "str | dict[str, Any] | Any") -> Any:
+        """Normalize and validate one raw model entry into a model-config object.
 
-        If ``field_metrics_config`` was provided in the recipe config, that is
-        validated and returned. Otherwise the config is inferred from label data:
-        JSON labels use the label structure directly; plain-text labels are wrapped
-        in the ``{"label": ...}`` shape used by the string-label wrapper. Wrapping is
-        only applied when ``_auto_wrap_string_labels`` holds for the whole dataset,
-        matching the wrapping actually applied elsewhere during the run.
-        """
-        if self._field_metrics_config_raw is not None:
-            return FieldMetricsConfig.model_validate(self._field_metrics_config_raw)
-
-        if not self.data:
-            return None
-
-        first_label = self.data[0].get("label", "")
-        if isinstance(first_label, (dict, list)):
-            first_label = json.dumps(first_label)
-
-        try:
-            json.loads(first_label)
-            field_config = infer_field_config(first_label)
-            return FieldMetricsConfig(config=field_config.model_dump())
-        except (json.JSONDecodeError, TypeError):
-            if not self._auto_wrap_string_labels:
-                return None
-            field_config = infer_field_config(json.dumps({"label": first_label}))
-            return FieldMetricsConfig(config=field_config.model_dump())
-
-    # -------------------------------------------------------------------------
-    # Reevaluation
-    # -------------------------------------------------------------------------
-
-    @staticmethod
-    def _rescore_prediction(
-        prediction: PredictionResult,
-        field_metrics_config: "FieldMetricsConfig | None",
-        extra_template_vars: "dict[str, Any] | None" = None,
-        json_evaluator: "JsonEvaluator | None" = None,
-    ) -> PredictionResult:
-        """Re-score a stored prediction without making any LLM calls.
-
-        Delegates to ``_score_prediction`` from the evaluator module, which uses
-        JsonEvaluator when a field_metrics_config is provided and falls back to
-        case-insensitive string comparison otherwise.
-        """
-        if not isinstance(prediction.predicted_value, str):
-            raise TypeError(
-                f"Cannot rescore document {prediction.document_id!r}: predicted_value is a "
-                f"{type(prediction.predicted_value).__name__}, expected a string."
-            )
-        if prediction.expected_value is None:
-            raise ValueError(
-                f"Cannot rescore document {prediction.document_id!r}: no expected_value is "
-                "stored for it."
-            )
-        field_metrics, example_score, is_correct, evaluation_cost = _score_prediction(
-            predicted_value=prediction.predicted_value,
-            expected_value=prediction.expected_value,
-            field_metrics_config=field_metrics_config,
-            extra_template_vars=extra_template_vars,
-            document_id=prediction.document_id,
-            json_evaluator=json_evaluator,
-        )
-        return prediction.model_copy(
-            update={
-                "field_metrics": field_metrics,
-                "example_score": example_score,
-                "is_correct": is_correct,
-                "evaluation_cost": evaluation_cost,
-            }
-        )
-
-    def reevaluate(
-        self,
-        field_metrics_config: "FieldMetricsConfig | dict[str, Any] | None" = None,
-        data: "list[dict[str, Any]] | str | Path | None" = None,
-        output_dir: "str | Path | None" = None,
-    ) -> "Path | None":
-        """Re-score stored predictions with a new field_metrics_config or ground truth.
-
-        No LLM calls are made. Only the scoring step is re-run against the
-        ``predicted_value`` / ``expected_value`` pairs already stored in
-        ``self.results``.
-
-        Typical workflow::
-
-            me = ModelEval.load_experiment_results("path/to/run")
-            me.reevaluate(
-                field_metrics_config={"config": {...}},
-                output_dir="path/to/new_run",
-            )
-
-        Args:
-            field_metrics_config: New scoring config. Accepts a raw dict (same
-                format as the ``field_metrics_config`` config key) or a
-                ``FieldMetricsConfig`` instance. When omitted, the existing config
-                on this instance is used.
-            data: Updated ground truth in the same format as the constructor
-                ``data`` argument (``[{"id": ..., "content": ..., "label": ...}]``),
-                or a path (str/Path) to a JSON file with that structure.
-                Only ``id`` and ``label`` are used; unknown IDs are warned and
-                skipped. Documents not present in the new list keep their previous
-                expected values.
-            output_dir: If provided, writes the re-scored results to this directory
-                via ``save_experiment_results()``. Note: ``metadata.json`` is NOT
-                overwritten if it already exists in that directory -- only the per-
-                model JSON files are updated. Pass a fresh directory to preserve the
-                updated field_metrics_config in the saved metadata.
+        Default accepts a plain model name string, or a dict of ``LLMModelConfig``
+        fields; an already-validated config object passes through unchanged.
+        Override to accept other model kinds, or to reject entries this task
+        doesn't support (raise ``ValueError``).
 
         Returns:
-            Path to the run directory if ``output_dir`` was provided, else ``None``.
+            A config object exposing at least ``.name`` and ``.label``.
+        """
+        if isinstance(entry, str):
+            return LLMModelConfig(name=entry)
+        if isinstance(entry, dict):
+            return LLMModelConfig.model_validate(entry)
+        return entry
+
+    def add_models(self, models: "Sequence[str | dict[str, Any] | Any]") -> None:
+        """Add new models to the experiment; safe to call again after ``evaluate()``.
+
+        Each entry is normalized via ``_build_model_config``, then checked for a
+        duplicate label against models already present and other entries in this
+        call. Models added later are picked up on the next ``evaluate()``/``run()``
+        without re-running models that already have results (see ``aevaluate``).
+
+        Args:
+            models: Model name strings, config dicts, or config objects.
 
         Raises:
-            ValueError: If ``self.results`` is ``None`` (evaluate or load first).
+            ValueError: Duplicate label, or ``_build_model_config`` rejects an entry.
         """
-        if self.results is None:
-            raise ValueError(
-                "No results to reevaluate. Call evaluate() or load_experiment_results() first."
+        normalized = [self._build_model_config(m) for m in models]
+
+        existing_labels = {mc.label or mc.name for mc in self.models}
+        seen_in_batch: set[str] = set()
+        for mc in normalized:
+            label = mc.label or mc.name
+            label_source = (
+                f"label={mc.label!r}"
+                if mc.label
+                else f"name={mc.name!r} (label inferred from name)"
             )
+            if label in existing_labels or label in seen_in_batch:
+                raise ValueError(
+                    f"Duplicate model label {label!r} in config ({label_source}). "
+                    "Each model entry must have a unique label. "
+                    "You can use the same model twice by giving one entry a distinct "
+                    "label (e.g. label='gpt-5-mini-v2')."
+                )
+            seen_in_batch.add(label)
 
-        # Load data from file path if a string/Path was passed
-        if isinstance(data, (str, Path)):
-            with open(data) as f:
-                data = json.load(f)
+        self.models.extend(normalized)
+        self.config.models.extend(normalized)
 
-        # Update ground truth labels from caller-supplied data
-        if data is not None:
-            self.data = data
-            self._auto_wrap_string_labels = self._compute_auto_wrap_string_labels()
+    # -------------------------------------------------------------------------
+    # Preflight
+    # -------------------------------------------------------------------------
 
-            new_label_map: dict[str, str] = {}
-            for item in data:
-                label_raw = item.get("label", "")
-                if isinstance(label_raw, (dict, list)):
-                    serialized = json.dumps(label_raw)
-                elif self._auto_wrap_string_labels:
-                    serialized = json.dumps({"label": str(label_raw)})
-                else:
-                    serialized = str(label_raw)
-                new_label_map[str(item.get("id", ""))] = serialized
-
-            existing_ids: set[str] = {p.document_id for er in self.results for p in er.predictions}
-            for doc_id in new_label_map:
-                if doc_id not in existing_ids:
-                    logger.warning(
-                        "reevaluate_unknown_doc_id",
-                        document_id=doc_id,
-                        action="skipped",
-                    )
-
-            for eval_result in self.results:
-                eval_result.predictions = [
-                    (
-                        p.model_copy(update={"expected_value": new_label_map[p.document_id]})
-                        if p.document_id in new_label_map
-                        else p
-                    )
-                    for p in eval_result.predictions
-                ]
-
-        # Resolve the effective FieldMetricsConfig and update stored config
-        effective_fmc: FieldMetricsConfig | None
-        if field_metrics_config is not None:
-            if isinstance(field_metrics_config, dict):
-                effective_fmc = FieldMetricsConfig.model_validate(field_metrics_config)
-                raw_dict: dict[str, Any] = field_metrics_config
+    def _check_unique_model_labels(self) -> None:
+        labels = [m.label or m.name for m in self.models]
+        seen: set[str] = set()
+        dupes: list[str] = []
+        for label in labels:
+            if label in seen:
+                dupes.append(label)
             else:
-                effective_fmc = field_metrics_config
-                raw_dict = {"config": field_metrics_config.config}
-            self._field_metrics_config_raw = raw_dict
-            self.config.field_metrics_config = raw_dict
-        else:
-            effective_fmc = self._get_field_metrics_config()
-
-        # Build doc_content_map so _rescore_prediction can pass extra_template_vars
-        # (prediction.metadata is not persisted after load_experiment_results)
-        doc_content_map: dict[str, Any] = {
-            str(item.get("id", f"doc_{i}")): item.get("content", "")
-            for i, item in enumerate(self.data)
-        }
-
-        json_evaluator = (
-            JsonEvaluator(
-                custom_metrics=effective_fmc.custom_metrics,
-                custom_aggs=effective_fmc.custom_aggs,
+                seen.add(label)
+        if dupes:
+            raise ValueError(
+                f"Duplicate model labels: {dupes!r}. "
+                "Each model must have a unique label (or a unique name if no label is set)."
             )
-            if effective_fmc is not None
-            else None
-        )
 
-        # Re-score all predictions and recompute aggregated metrics
-        for eval_result in self.results:
-            new_predictions = []
-            for p in eval_result.predictions:
-                content = doc_content_map.get(p.document_id)
-                extra_vars: dict[str, Any] = (
-                    {f"example_{k}": v for k, v in content.items()}
-                    if isinstance(content, dict)
-                    else {}
-                )
-                new_predictions.append(
-                    self._rescore_prediction(p, effective_fmc, extra_vars, json_evaluator)
-                )
-            eval_result.predictions = new_predictions
-            eval_result.compute_metrics()
+    def _validate_task_data(self) -> None:
+        """Extension point for data validation ahead of running any evaluation.
 
-        if output_dir is not None:
-            resolved = Path(output_dir)
-            if (resolved / "metadata.json").exists():
-                logger.warning(
-                    "reevaluate_metadata_not_overwritten",
-                    output_dir=str(resolved),
-                    detail=(
-                        "metadata.json already exists and will not be overwritten. "
-                        "Only per-model JSON files will be updated. "
-                        "Pass a fresh output_dir to preserve the new field_metrics_config."
-                    ),
-                )
-            return self.save_experiment_results(output_dir)
-
+        Default is a no-op. Raise ``ValueError`` for a fatal problem, or
+        ``logger.warning`` for a non-fatal one.
+        """
         return None
 
-    # -------------------------------------------------------------------------
-    # Main pipeline
-    # -------------------------------------------------------------------------
+    def _preflight_check(self) -> None:
+        """Run all pre-flight checks before any evaluation work begins.
 
-    def evaluate(self) -> None:
-        """Run the evaluation pipeline (synchronous).
-
-        Convenience wrapper around ``aevaluate()``. Populates ``self.results``,
-        ``self._manipulations_applied``, and ``self._model_prompts``.
-        Does not write any files.
-
-        Note: uses ``asyncio.run()`` internally — cannot be called from within a
-        running event loop. Use ``await experiment.aevaluate()`` in async contexts
-        (e.g. Jupyter notebooks).
+        Checks model-label uniqueness and field-metrics cost guards (shared,
+        every task gets these for free), then ``_validate_task_data()``
+        (task-specific). Add further shared checks here as needed.
         """
-        asyncio.run(self.aevaluate())
-
-    def run(self, output_dir: "str | Path | None" = None) -> Path:
-        """Run the complete pipeline and save outputs (synchronous).
-
-        Convenience wrapper around ``arun()``. Calls ``aevaluate()``,
-        ``save_experiment_results()``, and then ``save_html_report()`` and/or
-        ``save_pdf_report()`` based on ``config.save_html`` and ``config.save_pdf``.
-
-        Args:
-            output_dir: Override the output directory for this run. Falls back
-                to ``config.output_dir`` if omitted. Raises if neither is set.
-
-        Returns:
-            Path to the generated HTML report (if save_html is True), otherwise
-            the path to the run directory.
-
-        Note: uses ``asyncio.run()`` internally — cannot be called from within a
-        running event loop. Use ``await experiment.arun()`` in async contexts
-        (e.g. Jupyter notebooks).
-        """
-        try:
-            return asyncio.run(self.arun(output_dir=output_dir))
-        except PreflightError:
-            sys.exit(1)
-
-    async def aevaluate(self) -> None:
-        """Run the evaluation pipeline and store results on this object (async).
-
-        Populates ``self.results``, ``self._manipulations_applied``, and
-        ``self._model_prompts``. Does not write any files.
-
-        Call ``save_experiment_results()`` / ``save_html_report()`` / ``save_pdf_report()``
-        afterwards to persist results and generate reports.
-        """
-        logger.info("starting_model_eval_pipeline")
-
-        # Best-effort progress status updates for the pre-evaluation setup window.
-        # The ProgressTracker (initialised inside _run_evaluations) replaces this with
-        # the full per-model schema once evaluation actually begins.
-        def _status(message: str) -> None:
-            if self.output_dir is None:
-                return
-            try:
-                write_status(self.output_dir, message)
-            except Exception:
-                pass
-
-        _status("Preparing run...")
-
-        self._preflight_check()
-
-        if self._response_format_schema is None and self.response_format is not None:
-            self._response_format_schema = self._serialize_response_format_schema(
-                self.response_format
-            )
-
+        self._check_unique_model_labels()
         field_metrics_config = self._get_field_metrics_config()
-
-        if self.few_shot_config and self.few_shot_config.enabled:
-            _status("Generating few-shot examples...")
-            await self._generate_few_shot_data()
-
-        _status("Preparing prompts...")
-        self._model_prompts = await self._prepare_model_prompts()
-
-        # Skip models that already have results (supports incremental evaluation).
-        # Also check disk for models persisted from a prior partial run so the user
-        # can re-run against the same output_dir without calling load_experiment_results().
-        existing_labels: set[str] = {r.model for r in (self.results or [])}
-        if self.output_dir is not None and not self.results:
-            from valtron_core.runner import _completed_model_labels_on_disk
-
-            existing_labels |= _completed_model_labels_on_disk(Path(self.output_dir))
-        models_to_run = [m for m in self.models if (m.label or m.name) not in existing_labels]
-
-        if models_to_run:
-            new_results, new_manipulations = await self._run_evaluations(
-                self._model_prompts, field_metrics_config, models=models_to_run
-            )
-            if self.results:
-                self.results = list(self.results) + new_results
-                self._manipulations_applied = {
-                    **(self._manipulations_applied or {}),
-                    **new_manipulations,
-                }
-            else:
-                self.results = new_results
-                self._manipulations_applied = new_manipulations
-
-    async def arun(self, output_dir: "str | Path | None" = None) -> Path:
-        """Run the complete pipeline and save outputs according to config flags (async).
-
-        Calls ``aevaluate()``, ``save_experiment_results()``, and then
-        ``save_html_report()`` and/or ``save_pdf_report()`` based on
-        ``config.output_formats``.
-
-        Args:
-            output_dir: Override the output directory for this run. Falls back
-                to ``config.output_dir`` if omitted. Raises if neither is set.
-
-        Returns:
-            Path to the generated HTML report (if ``"html"`` is in ``output_formats``),
-            otherwise the path to the run directory.
-        """
-        await self.aevaluate()
-
-        run_dir = self.save_experiment_results(output_dir)
-        report_path: Path = run_dir
-
-        if "html" in self.config.output_formats:
-            report_path = self.save_html_report(output_dir)
-
-        if "pdf" in self.config.output_formats:
-            self.save_pdf_report(output_dir)
-
-        logger.info("model_eval_run_complete", report_path=str(report_path))
-        return report_path
-
-    # -------------------------------------------------------------------------
-    # Few-shot data generation
-    # -------------------------------------------------------------------------
-
-    async def _generate_few_shot_data(self) -> None:
-        """Generate additional training data using few-shot learning."""
-        logger.info("generating_few_shot_data")
-        phase_start = time.perf_counter()
-
-        examples = [
-            LabeledExample(document=item["content"], label=item["label"]) for item in self.data
-        ]
-
-        generator = FewShotTrainingDataGenerator(
-            prompt=self.prompt_template,
-            examples=examples[: self.few_shot_config.max_seed_examples],
-            max_few_shots=self.few_shot_config.max_few_shots,
-            source_data=self.data,
+        self.runner._preflight_check(
+            field_metrics_config, len(self.data), len(self.models), self.models
         )
-
-        result = await generator.generate_and_validate_examples(
-            generator_model=self.few_shot_config.generator_model,
-            num_examples=self.few_shot_config.num_examples,
-        )
-
-        correct_examples = [ex for ex in result["examples"] if ex["consensus"] == "correct"]
-
-        # Keep first 5 correct examples for few-shot prompting
-        self.few_shot_examples = correct_examples[:5]
-
-        logger.info(
-            "few_shot_generation_complete",
-            generated=len(result["examples"]),
-            correct=len(correct_examples),
-            kept_for_few_shot=len(self.few_shot_examples),
-            total_cost=result["costs"]["total_cost"],
-            duration_s=round(time.perf_counter() - phase_start, 2),
-        )
+        self._validate_task_data()
 
     # -------------------------------------------------------------------------
     # Data loading
     # -------------------------------------------------------------------------
 
-    def _load_documents_and_labels(self) -> tuple[list[Document], list[Label]]:
-        """Convert self.data into Document and Label objects (no disk I/O)."""
+    def _load_documents_and_labels(self) -> "tuple[list[Document], list[Any]]":
+        """Convert ``self.data`` into ``Document`` objects plus a parallel label list.
+
+        No disk I/O beyond resolving a document's ``content_path`` if it has one
+        (see ``resolve_content``). Default builds one ``Document`` per entry
+        (``id``, ``content``, ``metadata``, ``attachments``) and takes ``label``
+        verbatim, defaulting to ``None`` when absent -- groundtruth is optional out
+        of the box. Override for a richer label shape, or to require groundtruth.
+
+        Returns:
+            ``(documents, labels)``, both of length ``len(self.data)`` and
+            index-aligned.
+        """
         documents: list[Document] = []
-        labels: list[Label] = []
+        labels: list[Any] = []
         for idx, item in enumerate(self.data):
             doc_id = str(item.get("id", f"doc_{idx}"))
-            label_raw = item.get("label", "")
-            if isinstance(label_raw, (dict, list)):
-                label_value = json.dumps(label_raw)
-            elif self._auto_wrap_string_labels:
-                label_value = json.dumps({"label": str(label_raw)})
-            else:
-                label_value = str(label_raw)
             documents.append(
                 Document(
                     id=doc_id,
@@ -994,327 +532,157 @@ class ModelEval(BaseRecipe):
                     attachments=item.get("attachments", []),
                 )
             )
-            labels.append(Label(document_id=doc_id, value=label_value))
+            labels.append(item.get("label"))
         return documents, labels
 
-    def _build_model_arg(self, model_config: Any) -> dict[str, Any]:
-        """Build the litellm model dict to pass to runner.evaluate."""
-        result: dict[str, Any] = {
-            "model": model_config.name,
-            "temperature": model_config.params.get("temperature", self.temperature),
-        }
-        if "max_tokens" in model_config.params:
-            result["max_tokens"] = model_config.params["max_tokens"]
-        for k, v in model_config.params.items():
-            if k not in {"temperature", "max_tokens"}:
-                result[k] = v
-        if model_config.cost_rate is not None:
-            result["cost_rate"] = model_config.cost_rate
-            result["cost_rate_time_unit"] = model_config.cost_rate_time_unit
-        return result
+    def _build_save_documents(self) -> list[dict[str, Any]]:
+        """Build the document list used when writing the run directory.
+
+        A local (non-URL, non-data-URI) content_path or attachment path is
+        written out as an absolute path -- resolved now, while ``_data_base_dir``
+        is still known -- so a later ``load_experiment_results()`` from a
+        different working directory still finds the same file.
+        """
+        documents: list[dict[str, Any]] = []
+        for item in self.data:
+            doc_entry: dict[str, Any] = {
+                "id": str(item.get("id", "")),
+                "label": _normalize_label(item.get("label", "")),
+            }
+            if item.get("content_path") is not None:
+                doc_entry["content_path"] = str(
+                    absolutize_local_path(item["content_path"], self._data_base_dir)
+                )
+            else:
+                doc_entry["content"] = item.get("content", "")
+            if item.get("attachments"):
+                doc_entry["attachments"] = [
+                    (str(absolutize_local_path(a, self._data_base_dir)) if is_local_path(a) else a)
+                    for a in item["attachments"]
+                ]
+            documents.append(doc_entry)
+        return documents
+
+    def _get_field_metrics_config(self) -> FieldMetricsConfig | None:
+        """Return a task-specific scoring config, or ``None`` if this task has none.
+
+        This class doesn't assume any particular scoring-config shape beyond the
+        existing ``FieldMetricsConfig`` (used for the classification/extraction
+        field-comparison tree); a task with a fundamentally different notion of
+        scoring config can widen this return type in its own override. Default is
+        ``None``, which also disables the field-metrics table in HTML/PDF reports;
+        see ``compute_task_statistics`` for the general-purpose alternative.
+        """
+        return None
 
     # -------------------------------------------------------------------------
     # Prompt preparation
     # -------------------------------------------------------------------------
 
-    async def _prepare_model_prompts(self) -> dict[str, str]:
-        """Prepare prompts for each model, applying prompt manipulations as configured.
+    async def _prepare_model_prompts(self) -> "dict[str, str]":
+        """Resolve the final prompt to send for each model -- the one actually used.
 
-        Returns a dict mapping model label (or name) → final prompt string.
-        Transformer models always get an empty string (they do not use prompts).
-        """
-        model_prompts: dict[str, str] = {}
-        override_prompts: dict[str, str] = {}
-
-        for model_config in self.models:
-            model_label = model_config.label or model_config.name
-
-            # Transformer models don't use prompts
-            if model_config.type == "transformer":
-                model_prompts[model_label] = ""
-                continue
-
-            manipulations = model_config.prompt_manipulation
-            base_prompt = model_config.prompt or self.prompt_template
-            if model_config.prompt:
-                override_prompts[model_label] = model_config.prompt
-            prompt = base_prompt
-
-            # few_shot: skip when decompose is also present (decompose handles its own
-            # few-shot injection into sub-prompts)
-            if (
-                Manipulation.few_shot in manipulations
-                and self.few_shot_examples
-                and Manipulation.decompose not in manipulations
-            ):
-                logger.info(
-                    "applying_few_shot_manipulation",
-                    model=model_label,
-                    num_examples=len(self.few_shot_examples),
-                )
-                prompt = self._inject_few_shot_examples(prompt)
-
-            if Manipulation.explanation in manipulations:
-                logger.info("applying_explanation_manipulation", model=model_label)
-                result = await self.enhancer.optimize(prompt)
-                prompt = result["enhanced_prompt"]
-
-            if Manipulation.prompt_repetition_x3 in manipulations:
-                logger.info("applying_prompt_repetition_x3", model=model_label)
-                prompt = (
-                    prompt
-                    + "\n\nLet me repeat that:\n\n"
-                    + prompt
-                    + "\n\nLet me repeat that one more time:\n\n"
-                    + prompt
-                )
-            elif Manipulation.prompt_repetition in manipulations:
-                logger.info("applying_prompt_repetition", model=model_label)
-                prompt = prompt + "\n\nLet me repeat that:\n\n" + prompt
-
-            model_prompts[model_label] = prompt
-
-        self._model_override_prompts = override_prompts
-        return model_prompts
-
-    def _inject_few_shot_examples(self, prompt: str) -> str:
-        """Inject few-shot examples into the prompt before the {content} placeholder."""
-        if not self.few_shot_examples:
-            return prompt
-
-        examples_text = "\n\nHere are some examples:\n\n"
-        for i, example in enumerate(self.few_shot_examples, 1):
-            examples_text += f"Example {i}:\n"
-            examples_text += f"Document: {example['document']}\n"
-            examples_text += f"Label: {example['label']}\n\n"
-
-        if "{content}" in prompt:
-            parts = prompt.split("{content}", 1)
-            # Use task-appropriate suffix depending on mode
-            action = "classify" if self.response_format is None else "extract from"
-            enhanced_prompt = (
-                parts[0] + examples_text + f"Now {action} this document:\n\n{{content}}" + parts[1]
-            )
-        else:
-            enhanced_prompt = prompt + examples_text
-
-        return enhanced_prompt
-
-    # -------------------------------------------------------------------------
-    # Response format helpers (label mode)
-    # -------------------------------------------------------------------------
-
-    def _has_json_schema_in_prompt(self, prompt: str) -> bool:
-        """Check if the prompt contains a JSON schema example."""
-        json_pattern = r'\{[^{}]*(?:"[^"]*"[^{}]*)*\}'
-        for match in re.finditer(json_pattern, prompt):
-            try:
-                parsed = json.loads(match.group(0))
-                if isinstance(parsed, dict):
-                    return True
-            except json.JSONDecodeError:
-                continue
-        return False
-
-    def _serialize_response_format_schema(
-        self, rf: type[BaseModel] | None
-    ) -> dict[str, Any] | None:
-        """Return the litellm-compatible response format dict for a Pydantic model.
-
-        Returns ``None`` when *rf* is ``None``.
-        """
-        if rf is None:
-            return None
-        schema = rf.model_json_schema()
-        return {
-            "type": "json_schema",
-            "json_schema": {
-                "name": schema.get("title", "ResponseModel"),
-                "strict": True,
-                "schema": schema,
-            },
-        }
-
-    # -------------------------------------------------------------------------
-    # Response format helpers (extraction mode)
-    # -------------------------------------------------------------------------
-
-    def _create_explanation_model(self) -> type[BaseModel] | None:
-        """Wrap response_format with an added explanation field.
-
-        Used in extraction mode when the ``explanation`` manipulation is active,
-        so the LLM can return its reasoning alongside the structured output.
-        """
-        if self.response_format is None:
-            return None
-
-        field_definitions: dict[str, Any] = {
-            "explanation": (str, Field(description="Reasoning explanation")),
-        }
-        for field_name, field_info in self.response_format.model_fields.items():
-            field_definitions[field_name] = (field_info.annotation, field_info)
-
-        return create_model(
-            f"{self.response_format.__name__}WithExplanation",
-            __config__=ConfigDict(extra="forbid"),
-            **field_definitions,
-        )
-
-    # -------------------------------------------------------------------------
-    # Transformer evaluation (label mode only)
-    # -------------------------------------------------------------------------
-
-    async def _evaluate_transformer(
-        self,
-        model_config: Any,
-        documents: list[Document],
-        field_metrics_config: FieldMetricsConfig | None,
-        on_document_complete: "Any | None" = None,
-    ) -> EvaluationResult:
-        """Evaluate a local transformer model.
-
-        Args:
-            model_config: TransformerModelConfig with ``model_path`` set.
-            documents: Pre-loaded Document objects.
-            field_metrics_config: Field-level metric config; falls back to exact
-                string comparison when ``None``.
+        Default: each model's own ``prompt`` if set, else ``self.prompt_template`` --
+        no further transformation. Override to layer on any prompt-transformation
+        pipeline a task wants.
 
         Returns:
-            EvaluationResult compatible with LLM evaluation results.
+            Mapping of model label -> prompt string, covering every model in
+            ``self.models``.
         """
-        model_name = model_config.label
-        if not model_config.model_path:
-            raise ValueError(
-                f"Transformer model '{model_name}' requires a 'model_path' in the config. "
-                "Set model_path to the directory produced by train_transformer() "
-                "(e.g. './my_model/final_model')."
-            )
-        model_path = model_config.model_path
-
-        logger.info("evaluating_transformer", model=model_name, path=model_path)
-
-        from valtron_core.transformer_wrapper import TransformerModelWrapper
-
-        transformer = TransformerModelWrapper(model_path, model_name)
-
-        # Build label map from self.data (no file I/O)
-        label_map: dict[str, str] = {}
-        for idx, item in enumerate(self.data):
-            doc_id = str(item.get("id", f"doc_{idx}"))
-            label_raw = item.get("label", "")
-            if isinstance(label_raw, (dict, list)):
-                label_map[doc_id] = json.dumps(label_raw)
-            elif self._auto_wrap_string_labels:
-                label_map[doc_id] = json.dumps({"label": str(label_raw)})
-            else:
-                label_map[doc_id] = str(label_raw)
-
-        run_id = str(uuid.uuid4())
-        result = EvaluationResult(
-            run_id=run_id,
-            started_at=datetime.now(),
-            prompt_template=f"Transformer model: {model_path}",
-            model=model_name,
-            status="running",
-        )
-
-        json_evaluator = (
-            JsonEvaluator(
-                custom_metrics=field_metrics_config.custom_metrics or None,
-                custom_aggs=field_metrics_config.custom_aggs or None,
-            )
-            if field_metrics_config is not None
-            else None
-        )
-
-        start_time = time.time()
-
-        for doc in documents:
-            expected_label = label_map.get(doc.id, "")
-
-            pred_start = time.time()
-            prediction, confidence = transformer.predict_with_confidence(doc.content)
-            pred_time = time.time() - pred_start
-
-            if self._auto_wrap_string_labels:
-                prediction = json.dumps({"label": prediction})
-
-            if json_evaluator is not None:
-                cfg = field_metrics_config.config  # type: ignore[union-attr]
-                eval_expected = expected_label
-                eval_predicted = prediction
-                try:
-                    json.loads(expected_label)
-                except (json.JSONDecodeError, ValueError):
-                    fields = cfg.get("fields") or {} if isinstance(cfg, dict) else {}
-                    if isinstance(cfg, dict) and cfg.get("type") == "object" and len(fields) == 1:
-                        field_name = next(iter(fields))
-                        eval_expected = json.dumps({field_name: expected_label})
-                        eval_predicted = json.dumps({field_name: prediction})
-                eval_result, _ = json_evaluator.evaluate(cfg, eval_expected, eval_predicted)
-                is_correct = eval_result.score == 1.0
-            else:
-                is_correct = prediction.strip() == expected_label.strip()
-
-            pred_result = PredictionResult(
-                document_id=doc.id,
-                predicted_value=prediction,
-                expected_value=expected_label,
-                is_correct=is_correct,
-                response_time=pred_time,
-                llm_cost=0.0,
-                model=model_name,
-                metadata={"content": doc.content},
-                confidence_score=confidence,
-            )
-            result.add_prediction(pred_result)
-            if on_document_complete is not None:
-                on_document_complete(pred_result)
-
-        if model_config.cost_rate is not None:
-            unit_seconds = _parse_time_unit_to_seconds(model_config.cost_rate_time_unit)
-            for p in result.predictions:
-                p.llm_cost = float(model_config.cost_rate) * (p.response_time / unit_seconds)
-            result.llm_config = result.llm_config or {}
-            result.llm_config["cost_rate"] = model_config.cost_rate
-            result.llm_config["cost_rate_time_unit"] = model_config.cost_rate_time_unit
-
-        result.completed_at = datetime.now()
-        result.status = "completed"
-        result.compute_metrics()
-
-        duration = time.time() - start_time
-        logger.info(
-            "transformer_evaluation_complete",
-            model=model_name,
-            run_id=run_id,
-            total=len(result.predictions),
-            accuracy=result.metrics.accuracy if result.metrics else 0.0,
-            duration=duration,
-        )
-
-        return result
+        prompts: dict[str, str] = {}
+        for model_config in self.models:
+            model_label = model_config.label or model_config.name
+            prompts[model_label] = model_config.prompt or self.prompt_template
+        return prompts
 
     # -------------------------------------------------------------------------
-    # Evaluation loop
+    # Per-model evaluation
     # -------------------------------------------------------------------------
+
+    def _cache_key_inputs(self, model_config: Any, prompt: str) -> "tuple[str, dict[str, Any]]":
+        """Return the ``(prompt, model_params)`` pair that keys partial-result caching.
+
+        Default: ``(prompt, self._build_model_arg(model_config))``. Two calls with
+        the same document content and the same return value here are assumed to
+        produce the same prediction, so fold in anything else that affects the
+        output (e.g. a task-specific processing parameter) when overriding.
+        """
+        return prompt, self._build_model_arg(model_config)
+
+    @abstractmethod
+    async def _evaluate_model_documents(
+        self,
+        model_config: Any,
+        documents: "list[Document]",
+        labels: "list[Any]",
+        prompt: str,
+        field_metrics_config: Any,
+        on_document_complete: "Callable[[PredictionResult], None] | None" = None,
+        progress_bar: "tqdm | None" = None,
+    ) -> "tuple[EvaluationResult, str | None]":
+        """Run one model against a set of documents and return a scored result.
+
+        The one method every subclass must implement -- it's the only place a model
+        is actually called and its output turned into predictions. Everything else
+        in ``_run_evaluations`` (concurrency, partial-result resume, progress
+        reporting, persistence) is shared and calls this once per model.
+
+        ``documents``/``labels`` are already filtered to exclude anything resumed
+        from a partial prior run. Do not call ``on_document_complete`` and also move
+        ``progress_bar`` for the same document -- ``on_document_complete`` already
+        drives cost/progress-tracker/partial-store bookkeeping; ``progress_bar`` is
+        handed through only for implementations whose own concurrency shape means
+        they must move the shared bar themselves (e.g. a branch with its own
+        internal per-document loop). Each returned ``PredictionResult`` doubles as
+        that document's trace record (see ``get_traces``): put whatever is useful
+        for debugging into its ``metadata``.
+
+        Args:
+            model_config: This task's model-config type, from ``_build_model_config``.
+            documents: Documents still needing a prediction.
+            labels: Labels/references index-aligned with ``documents``; entries may
+                be ``None`` for optional groundtruth.
+            prompt: The resolved prompt for this model, from ``_prepare_model_prompts``.
+            field_metrics_config: From ``_get_field_metrics_config()``; may be ``None``.
+            on_document_complete: Call once per completed document's
+                ``PredictionResult`` to drive progress/cost tracking and crash
+                recovery.
+            progress_bar: The shared ``tqdm`` instance, when an implementation needs
+                to advance it itself (see above); otherwise leave untouched.
+
+        Returns:
+            ``(result, updated_prompt)``. ``result`` has ``status="completed"`` and
+            ``compute_metrics()`` already called. ``updated_prompt`` overrides what's
+            displayed/persisted as this model's prompt in the report; return ``None``
+            to keep the prompt passed in.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} must implement _evaluate_model_documents()."
+        )
 
     async def _run_evaluations(
         self,
-        model_prompts: dict[str, str],
-        field_metrics_config: "FieldMetricsConfig | None" = None,
-        models: "list | None" = None,
-    ) -> tuple[list[EvaluationResult], dict[str, list[Any]]]:
-        """Run evaluations for the given models concurrently.
+        model_prompts: "dict[str, str]",
+        field_metrics_config: Any = None,
+        models: "list[Any] | None" = None,
+    ) -> "tuple[list[EvaluationResult], dict[str, list[Any]]]":
+        """Run the given models concurrently: caching/resume, progress, persistence.
+
+        Shared across every task. Delegates the parts that vary -- actually calling
+        a model and scoring it, and what makes a cached prediction reusable -- to
+        ``_evaluate_model_documents`` and ``_cache_key_inputs``.
 
         Args:
-            model_prompts: Mapping of model label → prompt string.
-            field_metrics_config: Optional field-level metrics configuration.
-            models: Models to evaluate. Defaults to ``self.models`` when ``None``.
+            model_prompts: Mapping of model label -> prompt, from
+                ``_prepare_model_prompts``.
+            field_metrics_config: Re-derived via ``_get_field_metrics_config()`` when
+                omitted.
+            models: Models to evaluate; defaults to ``self.models``.
 
         Returns:
-            Tuple of (results, manipulations_applied) where manipulations_applied
-            maps model label to the list of Manipulation values that were applied.
+            ``(results, manipulations_applied)`` -- the latter maps model label to
+            whatever transformation metadata that model applied (empty by default).
         """
         if field_metrics_config is None:
             field_metrics_config = self._get_field_metrics_config()
@@ -1325,7 +693,7 @@ class ModelEval(BaseRecipe):
         partial_store = (
             PartialResultStore(Path(self.output_dir)) if self.output_dir is not None else None
         )
-        if partial_store is not None:
+        if self.output_dir is not None:
             (Path(self.output_dir) / "models").mkdir(parents=True, exist_ok=True)
 
         total_docs = len(documents) * len(effective_models)
@@ -1333,13 +701,17 @@ class ModelEval(BaseRecipe):
         shared_bar = tqdm(total=total_docs, unit="doc", desc="Evaluating")
 
         def _on_doc(pred: PredictionResult) -> None:
+            # Cost/postfix accounting only -- moving the bar is each
+            # _evaluate_model_documents implementation's own job (it's the only
+            # place that knows whether it needs to move it itself, e.g. a branch
+            # with its own internal per-document loop, or whether _run_evaluations'
+            # caller -- e.g. a shared per-document runner -- already did).
             running_cost[0] += pred.llm_cost + pred.evaluation_cost
             shared_bar.set_postfix(cost=f"${running_cost[0]:.4f}")
 
-        # Initialise the progress tracker so external pollers (e.g. the valtron
-        # web dashboard) can see per-model document progress in real time.  The
-        # absence of progress.json before this point is what signals "still
-        # initialising" (few-shot generation, validation, prompt prep).
+        # Initialise the progress tracker so external pollers (e.g. the valtron web
+        # dashboard) can see per-model document progress in real time. The absence of
+        # progress.json before this point signals "still initialising".
         progress_tracker = None
         if self.output_dir is not None:
             try:
@@ -1359,7 +731,7 @@ class ModelEval(BaseRecipe):
         def _persist_model_result(
             result: EvaluationResult,
             model_label: str,
-            manipulations: list,
+            manipulations: list[Any],
             updated_prompt: "str | None",
         ) -> None:
             """Write the completed model result to disk and clean up its staging file."""
@@ -1368,7 +740,7 @@ class ModelEval(BaseRecipe):
             from valtron_core.runner import save_single_model_result
 
             try:
-                effective_prompt = updated_prompt or (self._model_prompts or {}).get(model_label)
+                effective_prompt = updated_prompt or model_prompts.get(model_label)
                 override = (self._model_override_prompts or {}).get(model_label)
                 save_single_model_result(
                     self.output_dir,
@@ -1384,34 +756,22 @@ class ModelEval(BaseRecipe):
 
         async def _evaluate_single_model(
             index: int, model_config: Any
-        ) -> tuple[int, Any, str, list, str | None]:
+        ) -> "tuple[int, EvaluationResult, str, list[Any], str | None]":
             model_name = getattr(model_config, "name", None) or model_config.label
             model_label = model_config.label or model_name
             manipulations = getattr(model_config, "prompt_manipulation", [])
+            prompt = model_prompts[model_label]
 
-            # Resolve hash inputs for this model before any branch so the shared
-            # callback can close over them regardless of LLM vs transformer path.
-            if model_config.type == "transformer":
-                _hash_prompt = f"transformer:{getattr(model_config, 'model_path', model_label)}"
-                _hash_model_params: dict[str, Any] = {
-                    "type": "transformer",
-                    "model_path": getattr(model_config, "model_path", ""),
-                }
-            else:
-                _hash_prompt = model_prompts[model_label]
-                _raw_model_arg = self._build_model_arg(model_config)
-                _hash_model_params = (
-                    _raw_model_arg if isinstance(_raw_model_arg, dict) else {"model": model_name}
-                )
+            hash_prompt, hash_model_params = self._cache_key_inputs(model_config, prompt)
 
-            # Determine which documents have already been persisted for this model
-            # so we can skip them and resume from where a prior run left off.
-            # Only predictions whose hash matches the current inputs are reused.
+            # Determine which documents have already been persisted for this model so
+            # we can skip them and resume from where a prior run left off. Only
+            # predictions whose hash matches the current inputs are reused.
             doc_content_map = {d.id: d.content for d in documents}
             cached_preds: dict[str, PredictionResult] = {}
             if partial_store is not None:
                 cached_preds = partial_store.get_valid_cached(
-                    model_label, doc_content_map, _hash_prompt, _hash_model_params
+                    model_label, doc_content_map, hash_prompt, hash_model_params
                 )
             completed_ids = set(cached_preds.keys())
             remaining_docs = [d for d in documents if d.id not in completed_ids]
@@ -1419,8 +779,6 @@ class ModelEval(BaseRecipe):
 
             # Pre-advance the shared progress bar and running cost for documents that
             # were already completed in a prior run and are being reused from cache.
-            # Without this the bar starts at 0 and cost shows $0.00 even though work
-            # was already done, which is confusing on resume.
             if cached_preds:
                 prior_cost = sum(p.llm_cost + p.evaluation_cost for p in cached_preds.values())
                 running_cost[0] += prior_cost
@@ -1433,10 +791,6 @@ class ModelEval(BaseRecipe):
                     except Exception:
                         pass
 
-            # Per-model callback wrapper.  The underlying ``_on_doc`` is shared (cost
-            # accounting + tqdm); we layer a tracker.on_doc_complete on top so each
-            # model's progress can be reported independently in progress.json.
-            # We also stage each prediction for crash recovery.
             def _on_doc_with_progress(pred: PredictionResult) -> None:
                 _on_doc(pred)
                 if progress_tracker is not None:
@@ -1447,93 +801,21 @@ class ModelEval(BaseRecipe):
                 if partial_store is not None:
                     try:
                         h = compute_prediction_hash(
-                            pred.metadata.get("content", ""),
-                            _hash_prompt,
-                            _hash_model_params,
+                            pred.metadata.get("content", ""), hash_prompt, hash_model_params
                         )
                         partial_store.record(model_label, pred, h)
                     except Exception:
                         pass
 
-            # --- Transformer branch (label mode only; guarded at __init__) ---
-            if model_config.type == "transformer":
-
-                def _on_doc_transformer(pred: PredictionResult) -> None:
-                    _on_doc_with_progress(pred)
-                    shared_bar.update(1)
-
-                result = await self._evaluate_transformer(
-                    model_config,
-                    remaining_docs,
-                    field_metrics_config,
-                    on_document_complete=_on_doc_transformer,
-                )
-                if cached_preds:
-                    result.predictions = list(cached_preds.values()) + result.predictions
-                    result.compute_metrics()
-                _persist_model_result(result, model_label, manipulations, None)
-                return index, result, model_label, [], None
-
-            prompt = model_prompts[model_label]
-
-            # --- Determine effective response format ---
-            if self.response_format is not None:
-                # Extraction mode: use provided schema, wrapping with explanation field if needed
-                if Manipulation.explanation in manipulations:
-                    effective_rf = self._create_explanation_model()
-                else:
-                    effective_rf = self.response_format
-            elif self._response_format_schema is not None:
-                effective_rf = self._response_format_schema
-            else:
-                effective_rf = None
-
-            updated_prompt = None
-
-            # --- Decompose branch (extraction mode only; guarded at __init__) ---
-            if Manipulation.decompose in manipulations and self.response_format is not None:
-                result, sub_prompts = await self._run_decomposed_evaluation(
-                    documents=remaining_docs,
-                    labels=remaining_labels,
-                    prompt=prompt,
-                    model_name=model_name,
-                    model_config=model_config,
-                    manipulations=manipulations,
-                    field_metrics_config=field_metrics_config,
-                    on_document_complete=_on_doc_with_progress,
-                )
-                updated_prompt = self._format_sub_prompts_for_display(sub_prompts)
-            else:
-                post_extraction_filter = None
-                if (
-                    Manipulation.hallucination_filter in manipulations
-                    and self.response_format is not None
-                ):
-
-                    async def _hallucination_filter(predicted_json, document, _model=model_name):
-                        return await filter_hallucinated_values(
-                            predicted_json,
-                            document.content,
-                            _model,
-                            self.client,
-                        )
-
-                    post_extraction_filter = _hallucination_filter
-
-                multi_pass = 2 if Manipulation.multi_pass in manipulations else 1
-
-                result = await self.runner.evaluate(
-                    documents=remaining_docs,
-                    labels=remaining_labels,
-                    prompt_template=prompt,
-                    model=self._build_model_arg(model_config),
-                    response_format=effective_rf,
-                    field_metrics_config=field_metrics_config,
-                    post_extraction_filter=post_extraction_filter,
-                    multi_pass=multi_pass,
-                    _tqdm_bar=shared_bar,
-                    _on_document_complete=_on_doc_with_progress,
-                )
+            result, updated_prompt = await self._evaluate_model_documents(
+                model_config,
+                remaining_docs,
+                remaining_labels,
+                prompt,
+                field_metrics_config,
+                on_document_complete=_on_doc_with_progress,
+                progress_bar=shared_bar,
+            )
 
             # Merge predictions from a prior partial run into this result and
             # recompute aggregated metrics over the full document set.
@@ -1541,7 +823,7 @@ class ModelEval(BaseRecipe):
                 result.predictions = list(cached_preds.values()) + result.predictions
                 result.compute_metrics()
 
-            # Propagate label to result objects when it differs from the model name
+            # Propagate label to result objects when it differs from the model name.
             if model_label != model_name:
                 result.model = model_label
                 for pred in result.predictions:
@@ -1550,7 +832,7 @@ class ModelEval(BaseRecipe):
                     result.metrics.model = model_label
 
             # Safety net: ensure the model row is marked "done" in progress.json even
-            # for branches that don't emit per-doc callbacks (e.g., decomposed eval).
+            # for implementations that don't emit per-doc callbacks.
             if progress_tracker is not None:
                 try:
                     progress_tracker.mark_model_completed(model_label)
@@ -1582,222 +864,314 @@ class ModelEval(BaseRecipe):
         return results, manipulations_applied
 
     # -------------------------------------------------------------------------
-    # Decomposed evaluation (extraction mode)
+    # Traces
     # -------------------------------------------------------------------------
 
-    async def _run_decomposed_evaluation(
-        self,
-        documents: list[Document],
-        labels: list[Label],
-        prompt: str,
-        model_name: str,
-        model_config: Any,
-        manipulations: list,
-        field_metrics_config: FieldMetricsConfig | None,
-        on_document_complete: "Callable | None" = None,
-    ) -> tuple[EvaluationResult, dict[str, str]]:
-        """Run evaluation with decomposed sub-prompts for each entity field.
+    def get_traces(self, model: "str | None" = None) -> "list[PredictionResult]":
+        """Return the per-call trace records (``PredictionResult``) collected so far.
+
+        These are the same objects already persisted per model in
+        ``models/{label}.json``; ``metadata`` on each is where request/response
+        detail lives. Returns ``[]`` before ``evaluate()`` has run.
+
+        Args:
+            model: If given, only return traces for that model label.
+        """
+        if not self.results:
+            return []
+        if model is not None:
+            return [p for r in self.results if r.model == model for p in r.predictions]
+        return [p for r in self.results for p in r.predictions]
+
+    # -------------------------------------------------------------------------
+    # Task-specific statistics
+    # -------------------------------------------------------------------------
+
+    def compute_task_statistics(self, results: "list[EvaluationResult]") -> dict[str, Any]:
+        """Compute aggregate statistics beyond ``EvaluationMetrics``; stored on ``self._task_statistics``.
+
+        Called once from ``aevaluate()`` with the full ``self.results``. Default is
+        ``{}`` -- override only when a task's real signal doesn't fit
+        ``EvaluationMetrics`` (accuracy, cost, timing) or the per-prediction
+        ``task_scores``/``aggregated_task_scores`` bags at all (e.g. a corpus-level
+        ranking that isn't shaped as one row per model). Wiring the result into
+        report templates is a follow-up to this abstraction.
 
         Returns:
-            Tuple of (EvaluationResult, sub_prompts dict).
-
-        :param on_document_complete: Optional per-document callback for live progress.
+            A JSON-serializable dict, keyed however is most useful (e.g. by model
+            label).
         """
-        split_info = find_split_point(self.response_format)
+        return {}
 
-        if split_info is None:
-            logger.warning(
-                "decompose_no_split_point",
-                model=model_name,
-                msg="No suitable split point found; falling back to normal evaluation.",
-            )
-            if Manipulation.explanation in manipulations and self.response_format:
-                effective_rf = self._create_explanation_model()
-            else:
-                effective_rf = self.response_format
-            result = await self.runner.evaluate(
-                documents=documents,
-                labels=labels,
-                prompt_template=prompt,
-                model=self._build_model_arg(model_config),
-                response_format=effective_rf,
-                field_metrics_config=field_metrics_config,
-                _on_document_complete=on_document_complete,
-            )
-            return result, {}
+    # -------------------------------------------------------------------------
+    # Reevaluation
+    # -------------------------------------------------------------------------
 
-        include_explanation = Manipulation.explanation in manipulations
-        sub_schemas = create_sub_schemas(split_info, self.response_format, include_explanation)
-
-        dc = model_config.decompose_config
-        custom_sub_prompts = dc.sub_prompts if dc else None
-        rewrite_model = dc.rewrite_model if dc else "gpt-4o-mini"
-        sub_prompts = await generate_sub_prompts(
-            prompt,
-            split_info.list_field_names,
-            client=self.client,
-            rewrite_model=rewrite_model,
-            custom_sub_prompts=custom_sub_prompts,
-        )
-
-        if self.few_shot_examples:
-            field_examples = decompose_few_shot_examples(self.few_shot_examples, split_info)
-            sub_prompts = inject_few_shot_into_sub_prompts(sub_prompts, field_examples)
-            sub_prompts = await cleanup_few_shot_sub_prompts(
-                sub_prompts,
-                client=self.client,
-                cleanup_model=rewrite_model,
-            )
-
-        params = model_config.params
-        multi_pass = 2 if Manipulation.multi_pass in manipulations else 1
-
-        result = await self.decomposed_evaluator.evaluate(
-            documents=documents,
-            labels=labels,
-            sub_prompts=sub_prompts,
-            sub_schemas=sub_schemas,
-            split_info=split_info,
-            model=model_name,
-            temperature=params.get("temperature", self.temperature),
-            max_tokens=params.get("max_tokens"),
-            field_metrics_config=field_metrics_config,
-            hallucination_filter=Manipulation.hallucination_filter in manipulations,
-            multi_pass=multi_pass,
-            on_document_complete=on_document_complete,
-        )
-        return result, sub_prompts
-
-    @staticmethod
-    def _format_sub_prompts_for_display(sub_prompts: dict[str, str]) -> str:
-        """Format decomposed sub-prompts into a readable string for the report."""
-        separator = "\n\n" + "=" * 60 + "\n\n"
-        parts = []
-        for field_name, prompt in sub_prompts.items():
-            header = f"[DECOMPOSED SUB-PROMPT: {field_name}]"
-            parts.append(f"{header}\n{prompt}")
-        return separator.join(parts)
-
-
-class ClassificationExperiment(ModelEval):
-    """Recipe for classification-shaped data: plain string labels, compared by exact match.
-
-    Every label must be a plain string, not a dict, a list, or a string that itself
-    parses as a JSON object or array; use ``ExtractionExperiment`` for that kind of data
-    instead. A ``response_format`` is optional here (unlike ``ExtractionExperiment``, which
-    requires one): when neither it nor ``config.response_format_schema`` is given, a
-    single-field ``label`` schema is auto-inferred from the unique label values (see
-    ``ClassificationConfig.infer_schema``). Pass ``response_format`` yourself to
-    constrain output with your own schema instead, e.g. a single-``label``-field
-    schema for structured output over the same plain string labels.
-    """
-
-    def __init__(
+    async def _score_predictions(
         self,
-        config: ClassificationConfig | dict[str, Any] | str | Path,
-        data: list[dict[str, Any]] | str | Path,
-        response_format: type[BaseModel] | None = None,
-    ):
+        predictions: "list[PredictionResult]",
+        labels: "list[Any]",
+        field_metrics_config: Any,
+    ) -> "list[PredictionResult]":
+        """Re-derive scoring fields on already-generated predictions. No model calls.
+
+        Optional: only needed to use the default ``reevaluate()`` below. Default
+        raises ``NotImplementedError``; a task that wants free rescoring implements
+        this one small, pure hook instead of ``reevaluate()`` itself. A task whose
+        rescoring needs more than "predictions in, rescored predictions out" (e.g.
+        updating groundtruth by document id, or a scoring config that needs to be
+        threaded through and persisted) should override ``reevaluate()`` directly
+        instead -- this hook is deliberately narrower than that.
         """
-        Initialize the classification recipe.
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement _score_predictions(); "
+            "override reevaluate() directly instead, or implement this hook."
+        )
+
+    def reevaluate(
+        self,
+        data: "list[dict[str, Any]] | str | Path | None" = None,
+        output_dir: "str | Path | None" = None,
+        **kwargs: Any,
+    ) -> "Path | None":
+        """Re-score stored predictions without new LLM calls, and optionally persist.
+
+        Default implementation re-scores every prediction in ``self.results`` via
+        ``_score_predictions()`` and recomputes metrics; raises ``NotImplementedError``
+        (from ``_score_predictions``) if that hook isn't implemented. Override either
+        hook, or this method directly, to support richer rescoring semantics (e.g.
+        updating groundtruth in place).
 
         Args:
-            config: Configuration dict, ClassificationConfig, or path (str/Path) to a
-                JSON config file. Same keys as ``ModelEvalConfig`` plus ``infer_schema``
-                (default ``True``): auto-infers a single-field ``label`` schema from the
-                unique label values when neither ``response_format`` nor
-                ``response_format_schema`` was given. Set to ``False`` to leave the
-                model unconstrained (plain text output) in that case.
-            data: List of dicts ``[{"id": ..., "content": ..., "label": ...}]`` with
-                plain string labels, or a path to a JSON file with the same structure.
-            response_format: Optional Pydantic model class for structured output
-                validation. Takes priority over ``config.response_format_schema`` and
-                schema inference.
+            data: Updated groundtruth, same shape as the constructor's ``data``.
+                Not used by the default implementation; accepted for signature
+                compatibility with overrides that do use it.
+            output_dir: If given, writes results via ``save_experiment_results()``.
+            **kwargs: Task-specific rescoring parameters.
+
+        Returns:
+            Path to the run directory if ``output_dir`` was given, else ``None``.
+
+        Raises:
+            ValueError: No results to reevaluate (call ``evaluate()`` or
+                ``load_experiment_results()`` first).
         """
-        if isinstance(config, (str, Path)):
-            with open(config) as f:
-                config = json.load(f)
-        if isinstance(config, dict):
-            config = ClassificationConfig.model_validate(config)
-        super().__init__(config=config, data=data, response_format=response_format)
-        self._validate_plain_string_labels()
-        if self.response_format is None and config.infer_schema:
-            self.response_format = self._infer_label_schema()
-
-    def _validate_plain_string_labels(self) -> None:
-        for item in self.data:
-            label = item.get("label", "")
-            if isinstance(_normalize_label(label), (dict, list)):
-                raise ValueError(
-                    f"ClassificationExperiment requires plain string labels, but record "
-                    f"id={item.get('id', '')!r} has a structured label. Use ExtractionExperiment "
-                    "for extraction-mode data instead."
-                )
-
-    def _infer_label_schema(self) -> type[BaseModel] | None:
-        """Build a single-field `label` schema from the unique label values.
-
-        The field is constrained to a `Literal` enum of the unique values seen, up to
-        50 distinct values; beyond that the enum would be unwieldy so the field falls
-        back to a plain `str`.
-        """
-        if not self.data:
-            return None
-
-        labels = [str(item.get("label", "")) for item in self.data]
-        unique_labels = sorted(set(labels))
-        annotation: Any = Literal[tuple(unique_labels)] if len(unique_labels) <= 50 else str
-
-        return create_model(
-            "ResponseModel",
-            __config__=ConfigDict(extra="forbid"),
-            label=(annotation, Field(..., description="Predicted class label")),
-        )
-
-
-class ExtractionExperiment(ModelEval):
-    """Recipe for structured extraction: labels are nested JSON objects, scored per field.
-
-    Requires a schema, either the ``response_format`` constructor argument or
-    ``config.response_format_schema``. Unlike ``ModelEval``, it fails immediately if
-    neither is given rather than running with an unconstrained model.
-    """
-
-    def __init__(
-        self,
-        config: ModelEvalConfig | dict[str, Any] | str | Path,
-        data: list[dict[str, Any]] | str | Path,
-        response_format: type[BaseModel] | None = None,
-    ):
-        """
-        Initialize the extraction recipe.
-
-        Args:
-            config: Configuration dict, ModelEvalConfig, or path (str/Path) to a JSON
-                config file. Same keys as ``ModelEvalConfig``.
-            data: List of dicts ``[{"id": ..., "content": ..., "label": ...}]`` with
-                dict, list, or JSON-string labels, or a path to a JSON file with the
-                same structure.
-            response_format: Pydantic model class constraining the LLM's structured
-                output. Required unless ``config.response_format_schema`` is given instead.
-        """
-        super().__init__(config=config, data=data, response_format=response_format)
-        if self.response_format is not None:
-            return
-
-        all_plain_strings = self.data and all(
-            not isinstance(_normalize_label(item.get("label", "")), (dict, list))
-            for item in self.data
-        )
-        if all_plain_strings:
+        if self.results is None:
             raise ValueError(
-                "ExtractionExperiment requires a schema (response_format or "
-                "config.response_format_schema), but none was given, and every label "
-                "is a plain string. This looks like classification data; use "
-                "ClassificationExperiment instead, or pass response_format if you do want "
-                "structured output from these labels."
+                "No results to reevaluate. Call evaluate() or load_experiment_results() first."
             )
-        raise ValueError(
-            "ExtractionExperiment requires a schema (response_format or "
-            "config.response_format_schema); got neither."
+
+        field_metrics_config = self._get_field_metrics_config()
+        _, labels = self._load_documents_and_labels()
+
+        return asyncio.run(self._reevaluate_async(labels, field_metrics_config, output_dir))
+
+    async def _reevaluate_async(
+        self,
+        labels: "list[Any]",
+        field_metrics_config: Any,
+        output_dir: "str | Path | None",
+    ) -> "Path | None":
+        assert self.results is not None
+        for result in self.results:
+            result.predictions = await self._score_predictions(
+                result.predictions, labels, field_metrics_config
+            )
+            result.compute_metrics()
+
+        if output_dir is not None:
+            return self.save_experiment_results(output_dir)
+        return None
+
+    # -------------------------------------------------------------------------
+    # Shared helpers
+    # -------------------------------------------------------------------------
+
+    def _build_model_arg(self, model_config: Any) -> dict[str, Any]:
+        """Build the litellm kwargs dict for one LLM model config.
+
+        Args:
+            model_config: A config with ``.name``, ``.params``, and optionally
+                ``.cost_rate`` / ``.cost_rate_time_unit``.
+        """
+        result: dict[str, Any] = {
+            "model": model_config.name,
+            "temperature": model_config.params.get("temperature", self.temperature),
+        }
+        if "max_tokens" in model_config.params:
+            result["max_tokens"] = model_config.params["max_tokens"]
+        for k, v in model_config.params.items():
+            if k not in {"temperature", "max_tokens"}:
+                result[k] = v
+        if model_config.cost_rate is not None:
+            result["cost_rate"] = model_config.cost_rate
+            result["cost_rate_time_unit"] = model_config.cost_rate_time_unit
+        return result
+
+    def _status(self, message: str) -> None:
+        """Best-effort progress status write for external pollers; never raises."""
+        if self.output_dir is None:
+            return
+        try:
+            write_status(self.output_dir, message)
+        except Exception:
+            pass
+
+    async def _before_evaluation(self, field_metrics_config: Any) -> None:
+        """Extension point for setup after preflight but before prompt resolution.
+
+        Default is a no-op.
+        """
+        return None
+
+    def _resolve_output_dir(self, output_dir: "str | Path | None") -> Path:
+        """Return the effective output directory, raising if neither source provides one."""
+        effective = output_dir or self.output_dir
+        if effective is None:
+            raise ValueError(
+                "output_dir is required. Set it in the config or pass it to the save method."
+            )
+        return Path(effective)
+
+    # -------------------------------------------------------------------------
+    # Main pipeline
+    # -------------------------------------------------------------------------
+
+    def evaluate(self) -> None:
+        """Run the evaluation pipeline synchronously (wraps ``aevaluate()``).
+
+        Cannot be called from within a running event loop; call ``aevaluate()``
+        directly (with ``await``) there instead.
+        """
+        asyncio.run(self.aevaluate())
+
+    def run(self, output_dir: "str | Path | None" = None) -> Path:
+        """Run the full pipeline and save outputs synchronously (wraps ``arun()``).
+
+        Args:
+            output_dir: Overrides ``config.output_dir``; one of the two is required.
+
+        Returns:
+            Path to the HTML report if generated, else the run directory.
+        """
+        try:
+            return asyncio.run(self.arun(output_dir=output_dir))
+        except PreflightError:
+            sys.exit(1)
+
+    async def aevaluate(self) -> None:
+        """Run the evaluation pipeline and populate results on this instance (async).
+
+        Does not write any files -- call ``save_experiment_results()`` /
+        ``save_html_report()`` / ``save_pdf_report()`` afterwards for that. Skips any
+        model already in ``self.results`` or already persisted under
+        ``output_dir`` from a prior run, which is what makes ``add_models()`` +
+        ``aevaluate()`` safe to call again later.
+        """
+        logger.info("evaluation_pipeline_started", evaluation=type(self).__name__)
+
+        self._status("Preparing run...")
+        self._preflight_check()
+
+        field_metrics_config = self._get_field_metrics_config()
+        await self._before_evaluation(field_metrics_config)
+
+        self._status("Preparing prompts...")
+        self._model_prompts = await self._prepare_model_prompts()
+
+        existing_labels: set[str] = {r.model for r in (self.results or [])}
+        if self.output_dir is not None and not self.results:
+            from valtron_core.runner import _completed_model_labels_on_disk
+
+            existing_labels |= _completed_model_labels_on_disk(Path(self.output_dir))
+        models_to_run = [m for m in self.models if (m.label or m.name) not in existing_labels]
+
+        if models_to_run:
+            new_results, new_manipulations = await self._run_evaluations(
+                self._model_prompts, field_metrics_config, models=models_to_run
+            )
+            if self.results:
+                self.results = list(self.results) + new_results
+                self._manipulations_applied = {
+                    **(self._manipulations_applied or {}),
+                    **new_manipulations,
+                }
+            else:
+                self.results = new_results
+                self._manipulations_applied = new_manipulations
+
+        self._task_statistics = self.compute_task_statistics(self.results or [])
+
+    def save_experiment_results(self, output_dir: "str | Path | None" = None) -> Path:
+        """Write the run directory (``metadata.json`` + ``models/*.json``).
+
+        Must be called after ``evaluate()``. Returns the path to the run
+        directory that was written. Already correctness-agnostic -- works
+        unchanged for a task that never sets ``is_correct``/``accuracy``.
+
+        Args:
+            output_dir: Override the output directory for this call. Falls back
+                to ``config.output_dir`` if omitted. Raises if neither is set.
+        """
+        if self.results is None:
+            raise RuntimeError("Call evaluate() before save_experiment_results().")
+
+        from valtron_core.runner import save_run_dir
+
+        dest = self._resolve_output_dir(output_dir)
+
+        fmc = self._get_field_metrics_config()
+
+        run_dir = save_run_dir(
+            dest,
+            self.results,
+            self._build_save_documents(),
+            use_case=self.use_case,
+            original_prompt=self.prompt_template,
+            field_config=fmc.config if fmc else None,
+            model_prompts=self._model_prompts,
+            prompt_manipulations=self._manipulations_applied,
+            model_override_prompts=self._model_override_prompts,
+            response_format_schema=getattr(self, "_response_format_schema", None),
         )
+        return run_dir
+
+    def save_html_report(self, output_dir: "str | Path | None" = None) -> Path:
+        """Generate an HTML report. Not implemented at this level.
+
+        Rich HTML/PDF reports (accuracy charts, correct/incorrect badges) assume a
+        correctness notion this generic class makes no assumption about -- a
+        capability a task opts into by overriding this, not one forced on it (same
+        idiom as ``reevaluate()``). See ``ReferencedEval`` for the real
+        implementation classification/extraction use.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not implement save_html_report().")
+
+    def save_pdf_report(self, output_dir: "str | Path | None" = None) -> Path:
+        """Generate a PDF report. Not implemented at this level; see ``save_html_report``."""
+        raise NotImplementedError(f"{type(self).__name__} does not implement save_pdf_report().")
+
+    async def arun(self, output_dir: "str | Path | None" = None) -> Path:
+        """Run ``aevaluate()`` then save outputs per ``config.output_formats`` (async).
+
+        Args:
+            output_dir: Overrides ``config.output_dir``; one of the two is required.
+
+        Returns:
+            Path to the HTML report if ``"html"`` is in ``config.output_formats``,
+            else the run directory.
+        """
+        await self.aevaluate()
+
+        run_dir = self.save_experiment_results(output_dir)
+        report_path: Path = run_dir
+
+        if "html" in self.config.output_formats:
+            report_path = self.save_html_report(output_dir)
+        if "pdf" in self.config.output_formats:
+            self.save_pdf_report(output_dir)
+
+        logger.info(
+            "evaluation_run_complete", evaluation=type(self).__name__, report_path=str(report_path)
+        )
+        return report_path
