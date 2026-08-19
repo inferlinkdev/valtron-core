@@ -97,11 +97,38 @@ class PredictionResult(BaseModel):
     """Result of a single prediction."""
 
     document_id: str = Field(..., description="ID of the document")
-    predicted_value: str = Field(..., description="Predicted value from the model")
-    expected_value: str = Field(..., description="Expected label value")
-    is_correct: bool = Field(..., description="Whether the prediction was correct")
-    example_score: float = Field(
-        default=0.0, description="Continuous score (0-1) indicating prediction quality"
+    predicted_value: str | dict[str, Any] | list[Any] = Field(
+        ..., description="Predicted value from the model"
+    )
+    expected_value: str | None = Field(
+        default=None,
+        description="Expected label value; None for a task with no ground truth for this document",
+    )
+    is_correct: bool | None = Field(
+        default=None,
+        description=(
+            "Whether the prediction was correct; None when there is no correctness "
+            "notion for this document (e.g. no ground truth, or an open-ended task)"
+        ),
+    )
+    example_score: float | None = Field(
+        default=None,
+        description=(
+            "Continuous score (0-1) indicating prediction quality; None means "
+            "not scored, distinct from a score of 0"
+        ),
+    )
+    error: str | None = Field(
+        default=None,
+        description="Error message if generating or scoring this prediction failed",
+    )
+    task_scores: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Open-ended per-document scalar scores for tasks whose signal doesn't fit "
+            "is_correct/example_score (e.g. a summarization quality axis). Aggregated "
+            "into EvaluationMetrics.aggregated_task_scores."
+        ),
     )
     response_time: float = Field(..., description="Time taken for prediction in seconds")
     original_cost: float = Field(
@@ -128,11 +155,27 @@ class EvaluationMetrics(BaseModel):
     """Aggregated metrics for an evaluation run."""
 
     total_documents: int = Field(..., description="Total number of documents evaluated")
-    correct_predictions: int = Field(..., description="Number of correct predictions")
-    accuracy: float = Field(..., description="Accuracy score (0-1)")
-    average_example_score: float = Field(
-        0.0,
-        description="Mean per-document score (0-1), using continuous field scores when available",
+    correct_predictions: int | None = Field(
+        default=None,
+        description="Number of correct predictions; None when no prediction has a defined is_correct",
+    )
+    accuracy: float | None = Field(
+        default=None,
+        description="Accuracy score (0-1) over predictions with a defined is_correct; None if none do",
+    )
+    average_example_score: float | None = Field(
+        default=None,
+        description=(
+            "Mean per-document score (0-1) over predictions with a defined "
+            "example_score; None if none do"
+        ),
+    )
+    aggregated_task_scores: dict[str, float] | None = Field(
+        default=None,
+        description=(
+            "Mean of each key present across predictions' task_scores; None if no "
+            "prediction set any"
+        ),
     )
     total_cost: float = Field(
         ..., description="Total cost of all API calls (LLM inference + evaluation)"
@@ -187,7 +230,6 @@ class EvaluationResult(BaseModel):
             raise ValueError("No predictions to compute metrics from")
 
         total_docs = len(self.predictions)
-        correct = sum(1 for p in self.predictions if p.is_correct)
         total_llm_cost = sum(p.llm_cost for p in self.predictions)
         total_evaluation_cost = sum(p.evaluation_cost for p in self.predictions)
         total_cost = total_llm_cost + total_evaluation_cost
@@ -200,15 +242,36 @@ class EvaluationResult(BaseModel):
         except Exception:
             logger.exception("Failed to aggregate field metrics")
 
-        avg_example_score = (
-            sum(p.example_score for p in self.predictions) / total_docs if total_docs > 0 else 0.0
+        # is_correct / example_score / task_scores are all optional per prediction.
+        # Aggregate over whatever's defined; None when nothing is defined. One rule,
+        # no separate "does this run have a correctness notion" flag -- a run with
+        # zero ground truth falls out of this the same way partial ground truth does.
+        scored_correctness = [p.is_correct for p in self.predictions if p.is_correct is not None]
+        correct_predictions = sum(scored_correctness) if scored_correctness else None
+        accuracy = sum(scored_correctness) / len(scored_correctness) if scored_correctness else None
+
+        scored_examples = [p.example_score for p in self.predictions if p.example_score is not None]
+        average_example_score = (
+            sum(scored_examples) / len(scored_examples) if scored_examples else None
+        )
+
+        task_score_lists: dict[str, list[float]] = defaultdict(list)
+        for p in self.predictions:
+            if p.task_scores:
+                for key, value in p.task_scores.items():
+                    task_score_lists[key].append(value)
+        aggregated_task_scores = (
+            {key: sum(values) / len(values) for key, values in task_score_lists.items()}
+            if task_score_lists
+            else None
         )
 
         self.metrics = EvaluationMetrics(
             total_documents=total_docs,
-            correct_predictions=correct,
-            accuracy=correct / total_docs if total_docs > 0 else 0.0,
-            average_example_score=avg_example_score,
+            correct_predictions=correct_predictions,
+            accuracy=accuracy,
+            average_example_score=average_example_score,
+            aggregated_task_scores=aggregated_task_scores,
             total_cost=total_cost,
             cost={
                 "total_llm_cost": total_llm_cost,

@@ -189,12 +189,19 @@ class TradeoffAnalyzer:
                 "Transformer predictions are missing confidence scores. Re-run the "
                 "ModelEval with the current version of valtron_core to populate them."
             )
+        if any(
+            not isinstance(p.predicted_value, str) or p.expected_value is None for p in predictions
+        ):
+            raise ValueError(
+                "TradeoffAnalyzer requires every transformer prediction to have a "
+                "string predicted_value and a non-None expected_value (ground truth)."
+            )
 
         tradeoff_rows = [
             TradeoffRow(
-                pred_label=_unwrap_label(p.predicted_value),
+                pred_label=_unwrap_label(p.predicted_value),  # type: ignore[arg-type]
                 confidence=p.confidence_score,  # type: ignore[arg-type]
-                ground_truth=_unwrap_label(p.expected_value),
+                ground_truth=_unwrap_label(p.expected_value),  # type: ignore[arg-type]
             )
             for p in predictions
         ]
@@ -232,6 +239,13 @@ class TradeoffAnalyzer:
             for pred in llm_result.predictions:
                 idx = doc_id_to_idx.get(pred.document_id)
                 if idx is not None:
+                    if not isinstance(pred.predicted_value, str):
+                        raise ValueError(
+                            f"TradeoffAnalyzer requires a string predicted_value; model "
+                            f"{llm_result.model!r} produced a "
+                            f"{type(pred.predicted_value).__name__} for document "
+                            f"{pred.document_id!r}."
+                        )
                     per_example[idx] = _unwrap_label(pred.predicted_value)
 
             # Reuse is_correct from evaluation rather than re-deriving it here:

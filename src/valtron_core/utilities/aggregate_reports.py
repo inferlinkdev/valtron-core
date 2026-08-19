@@ -28,9 +28,18 @@ import json
 from pathlib import Path
 from typing import Any
 from valtron_core.scoring.json_eval import EvalResult, JsonEvaluator
-from valtron_core.cost_utils import _parse_time_unit_to_seconds, _get_fallback_rate_info, _fallback_cost
+from valtron_core.cost_utils import (
+    _parse_time_unit_to_seconds,
+    _get_fallback_rate_info,
+    _fallback_cost,
+)
 from valtron_core.loader import DocumentLoader
-from valtron_core.models import EvaluationResult, EvaluationMetrics, FieldMetricsConfig, PredictionResult
+from valtron_core.models import (
+    EvaluationResult,
+    EvaluationMetrics,
+    FieldMetricsConfig,
+    PredictionResult,
+)
 from valtron_core.scoring.json_eval import ExpensiveListComparisonError
 from valtron_core.runner import EvaluationRunner, save_run_dir
 
@@ -53,7 +62,9 @@ def _apply_cost_rates(results: list[EvaluationResult]) -> None:
             fallback = _get_fallback_rate_info(llm_config.get("model", result.model))
             if fallback:
                 for p in result.predictions:
-                    p.llm_cost = _fallback_cost(llm_config.get("model", result.model), p.response_time)
+                    p.llm_cost = _fallback_cost(
+                        llm_config.get("model", result.model), p.response_time
+                    )
                 result.llm_config = {**llm_config, **fallback}
         result.compute_metrics()
 
@@ -92,26 +103,30 @@ def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], 
                     field_metrics = EvalResult.model_validate(p["field_metrics"])
                 except Exception:
                     pass
-            predictions.append(PredictionResult(
-                document_id=doc_id,
-                predicted_value=p["predicted_value"],
-                expected_value=p.get("expected_value", label_map.get(doc_id, "")),
-                is_correct=p.get("is_correct", False),
-                example_score=p.get("example_score", 0.0),
-                response_time=p.get("response_time", 0.0),
-                original_cost=p.get("original_cost", 0.0),
-                llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
-                evaluation_cost=p.get("evaluation_cost", 0.0),
-                model=model_name,
-                field_metrics=field_metrics,
-            ))
+            predictions.append(
+                PredictionResult(
+                    document_id=doc_id,
+                    predicted_value=p["predicted_value"],
+                    expected_value=p.get("expected_value", label_map.get(doc_id, "")),
+                    is_correct=p.get("is_correct", False),
+                    example_score=p.get("example_score", 0.0),
+                    response_time=p.get("response_time", 0.0),
+                    original_cost=p.get("original_cost", 0.0),
+                    llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
+                    evaluation_cost=p.get("evaluation_cost", 0.0),
+                    model=model_name,
+                    field_metrics=field_metrics,
+                )
+            )
 
         result = EvaluationResult(
             run_id=model_data.get("run_id", model_file.stem),
             started_at=model_data.get("started_at"),
             completed_at=model_data.get("completed_at"),
             predictions=predictions,
-            metrics=EvaluationMetrics(**model_data["metrics"]) if model_data.get("metrics") else None,
+            metrics=(
+                EvaluationMetrics(**model_data["metrics"]) if model_data.get("metrics") else None
+            ),
             prompt_template=prompt_template,
             model=model_name,
             llm_config=model_data.get("llm_config", {}),
@@ -153,7 +168,8 @@ def load_legacy_results(path: Path) -> tuple[list[EvaluationResult], dict[str, A
             "use_case": data.get("use_case"),
             "original_prompt": data.get("original_prompt"),
             "field_config": data.get("field_config"),
-            "prompt_optimizations": data.get("prompt_manipulations") or data.get("prompt_optimizations"),
+            "prompt_optimizations": data.get("prompt_manipulations")
+            or data.get("prompt_optimizations"),
             "model_prompts": data.get("model_prompts"),
         }
     else:
@@ -188,18 +204,22 @@ def convert_legacy_to_run_dir(
         for p in result.predictions:
             if p.document_id not in seen:
                 seen.add(p.document_id)
-                documents.append({
-                    "id": p.document_id,
-                    "content": p.metadata.get("content", ""),
-                    "label": p.expected_value,
-                })
+                documents.append(
+                    {
+                        "id": p.document_id,
+                        "content": p.metadata.get("content", ""),
+                        "label": p.expected_value,
+                    }
+                )
 
     field_config = meta.get("field_config")
     if field_config is None:
         field_config = next((r.field_config for r in results if r.field_config is not None), None)
 
     save_run_dir(
-        output_dir, results, documents,
+        output_dir,
+        results,
+        documents,
         use_case=meta.get("use_case"),
         original_prompt=meta.get("original_prompt"),
         field_config=field_config,
@@ -209,7 +229,9 @@ def convert_legacy_to_run_dir(
     print(f"Converted {len(results)} model(s) to run directory format at {output_dir}")
 
 
-def reevaluate_with_field_metrics(results: list[EvaluationResult], field_metrics_config: FieldMetricsConfig) -> None:
+def reevaluate_with_field_metrics(
+    results: list[EvaluationResult], field_metrics_config: FieldMetricsConfig
+) -> None:
     """Re-evaluate all predictions in-place using a new field_metrics_config.
 
     This re-runs JsonEvaluator.evaluate() on each prediction's expected/predicted
@@ -222,18 +244,28 @@ def reevaluate_with_field_metrics(results: list[EvaluationResult], field_metrics
 
     for result in results:
         for pred in result.predictions:
+            expected_value = pred.expected_value
+            predicted_value = pred.predicted_value
+            if expected_value is None:
+                print(f"  Warning: skipping document {pred.document_id} with no expected_value")
+                continue
+            if isinstance(predicted_value, list):
+                print(f"  Warning: skipping list-valued prediction for document {pred.document_id}")
+                continue
             try:
                 eval_result, _ = evaluator.evaluate(
                     field_metrics_config.config,
-                    pred.expected_value,
-                    pred.predicted_value,
+                    expected_value,
+                    predicted_value,
                 )
                 pred.field_metrics = eval_result
                 pred.example_score = eval_result.score
                 pred.is_correct = eval_result.is_correct
             except Exception as e:
-                print(f"  Warning: failed to re-evaluate prediction for "
-                      f"document {pred.document_id}: {e}")
+                print(
+                    f"  Warning: failed to re-evaluate prediction for "
+                    f"document {pred.document_id}: {e}"
+                )
 
         result.compute_metrics()
         print(f"  Re-evaluated {len(result.predictions)} predictions for model: {result.model}")
@@ -279,7 +311,9 @@ async def main(
         print(f"Report already exists at {output_html}. Use --force to regenerate.")
         return
 
-    report_field_config = field_metrics_config.config if field_metrics_config else meta.get("field_config")
+    report_field_config = (
+        field_metrics_config.config if field_metrics_config else meta.get("field_config")
+    )
 
     report_path = runner.generate_report(
         results=results,
@@ -296,23 +330,43 @@ async def main(
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Aggregate saved evaluation run directories into a final report.")
-    parser.add_argument("--input", required=True,
-        help="Run directory (metadata.json + models/) or legacy path (old JSON file or per-model dir)")
-    parser.add_argument("--output-dir", required=True, help="Directory to write the aggregated report and charts")
-    parser.add_argument("--use-case", default="general purpose", help="Text describing the use case for recommendations")
-    parser.add_argument("--no-recommendation", action="store_true", help="Disable LLM-powered recommendation in the final report")
-    parser.add_argument("--force", action="store_true", help="Regenerate the report even if it already exists")
-    parser.add_argument("--convert", action="store_true",
+    parser = argparse.ArgumentParser(
+        description="Aggregate saved evaluation run directories into a final report."
+    )
+    parser.add_argument(
+        "--input",
+        required=True,
+        help="Run directory (metadata.json + models/) or legacy path (old JSON file or per-model dir)",
+    )
+    parser.add_argument(
+        "--output-dir", required=True, help="Directory to write the aggregated report and charts"
+    )
+    parser.add_argument(
+        "--use-case",
+        default="general purpose",
+        help="Text describing the use case for recommendations",
+    )
+    parser.add_argument(
+        "--no-recommendation",
+        action="store_true",
+        help="Disable LLM-powered recommendation in the final report",
+    )
+    parser.add_argument(
+        "--force", action="store_true", help="Regenerate the report even if it already exists"
+    )
+    parser.add_argument(
+        "--convert",
+        action="store_true",
         help="When the input is a legacy format, also write it out as a run directory "
-             "(metadata.json + models/) inside --output-dir")
+        "(metadata.json + models/) inside --output-dir",
+    )
     parser.add_argument(
         "--field-metrics-config",
         default=None,
         help="Path to a JSON file containing the field_metrics_config. "
-             "When provided, all predictions will be re-evaluated using this config "
-             "(no new API calls). The JSON should have the structure: "
-             '{\"config\": {\"type\": \"object\", \"fields\": {...}}}',
+        "When provided, all predictions will be re-evaluated using this config "
+        "(no new API calls). The JSON should have the structure: "
+        '{"config": {"type": "object", "fields": {...}}}',
     )
 
     args = parser.parse_args()
@@ -341,7 +395,9 @@ if __name__ == "__main__":
         if "config" in raw_config:
             field_metrics_config = FieldMetricsConfig(**raw_config, custom_metrics=custom_metrics)
         else:
-            field_metrics_config = FieldMetricsConfig(config=raw_config, custom_metrics=custom_metrics)
+            field_metrics_config = FieldMetricsConfig(
+                config=raw_config, custom_metrics=custom_metrics
+            )
         print(f"Loaded field_metrics_config from {config_path}")
 
     try:

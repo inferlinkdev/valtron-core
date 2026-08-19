@@ -617,6 +617,16 @@ class ModelEval(BaseRecipe):
         JsonEvaluator when a field_metrics_config is provided and falls back to
         case-insensitive string comparison otherwise.
         """
+        if not isinstance(prediction.predicted_value, str):
+            raise TypeError(
+                f"Cannot rescore document {prediction.document_id!r}: predicted_value is a "
+                f"{type(prediction.predicted_value).__name__}, expected a string."
+            )
+        if prediction.expected_value is None:
+            raise ValueError(
+                f"Cannot rescore document {prediction.document_id!r}: no expected_value is "
+                "stored for it."
+            )
         field_metrics, example_score, is_correct, evaluation_cost = _score_prediction(
             predicted_value=prediction.predicted_value,
             expected_value=prediction.expected_value,
