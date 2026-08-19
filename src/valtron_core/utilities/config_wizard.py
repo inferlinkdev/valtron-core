@@ -211,6 +211,155 @@ def api_upload_data() -> tuple:
     )
 
 
+def _analyze_no_label(data_list: list[Any], content_keys: list[str]) -> dict[str, Any]:
+    """No item has a 'label' key at all: nothing to build a response_format/field-metrics preview from.
+
+    Distinct from a classification/extraction path that happens to see empty
+    label values -- this is a task with no ground truth in the data at all
+    (e.g. a future no-reference task type), and forcing it through either of
+    those two analyzers would produce a nonsensical, unconstrained preview.
+    """
+    return {
+        "is_json": False,
+        "task_type": "no_label",
+        "sample_label": None,
+        "num_examples": len(data_list),
+        "enum_values": [],
+        "response_format_preview": "",
+        "response_format_schema": None,
+        "content_keys": content_keys,
+    }
+
+
+def _analyze_classification(
+    data_list: list[Any], first_label: str, content_keys: list[str]
+) -> dict[str, Any]:
+    """Plain-string labels: build a Literal[...]-constrained (or unconstrained) preview."""
+    enum_values = sorted(
+        {str(d.get("label", "")) for d in data_list if str(d.get("label", "")) != ""}
+    )
+    response_format_preview = ""
+    if enum_values:
+        if len(enum_values) <= 50:
+            args = ", ".join(repr(v) for v in enum_values)
+            response_format_preview = f"class ResponseModel(BaseModel):\n    label: Literal[{args}]"
+        else:
+            response_format_preview = "class ResponseModel(BaseModel):\n    label: str"
+            enum_values = []
+    label_property: dict[str, Any] = {"type": "string", "description": "Predicted class label"}
+    if enum_values:
+        label_property["enum"] = enum_values
+    string_label_schema: dict[str, Any] = {
+        "type": "object",
+        "title": "ResponseModel",
+        "properties": {"label": label_property},
+        "required": ["label"],
+        "additionalProperties": False,
+    }
+    response_format_schema = {
+        "type": "json_schema",
+        "json_schema": {"name": "ResponseModel", "strict": True, "schema": string_label_schema},
+    }
+    return {
+        "is_json": False,
+        "task_type": "classification",
+        "sample_label": first_label,
+        "num_examples": len(data_list),
+        "enum_values": enum_values,
+        "response_format_preview": response_format_preview,
+        "response_format_schema": response_format_schema,
+        "content_keys": content_keys,
+    }
+
+
+def _analyze_extraction(
+    data_list: list[Any], first_label: str, content_keys: list[str]
+) -> dict[str, Any]:
+    """JSON-shaped labels: build a nested Pydantic-class preview and JSON Schema."""
+    from valtron_core.utilities.field_config_generator import infer_field_config
+
+    field_config = infer_field_config(first_label)
+
+    def _collect_classes(data: object, class_name: str, out: list[str]) -> str:
+        if isinstance(data, bool):
+            return "bool"
+        if isinstance(data, int):
+            return "int"
+        if isinstance(data, float):
+            return "float"
+        if isinstance(data, dict):
+            lines = [f"class {class_name}(BaseModel):"]
+            for k, v in data.items():
+                field_type = _collect_classes(v, k.rstrip("s").capitalize(), out)
+                lines.append(f"    {k}: {field_type}")
+            out.append("\n".join(lines))
+            return class_name
+        if isinstance(data, list) and data:
+            item_name = class_name.rstrip("s").capitalize()
+            item_type = _collect_classes(data[0], item_name, out)
+            return f"list[{item_type}]"
+        if isinstance(data, list):
+            return "list[str]"
+        return "str"
+
+    def _json_schema_from_value(value: object, title: str) -> dict[str, Any]:
+        if isinstance(value, bool):
+            return {"type": "boolean"}
+        if isinstance(value, int):
+            return {"type": "integer"}
+        if isinstance(value, float):
+            return {"type": "number"}
+        if isinstance(value, dict):
+            props = {k: _json_schema_from_value(v, k) for k, v in value.items()}
+            return {
+                "type": "object",
+                "title": title,
+                "properties": props,
+                "required": list(value.keys()),
+                "additionalProperties": False,
+            }
+        if isinstance(value, list) and value:
+            return {"type": "array", "items": _json_schema_from_value(value[0], title)}
+        if isinstance(value, list):
+            return {"type": "array", "items": {"type": "string"}}
+        return {"type": "string"}
+
+    label_json = json.loads(first_label)
+    if isinstance(label_json, dict):
+        extra_classes: list[str] = []
+        main_lines = ["class ResponseModel(BaseModel):"]
+        for k, v in label_json.items():
+            field_type = _collect_classes(v, k.rstrip("s").capitalize(), extra_classes)
+            main_lines.append(f"    {k}: {field_type}")
+        all_parts = extra_classes + ["\n".join(main_lines)]
+        response_format_preview = "\n\n".join(all_parts)
+        json_label_schema = _json_schema_from_value(label_json, "ResponseModel")
+        json_label_schema["title"] = "ResponseModel"
+        response_format_schema: dict[str, Any] | None = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": "ResponseModel",
+                "strict": True,
+                "schema": json_label_schema,
+            },
+        }
+    else:
+        response_format_preview = ""
+        response_format_schema = None
+
+    return {
+        "is_json": True,
+        "task_type": "extraction",
+        "sample_label": first_label,
+        "num_examples": len(data_list),
+        "field_config": field_config.model_dump(),
+        "enum_values": [],
+        "response_format_preview": response_format_preview,
+        "response_format_schema": response_format_schema,
+        "content_keys": content_keys,
+    }
+
+
 @app.route("/api/analyze-data", methods=["POST"])
 def api_analyze_data() -> Response | tuple[Response, int]:
     """Analyze training data to detect JSON labels and infer field metrics config."""
@@ -237,7 +386,12 @@ def api_analyze_data() -> Response | tuple[Response, int]:
 
         first_item = data_list[0]
         first_content = first_item.get("content", "")
-        content_keys: list[str] = list(first_content.keys()) if isinstance(first_content, dict) else ["content"]
+        content_keys: list[str] = (
+            list(first_content.keys()) if isinstance(first_content, dict) else ["content"]
+        )
+
+        if "label" not in first_item:
+            return jsonify(_analyze_no_label(data_list, content_keys))
 
         first_label = first_item.get("label", "")
         if isinstance(first_label, (dict, list)):
@@ -249,131 +403,9 @@ def api_analyze_data() -> Response | tuple[Response, int]:
         except (json.JSONDecodeError, TypeError):
             is_json = False
 
-        if not is_json:
-            enum_values = sorted(
-                {str(d.get("label", "")) for d in data_list if str(d.get("label", "")) != ""}
-            )
-            response_format_preview = ""
-            if enum_values:
-                if len(enum_values) <= 50:
-                    args = ", ".join(repr(v) for v in enum_values)
-                    response_format_preview = (
-                        f"class ResponseModel(BaseModel):\n    label: Literal[{args}]"
-                    )
-                else:
-                    response_format_preview = "class ResponseModel(BaseModel):\n    label: str"
-                    enum_values = []
-            label_property: dict[str, Any] = {"type": "string", "description": "Predicted class label"}
-            if enum_values:
-                label_property["enum"] = enum_values
-            string_label_schema: dict[str, Any] = {
-                "type": "object",
-                "title": "ResponseModel",
-                "properties": {"label": label_property},
-                "required": ["label"],
-                "additionalProperties": False,
-            }
-            response_format_schema = {
-                "type": "json_schema",
-                "json_schema": {"name": "ResponseModel", "strict": True, "schema": string_label_schema},
-            }
-            return jsonify(
-                {
-                    "is_json": False,
-                    "sample_label": first_label,
-                    "num_examples": len(data_list),
-                    "enum_values": enum_values,
-                    "response_format_preview": response_format_preview,
-                    "response_format_schema": response_format_schema,
-                    "content_keys": content_keys,
-                }
-            )
-
-        from valtron_core.utilities.field_config_generator import infer_field_config
-
-        field_config = infer_field_config(first_label)
-
-        def _collect_classes(
-            data: object, class_name: str, out: list[str]
-        ) -> str:
-            if isinstance(data, bool):
-                return "bool"
-            if isinstance(data, int):
-                return "int"
-            if isinstance(data, float):
-                return "float"
-            if isinstance(data, dict):
-                lines = [f"class {class_name}(BaseModel):"]
-                for k, v in data.items():
-                    field_type = _collect_classes(v, k.rstrip("s").capitalize(), out)
-                    lines.append(f"    {k}: {field_type}")
-                out.append("\n".join(lines))
-                return class_name
-            if isinstance(data, list) and data:
-                item_name = class_name.rstrip("s").capitalize()
-                item_type = _collect_classes(data[0], item_name, out)
-                return f"list[{item_type}]"
-            if isinstance(data, list):
-                return "list[str]"
-            return "str"
-
-        def _json_schema_from_value(value: object, title: str) -> dict[str, Any]:
-            if isinstance(value, bool):
-                return {"type": "boolean"}
-            if isinstance(value, int):
-                return {"type": "integer"}
-            if isinstance(value, float):
-                return {"type": "number"}
-            if isinstance(value, dict):
-                props = {k: _json_schema_from_value(v, k) for k, v in value.items()}
-                return {
-                    "type": "object",
-                    "title": title,
-                    "properties": props,
-                    "required": list(value.keys()),
-                    "additionalProperties": False,
-                }
-            if isinstance(value, list) and value:
-                return {"type": "array", "items": _json_schema_from_value(value[0], title)}
-            if isinstance(value, list):
-                return {"type": "array", "items": {"type": "string"}}
-            return {"type": "string"}
-
-        label_json = json.loads(first_label)
-        if isinstance(label_json, dict):
-            extra_classes: list[str] = []
-            main_lines = ["class ResponseModel(BaseModel):"]
-            for k, v in label_json.items():
-                field_type = _collect_classes(v, k.rstrip("s").capitalize(), extra_classes)
-                main_lines.append(f"    {k}: {field_type}")
-            all_parts = extra_classes + ["\n".join(main_lines)]
-            response_format_preview = "\n\n".join(all_parts)
-            json_label_schema = _json_schema_from_value(label_json, "ResponseModel")
-            json_label_schema["title"] = "ResponseModel"
-            response_format_schema = {
-                "type": "json_schema",
-                "json_schema": {
-                    "name": "ResponseModel",
-                    "strict": True,
-                    "schema": json_label_schema,
-                },
-            }
-        else:
-            response_format_preview = ""
-            response_format_schema = None
-
-        return jsonify(
-            {
-                "is_json": True,
-                "sample_label": first_label,
-                "num_examples": len(data_list),
-                "field_config": field_config.model_dump(),
-                "enum_values": [],
-                "response_format_preview": response_format_preview,
-                "response_format_schema": response_format_schema,
-                "content_keys": content_keys,
-            }
-        )
+        if is_json:
+            return jsonify(_analyze_extraction(data_list, first_label, content_keys))
+        return jsonify(_analyze_classification(data_list, first_label, content_keys))
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
