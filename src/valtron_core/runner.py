@@ -78,6 +78,11 @@ def save_single_model_result(
             "response_time": p.response_time,
             "is_correct": p.is_correct,
             "example_score": p.example_score,
+            # Both are read back by ModelEval.load_experiment_results, so they
+            # have to be written here or a reloaded run silently loses them.
+            # task_scores is the only signal a task with no ground truth has.
+            "task_scores": p.task_scores,
+            "error": p.error,
         }
         if p.field_metrics:
             pred_dict["field_metrics"] = p.field_metrics.model_dump()

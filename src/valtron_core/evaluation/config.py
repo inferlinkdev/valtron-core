@@ -6,6 +6,13 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from valtron_core.summarization.scoring import (
+    DEFAULT_BETA,
+    DEFAULT_GATE,
+    DEFAULT_REQUIREMENT_WEIGHT,
+    DEFAULT_TIER_GAP,
+)
+
 
 class Manipulation(str, Enum):
     """Prompt manipulation strategies that can be layered onto an LLM model config.
@@ -236,5 +243,75 @@ class ClassificationConfig(ModelEvalConfig):
             "response_format_schema), auto-infer a single-field label schema constrained to the "
             "unique label values seen in the data. Set False to keep the model unconstrained "
             "(plain text output) instead."
+        ),
+    )
+
+
+class SummarizationConfig(ModelEvalConfig):
+    """Config for ``SummarizationExperiment``: reference-free summarization quality.
+
+    Unlike the classification/extraction recipes this one needs no labels. What
+    it needs instead is a ``judge_model``, which both decides which of a
+    document's facts a good summary must convey *and* grades the candidates
+    against that -- so prefer a strong model, and keep it fixed across runs you
+    intend to compare.
+
+    ``prompt`` has no summarization-specific default on purpose. Pass
+    ``valtron_core.summarization.SALIENCE_SUMMARY_PROMPT`` to get the prompt the
+    method was validated under; supply your own to deviate deliberately. A
+    ``{requirements}`` placeholder, if present, is filled with the checklist
+    below; without one the checklist is still scored but never shown to the
+    candidate, which is not the configuration the published numbers came from.
+    """
+
+    use_case: str = "summarization evaluation"
+
+    judge_model: str = Field(
+        default="gemini/gemini-2.5-pro",
+        description=(
+            "Model that decomposes texts into facts, marks which are must-convey, and "
+            "grades each summary against them. Defines importance and scores against "
+            "it, so a strong model is worth the cost."
+        ),
+    )
+    requirements: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Optional checklist of criteria a good summary of this document *class* "
+            "should satisfy, authored once for the class rather than per document. "
+            "Omit it and the score falls back to the plain salience f-measure."
+        ),
+    )
+    gate: float = Field(
+        default=DEFAULT_GATE,
+        description=(
+            "Minimum faithfulness for a summary to score above zero. A gate rather "
+            "than a term, so a fluent fabrication cannot outrank a dull correct summary."
+        ),
+    )
+    beta: float = Field(
+        default=DEFAULT_BETA,
+        description="F-measure beta over the salience axes; above 1 favours coverage.",
+    )
+    requirement_weight: float = Field(
+        default=DEFAULT_REQUIREMENT_WEIGHT,
+        description=(
+            "Weight on the requirements term when a checklist is supplied; ignored "
+            "when it is not."
+        ),
+    )
+    tier_gap: float = Field(
+        default=DEFAULT_TIER_GAP,
+        description=(
+            "Score drop that starts a new tier in the ranking. Zero by default: these "
+            "scores are fine-grained, so only an exact tie shares a tier."
+        ),
+    )
+    max_concurrent_documents: int = Field(
+        default=5,
+        description=(
+            "Documents in flight at once per model, matching the rest of this "
+            "codebase. Each one fans out into several judge calls, so this is the "
+            "main lever on how hard a run leans on provider rate limits."
         ),
     )
