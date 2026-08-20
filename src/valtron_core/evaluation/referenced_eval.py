@@ -270,7 +270,7 @@ class ReferencedEval(ModelEval):
         automatically.
 
         Args:
-            models: List of model config dicts or ``ModelConfig`` objects.
+            models: Model name strings, model config dicts, or ``ModelConfig`` objects.
 
         Raises:
             ValueError: Duplicate label or structured manipulation without
@@ -280,7 +280,9 @@ class ReferencedEval(ModelEval):
 
         normalized: list[Any] = []
         for m in models:
-            if isinstance(m, dict):
+            if isinstance(m, str):
+                normalized.append(LLMModelConfig(name=m))
+            elif isinstance(m, dict):
                 model_type = m.get("type", "llm")
                 if model_type == "transformer":
                     normalized.append(TransformerModelConfig.model_validate(m))
