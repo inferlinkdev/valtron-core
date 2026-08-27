@@ -270,9 +270,17 @@ class SummarizationExperiment(ModelEval):
         Once per document, shared by every candidate. Done here rather than
         lazily so the two phases are visible in the run, and so the shared spend
         is known before it has to be divided.
+
+        Skips any document already in ``self._document_facts``, so a repeat
+        call on the same instance (e.g. ``add_models()`` followed by another
+        ``evaluate()``) does not re-run salience marking, which is not
+        memoized by the judge and would otherwise be paid for twice.
         """
         documents, _ = self._load_documents_and_labels()
-        self._status(f"Extracting facts from {len(documents)} documents...")
+        to_extract = [d for d in documents if d.id not in self._document_facts]
+        if not to_extract:
+            return
+        self._status(f"Extracting facts from {len(to_extract)} documents...")
         semaphore = asyncio.Semaphore(self._settings.max_concurrent_documents)
 
         async def extract(document: Document) -> tuple[str, DocumentFacts]:
@@ -281,8 +289,8 @@ class SummarizationExperiment(ModelEval):
                     Doc(self._document_text(document)), self._judge
                 )
 
-        with tqdm(total=len(documents), unit="doc", desc="Reading documents") as bar:
-            tasks = [asyncio.create_task(extract(document)) for document in documents]
+        with tqdm(total=len(to_extract), unit="doc", desc="Reading documents") as bar:
+            tasks = [asyncio.create_task(extract(document)) for document in to_extract]
             for finished in asyncio.as_completed(tasks):
                 document_id, facts = await finished
                 self._document_facts[document_id] = facts

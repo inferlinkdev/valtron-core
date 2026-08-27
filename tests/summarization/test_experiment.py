@@ -308,6 +308,37 @@ class TestSharedWork:
         await experiment.aevaluate()
         assert judge.count(DocumentSaliencePrompt) == 1
 
+    async def test_a_repeat_evaluate_does_not_re_extract_known_documents(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``add_models()`` followed by another ``evaluate()`` must not re-pay for
+        salience marking on documents already in ``self._document_facts``.
+
+        ``_before_evaluation()`` runs on every ``aevaluate()`` call with no
+        skip-if-known check of its own; the guard lives one level up. Without it,
+        document fact extraction would be free the second time (the judge
+        memoizes ``facts()``) but salience marking -- which is not memoized --
+        would be paid for twice. ``DocumentSaliencePrompt`` only ever comes from
+        phase 1 (unlike ``FactExtractionPrompt``, which phase 3 also issues per
+        candidate summary), so it is the unambiguous signal here.
+        """
+        judge = _install(
+            monkeypatch,
+            {
+                "first": FakeSummarizer("first", GOOD),
+                "second": FakeSummarizer("second", GOOD),
+            },
+        )
+        experiment = SummarizationExperiment(
+            config=_config({"first": GOOD}), data=[{"id": "d1", "content": DOCUMENT}]
+        )
+        await experiment.aevaluate()
+        assert judge.count(DocumentSaliencePrompt) == 1
+
+        experiment.add_models(["second"])
+        await experiment.aevaluate()
+        assert judge.count(DocumentSaliencePrompt) == 1
+
 
 class TestFailures:
     """One bad response must not void a run."""
