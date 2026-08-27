@@ -111,13 +111,22 @@ by preference -- `evaluator.py` cannot run a reference-free task as it stands.
 `evaluate_single` unconditionally sets `expected_value` and computes
 `is_correct`. See "worth considering" below.
 
-**`reevaluate()` is deliberately unimplemented.** Your plan flagged it as an
-open question and worried it would need the recorded per-fact verdicts. It
-would not: the scheme's only inputs are the four axes, and those are in
-`task_scores`, so re-scoring under different scheme parameters needs no LLM
-calls and no verdicts. We left it out because nobody has asked to move those
-knobs and the defaults are the tuned ones. It is perhaps twenty lines whenever
-someone wants it.
+**`reevaluate()` is implemented, and it grew past the original estimate.** Your
+plan flagged it as an open question and worried it would need the recorded
+per-fact verdicts. For the scheme scalars alone it does not: those are the
+four axes already in `task_scores`, so reweighting under a new
+`gate`/`beta`/`requirement_weight`/`tier_gap` is the twenty-line, no-LLM-calls
+version this note originally anticipated. What grew it past that estimate is
+regrading: swapping `judge_model` needs the judge's actual opinions, not just
+its old ones replayed, so it reruns document facts, salience, and all four
+axes from scratch (`_regrade_fully`,
+[`evaluation/summarization.py:715-796`](../src/valtron_core/evaluation/summarization.py#L715-L796)).
+A `requirements`-only change is cheaper -- only `requirements_met` can have
+moved, so only that judge call reruns (`_regrade_requirements`,
+[`evaluation/summarization.py:798-844`](../src/valtron_core/evaluation/summarization.py#L798-L844)).
+Neither tier ever regenerates a candidate's summary: `_StoredSummary`
+replays the stored `predicted_value` into `evaluate_candidate()` instead of
+calling the candidate again, so a regrade pays for judge calls only.
 
 ## Things worth knowing
 

@@ -49,7 +49,10 @@ from valtron_core.summarization import (
     Doc,
     DocumentFacts,
     Judge,
+    Model,
+    Prompt,
     Requirement,
+    Summary,
     TemplatePrompt,
     Usage,
     evaluate_candidate,
@@ -153,6 +156,23 @@ def _usage_dict(usage: Usage) -> dict[str, Any]:
         "cost_usd": usage.cost_usd,
         "by_model": dict(usage.by_model),
     }
+
+
+class _StoredSummary(Model):
+    """Replays an already-generated summary instead of calling an LLM.
+
+    Lets ``evaluate_candidate`` be reused unchanged for a regrade: it still calls
+    ``model.run()`` once, but this returns the stored ``predicted_value`` directly and
+    records no usage, so regrading pays for judge calls only, never a second generation
+    call.
+    """
+
+    def __init__(self, name: str, summary: str) -> None:
+        super().__init__(name)
+        self._summary = summary
+
+    async def run(self, prompt: Prompt, *, usage: Usage | None = None) -> str:
+        return self._summary
 
 
 class SummarizationExperiment(ModelEval):
@@ -566,6 +586,262 @@ class SummarizationExperiment(ModelEval):
             },
         )
         return self._ranking.to_dict()
+
+    # -------------------------------------------------------------------------
+    # Reevaluation
+    # -------------------------------------------------------------------------
+
+    def reevaluate(  # type: ignore[override]
+        self,
+        *,
+        judge_model: str | None = None,
+        requirements: list[str] | None = None,
+        gate: float | None = None,
+        beta: float | None = None,
+        requirement_weight: float | None = None,
+        tier_gap: float | None = None,
+        output_dir: str | Path | None = None,
+    ) -> Path | None:
+        """Reweight and/or regrade stored predictions, synchronously (wraps ``areevaluate()``).
+
+        Cannot be called from within a running event loop; call ``areevaluate()``
+        directly (with ``await``) there instead -- the same rule ``evaluate()`` follows
+        for ``aevaluate()``.
+        """
+        return asyncio.run(
+            self.areevaluate(
+                judge_model=judge_model,
+                requirements=requirements,
+                gate=gate,
+                beta=beta,
+                requirement_weight=requirement_weight,
+                tier_gap=tier_gap,
+                output_dir=output_dir,
+            )
+        )
+
+    async def areevaluate(
+        self,
+        *,
+        judge_model: str | None = None,
+        requirements: list[str] | None = None,
+        gate: float | None = None,
+        beta: float | None = None,
+        requirement_weight: float | None = None,
+        tier_gap: float | None = None,
+        output_dir: str | Path | None = None,
+    ) -> Path | None:
+        """Reweight and/or regrade stored predictions, at whichever cost the change needs.
+
+        Three tiers, cheapest first:
+
+        * **Reweight** (``gate``/``beta``/``requirement_weight``/``tier_gap``) -- pure
+          arithmetic over axes already sitting in ``task_scores``. No LLM calls at all.
+        * **Requirements-only regrade** (``requirements`` changes, ``judge_model``
+          doesn't) -- only ``requirements_met`` can possibly change, so only that judge
+          call reruns; the other three axes are left untouched.
+        * **Full regrade** (``judge_model`` changes) -- a different judge has its own
+          opinions about salience, so document facts and all four axes are recomputed.
+
+        No tier ever regenerates a candidate's summary: every stored ``predicted_value``
+        is replayed rather than requeried, so a regrade pays for judge calls only.
+
+        Args:
+            judge_model: New judge model. Triggers a full regrade against every stored
+                prediction. Omit to keep the current judge.
+            requirements: New checklist. Triggers a requirements-only regrade unless
+                ``judge_model`` is also given, in which case it folds into that full
+                regrade instead. Omit to keep the current checklist.
+            gate: New faithfulness gate for the scoring scheme.
+            beta: New F-measure beta for the scoring scheme.
+            requirement_weight: New requirements weight for the scoring scheme.
+            tier_gap: New tier-boundary gap for the ranking.
+            output_dir: If given, writes the re-scored results via
+                ``save_experiment_results()``. As with ``ReferencedEval.reevaluate()``,
+                ``metadata.json`` is not overwritten if it already exists there -- pass a
+                fresh directory to persist an updated ``judge_model``/``requirements``.
+
+        Returns:
+            Path to the run directory if ``output_dir`` was given, else ``None``.
+
+        Raises:
+            ValueError: No results to reevaluate (call ``evaluate()`` or
+                ``load_experiment_results()`` first).
+        """
+        if self.results is None:
+            raise ValueError(
+                "No results to reevaluate. Call evaluate() or load_experiment_results() first."
+            )
+
+        for name, value in (
+            ("gate", gate),
+            ("beta", beta),
+            ("requirement_weight", requirement_weight),
+            ("tier_gap", tier_gap),
+        ):
+            if value is not None:
+                setattr(self._settings, name, value)
+
+        judge_changed = judge_model is not None and judge_model != self._settings.judge_model
+        if judge_changed:
+            assert judge_model is not None
+            await self._regrade_fully(judge_model, requirements)
+        elif requirements is not None:
+            await self._regrade_requirements(requirements)
+
+        self._task_statistics = self.compute_task_statistics(self.results)
+
+        if output_dir is not None:
+            resolved = Path(output_dir)
+            if (resolved / "metadata.json").exists():
+                logger.warning(
+                    "reevaluate_metadata_not_overwritten",
+                    output_dir=str(resolved),
+                    detail=(
+                        "metadata.json already exists and will not be overwritten. "
+                        "Only per-model JSON files will be updated. Pass a fresh "
+                        "output_dir to preserve the new judge_model/requirements."
+                    ),
+                )
+            return self.save_experiment_results(output_dir)
+
+        return None
+
+    def _document_text_map(self) -> dict[str, str]:
+        """Every document referenced in ``self.data``, by id, as plain text."""
+        documents, _ = self._load_documents_and_labels()
+        return {document.id: self._document_text(document) for document in documents}
+
+    async def _regrade_fully(self, judge_model: str | None, requirements: list[str] | None) -> None:
+        """Rerun document facts, salience, and all four axes under a new judge.
+
+        A different judge has its own opinions from the ground up, so nothing from the
+        old judge is reusable -- not the document facts, not the salience marks, not the
+        per-candidate verdicts.
+        """
+        assert self.results is not None
+        if judge_model is not None:
+            self._settings.judge_model = judge_model
+            self._judge = Judge(ClientModel(judge_model, client=self.client, name=JUDGE_LABEL))
+        if requirements is not None:
+            self._settings.requirements = requirements
+            self._checklist = [Requirement(text) for text in requirements]
+
+        texts = self._document_text_map()
+        self._document_facts = {}
+        semaphore = asyncio.Semaphore(self._settings.max_concurrent_documents)
+
+        async def extract(document_id: str) -> tuple[str, DocumentFacts]:
+            async with semaphore:
+                return document_id, await extract_document_facts(
+                    Doc(texts[document_id]), self._judge
+                )
+
+        document_ids = {p.document_id for r in self.results for p in r.predictions}
+        for document_id, facts in await asyncio.gather(
+            *(extract(document_id) for document_id in document_ids)
+        ):
+            self._document_facts[document_id] = facts
+
+        self._models_in_pass = max(len(self.results), 1)
+
+        async def regrade(
+            result: EvaluationResult, prediction: PredictionResult
+        ) -> PredictionResult:
+            if not isinstance(prediction.predicted_value, str):
+                raise TypeError(
+                    f"Cannot regrade document {prediction.document_id!r}: predicted_value "
+                    f"is a {type(prediction.predicted_value).__name__}, expected a string."
+                )
+            shared = self._document_facts[prediction.document_id]
+            replay = _StoredSummary(result.model, prediction.predicted_value)
+            evaluation = await evaluate_candidate(
+                Doc(texts[prediction.document_id]),
+                replay,
+                self._judge,
+                shared,
+                self._checklist,
+            )
+            task_scores = {
+                name: value
+                for name in AXIS_NAMES
+                if (value := getattr(evaluation.axes, name)) is not None
+            }
+            evaluation_cost = (
+                evaluation.judge_usage.cost_usd + shared.usage.cost_usd / self._models_in_pass
+            )
+            metadata = {
+                **prediction.metadata,
+                "document_facts": [fact.text for fact in shared.facts],
+                "salient_facts": [fact.text for fact in shared.salient],
+                "summary_facts": [fact.text for fact in evaluation.summary_facts],
+                "faithful_verdicts": evaluation.faithful_verdicts,
+                "coverage_verdicts": evaluation.coverage_verdicts,
+                "precision_verdicts": evaluation.precision_verdicts,
+                "requirement_verdicts": evaluation.requirement_verdicts,
+                "requirements": list(self._settings.requirements),
+            }
+            return prediction.model_copy(
+                update={
+                    "task_scores": task_scores or None,
+                    "evaluation_cost": evaluation_cost,
+                    "metadata": metadata,
+                }
+            )
+
+        for result in self.results:
+            result.predictions = list(
+                await asyncio.gather(*(regrade(result, p) for p in result.predictions))
+            )
+            result.compute_metrics()
+
+    async def _regrade_requirements(self, requirements: list[str]) -> None:
+        """Rerun only the requirements axis; the other three cannot have changed.
+
+        ``self._judge`` already matches ``self._settings.judge_model`` -- it is rebuilt
+        from config in ``_post_init`` regardless of how this instance was constructed --
+        so this needs no judge rebuild and no document facts, only the checklist itself.
+        """
+        assert self.results is not None
+        self._settings.requirements = requirements
+        self._checklist = [Requirement(text) for text in requirements]
+        checklist = self._checklist
+
+        async def regrade(prediction: PredictionResult) -> PredictionResult:
+            if not isinstance(prediction.predicted_value, str):
+                raise TypeError(
+                    f"Cannot regrade document {prediction.document_id!r}: predicted_value "
+                    f"is a {type(prediction.predicted_value).__name__}, expected a string."
+                )
+            usage = Usage()
+            fraction, verdicts = await self._judge.requirements_met(
+                Summary(prediction.predicted_value), checklist, usage=usage
+            )
+            task_scores = {
+                key: value
+                for key, value in (prediction.task_scores or {}).items()
+                if key != "requirements_met"
+            }
+            if fraction is not None:
+                task_scores["requirements_met"] = fraction
+            metadata = {
+                **prediction.metadata,
+                "requirement_verdicts": verdicts,
+                "requirements": list(requirements),
+            }
+            return prediction.model_copy(
+                update={
+                    "task_scores": task_scores or None,
+                    "evaluation_cost": prediction.evaluation_cost + usage.cost_usd,
+                    "metadata": metadata,
+                }
+            )
+
+        for result in self.results:
+            result.predictions = list(
+                await asyncio.gather(*(regrade(p) for p in result.predictions))
+            )
+            result.compute_metrics()
 
     # -------------------------------------------------------------------------
     # Reports

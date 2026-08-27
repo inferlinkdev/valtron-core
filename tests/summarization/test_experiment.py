@@ -16,6 +16,7 @@ Models are faked at the ``ClientModel`` seam. The seam below that, where
 import json
 from pathlib import Path
 from typing import Any
+from unittest.mock import ANY, patch
 
 import pytest
 
@@ -25,7 +26,13 @@ from valtron_core.evaluation.summarization import (
 )
 from valtron_core.summarization import SALIENCE_SUMMARY_PROMPT
 from valtron_core.summarization.model import Model
-from valtron_core.summarization.prompts import DocumentSaliencePrompt, Prompt
+from valtron_core.summarization.prompts import (
+    DocumentSaliencePrompt,
+    FactExtractionPrompt,
+    FactMatchPrompt,
+    Prompt,
+    RequirementScoringPrompt,
+)
 from tests.summarization.fakes import FakeJudge, FakeSummarizer, FailingSummarizer
 
 DATA = Path(__file__).parent / "data" / "billsum"
@@ -466,6 +473,144 @@ class TestPersistence:
         cached = store.get_valid_cached("good", {"d1": DOCUMENT}, "prompt", {"model": "good"})
 
         assert cached["d1"].task_scores == prediction.task_scores
+
+
+class TestReevaluate:
+    """Reweighting the scheme and regrading against a new judge or checklist.
+
+    Three tiers, cheapest first: a scheme-only reweight is pure arithmetic and
+    makes no judge calls at all; a requirements-only change reruns just the
+    requirements axis; a judge_model change reruns everything, since a fresh
+    judge has its own opinions about salience from the ground up.
+    """
+
+    async def test_raises_if_no_results(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        experiment = _experiment(monkeypatch, {"good": GOOD})
+        with pytest.raises(ValueError, match="No results to reevaluate"):
+            await experiment.areevaluate(gate=0.6)
+
+    async def test_reweight_changes_the_score_with_no_new_judge_calls(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        judge = _install(monkeypatch, {"padded": FakeSummarizer("padded", PADDED)})
+        experiment = SummarizationExperiment(
+            config=_config({"padded": PADDED}), data=[{"id": "d1", "content": DOCUMENT}]
+        )
+        await experiment.aevaluate()
+        assert experiment.ranking.scores[0].score == pytest.approx(0.5)
+        calls_before = len(judge.prompts)
+
+        # padded's correctness (0.5) clears the default gate (0.5) but not a
+        # stricter one.
+        await experiment.areevaluate(gate=0.6)
+
+        assert len(judge.prompts) == calls_before
+        assert experiment.ranking.scores[0].score == pytest.approx(0.0)
+        assert experiment.ranking.parameters["gate"] == 0.6
+        assert (experiment._task_statistics or {})["parameters"]["gate"] == 0.6
+
+    async def test_requirements_only_change_reruns_just_that_axis(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        judge = _install(monkeypatch, {"padded": FakeSummarizer("padded", PADDED)})
+        experiment = SummarizationExperiment(
+            config=_config({"padded": PADDED}), data=[{"id": "d1", "content": DOCUMENT}]
+        )
+        await experiment.aevaluate()
+        fact_calls = judge.count(FactExtractionPrompt)
+        salience_calls = judge.count(DocumentSaliencePrompt)
+        match_calls = judge.count(FactMatchPrompt)
+
+        await experiment.areevaluate(requirements=["alpha"])
+
+        assert judge.count(FactExtractionPrompt) == fact_calls
+        assert judge.count(DocumentSaliencePrompt) == salience_calls
+        assert judge.count(FactMatchPrompt) == match_calls
+        assert judge.count(RequirementScoringPrompt) >= 1
+
+        (prediction,) = experiment.get_traces()
+        # "alpha" alone is satisfied by "KEY alpha. unrelated noise".
+        assert prediction.task_scores["requirements_met"] == pytest.approx(1.0)
+        # The other three axes are untouched from the original run.
+        assert prediction.task_scores["correctness"] == pytest.approx(0.5)
+        assert prediction.task_scores["salient_coverage"] == pytest.approx(0.5)
+        assert prediction.task_scores["salient_precision"] == pytest.approx(0.5)
+
+    async def test_a_new_judge_model_reruns_facts_and_all_axes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        judge = _install(monkeypatch, {"good": FakeSummarizer("good", GOOD)})
+        experiment = SummarizationExperiment(
+            config=_config({"good": GOOD}), data=[{"id": "d1", "content": DOCUMENT}]
+        )
+        await experiment.aevaluate()
+        facts_before = judge.count(FactExtractionPrompt)
+        salience_before = judge.count(DocumentSaliencePrompt)
+        assert salience_before == 1
+
+        await experiment.areevaluate(judge_model="a-different-judge-model")
+
+        # A fresh Judge has no memoized facts, so a full regrade re-extracts the
+        # document facts and re-marks salience from scratch, even against the
+        # same fake answers: one more document-facts call, one more summary-facts
+        # call.
+        assert judge.count(FactExtractionPrompt) == facts_before + 2
+        assert judge.count(DocumentSaliencePrompt) == salience_before + 1
+
+        (prediction,) = experiment.get_traces()
+        assert prediction.task_scores == {
+            "correctness": pytest.approx(1.0),
+            "salient_coverage": pytest.approx(1.0),
+            "salient_precision": pytest.approx(1.0),
+            "requirements_met": pytest.approx(1.0),
+        }
+        # 2 shared calls (facts + salience) plus 5 of its own, same formula as a
+        # fresh run with one candidate.
+        assert prediction.evaluation_cost == pytest.approx(7 * 0.001)
+
+    async def test_output_dir_persists_the_regraded_scores(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        experiment = _experiment(monkeypatch, {"padded": PADDED})
+        await experiment.aevaluate()
+
+        run_dir = await experiment.areevaluate(requirements=["alpha"], output_dir=tmp_path)
+        assert run_dir is not None
+        saved = json.loads((run_dir / "models" / "padded.json").read_text())
+        assert saved["predictions"][0]["task_scores"]["requirements_met"] == pytest.approx(1.0)
+
+        reloaded = SummarizationExperiment.load_experiment_results(run_dir)
+        (prediction,) = reloaded.get_traces()
+        assert prediction.task_scores["requirements_met"] == pytest.approx(1.0)
+
+    async def test_reusing_a_run_dir_warns_instead_of_overwriting_metadata(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        experiment = _experiment(monkeypatch, {"padded": PADDED})
+        await experiment.aevaluate()
+        run_dir = experiment.save_experiment_results(tmp_path)
+
+        with patch("valtron_core.evaluation.summarization.logger.warning") as mock_warning:
+            await experiment.areevaluate(gate=0.6, output_dir=run_dir)
+
+        mock_warning.assert_any_call(
+            "reevaluate_metadata_not_overwritten",
+            output_dir=str(run_dir),
+            detail=ANY,
+        )
+
+    def test_the_sync_wrapper_works_outside_a_running_loop(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A plain (non-async) test, deliberately: reevaluate() wraps areevaluate()
+        # in asyncio.run(), the same pattern evaluate()/aevaluate() already uses, and
+        # that only works when nothing is already running the event loop.
+        experiment = _experiment(monkeypatch, {"padded": PADDED})
+        experiment.evaluate()
+
+        experiment.reevaluate(gate=0.6)
+
+        assert experiment.ranking.scores[0].score == pytest.approx(0.0)
 
 
 class TestRealDocuments:
