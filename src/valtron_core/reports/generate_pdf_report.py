@@ -1,6 +1,7 @@
 """PDF report generation using ReportLab Platypus."""
 
 import io
+import math
 import xml.sax.saxutils as _xml
 from datetime import datetime
 from pathlib import Path
@@ -249,6 +250,7 @@ class PdfReportGenerator(_ReportBase):
             "num_documents": num_documents,
             "results": results,
             "recommendation": recommendation,
+            "has_accuracy": any(r.metrics and r.metrics.accuracy is not None for r in results),
             "has_field_metrics": has_field_metrics,
             "all_field_names": all_field_names,
             "prompt_optimizations": prompt_optimizations or {},
@@ -332,7 +334,11 @@ class PdfReportGenerator(_ReportBase):
         for result in results:
             if result.metrics:
                 models.append(result.model)
-                accuracies.append(result.metrics.accuracy * 100)
+                accuracies.append(
+                    result.metrics.accuracy * 100
+                    if result.metrics.accuracy is not None
+                    else float("nan")
+                )
                 costs.append(result.metrics.total_cost)
                 times.append(result.metrics.total_time)
 
@@ -365,7 +371,11 @@ class PdfReportGenerator(_ReportBase):
             ax.title.set_color("#333333")
             ax.grid(False)
 
-        # Accuracy
+        # Accuracy -- a model with no defined accuracy contributes a NaN bar,
+        # which matplotlib simply leaves blank rather than drawing. Whether to
+        # embed this chart at all (every model NaN) is decided by the caller,
+        # which also knows about field-metrics-only tasks; see has_accuracy in
+        # generate_pdf_report() and _build_visual_analysis()'s show_accuracy.
         fig, ax = plt.subplots(figsize=(6, 3.5))
         _clean_theme(ax, fig)
         bars = ax.bar(
@@ -383,6 +393,8 @@ class PdfReportGenerator(_ReportBase):
         ax.set_xticklabels(models, rotation=45, ha="right", fontsize=9)
         ax.set_ylim(0, 105)
         for bar, acc in zip(bars, accuracies):
+            if math.isnan(acc):
+                continue
             ax.text(
                 bar.get_x() + bar.get_width() / 2,
                 bar.get_height() + 1,
@@ -623,11 +635,18 @@ class PdfReportGenerator(_ReportBase):
             prompt_label = "Overridden" if override_prompts.get(result.model) else "Base"
             has_rate = bool(result.llm_config and result.llm_config.get("cost_rate") is not None)
 
-            # Accuracy/rank cell
+            # Accuracy/rank cell. None (no ground truth) renders "N/A" and is
+            # never highlighted as best -- performance_best[...] can also be
+            # None when no result has a defined value, and None == None would
+            # otherwise mark every row "best".
             if use_avg_score:
                 avg_score = result.metrics.average_example_score
-                acc_cell = f"{avg_score * 100:.2f}%"
-                is_best_acc = avg_score >= performance_best["best_avg_score"]
+                best_avg_score = performance_best["best_avg_score"]
+                if avg_score is None:
+                    acc_cell, is_best_acc = "N/A", False
+                else:
+                    acc_cell = f"{avg_score * 100:.2f}%"
+                    is_best_acc = best_avg_score is not None and avg_score >= best_avg_score
             elif use_single:
                 sf = all_field_names[0]
                 fm = (result.metrics.aggregated_field_metrics or {}).get(sf)
@@ -636,8 +655,13 @@ class PdfReportGenerator(_ReportBase):
                     fm is not None and fm.precision >= data["field_max_values"][sf]["precision"]
                 )
             else:
-                acc_cell = f"{result.metrics.accuracy * 100:.2f}%"
-                is_best_acc = result.metrics.accuracy == performance_best["best_accuracy"]
+                accuracy = result.metrics.accuracy
+                best_accuracy = performance_best["best_accuracy"]
+                if accuracy is None:
+                    acc_cell, is_best_acc = "N/A", False
+                else:
+                    acc_cell = f"{accuracy * 100:.2f}%"
+                    is_best_acc = best_accuracy is not None and accuracy == best_accuracy
 
             suffix = "*" if has_rate else ""
             best_total_cost = result.metrics.total_cost == performance_best["best_total_cost"]
@@ -797,7 +821,7 @@ class PdfReportGenerator(_ReportBase):
         chart_paths = data["chart_paths"]
         has_fm = data["has_field_metrics"]
         field_names = data["all_field_names"]
-        show_accuracy = not has_fm or len(field_names) == 1
+        show_accuracy = (not has_fm or len(field_names) == 1) and data["has_accuracy"]
 
         # chart_paths order from _generate_charts: accuracy, cost, time
         chart_config = [

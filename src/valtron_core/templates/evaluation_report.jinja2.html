@@ -1066,8 +1066,8 @@
             </td>
             <td>
               {% if has_field_metrics and all_field_names|length > 1 %}
-              <span class="{% if result.metrics.average_example_score >= best_avg_score %}metric-best{% else %}metric-value{% endif %}">
-                {{ "%.2f"|format(result.metrics.average_example_score * 100) }}%
+              <span class="{% if result.metrics.average_example_score is not none and best_avg_score is not none and result.metrics.average_example_score >= best_avg_score %}metric-best{% else %}metric-value{% endif %}">
+                {{ "%.2f"|format(result.metrics.average_example_score * 100) ~ '%' if result.metrics.average_example_score is not none else 'N/A' }}
               </span>
               {% elif has_field_metrics and all_field_names|length == 1 %}
               {% set _sf = all_field_names | first %}
@@ -1077,9 +1077,9 @@
               </span>
               {% else %}
               <span
-                class="{% if result.metrics.accuracy >= performance_best.best_accuracy %}metric-best{% else %}metric-value{% endif %}"
+                class="{% if result.metrics.accuracy is not none and performance_best.best_accuracy is not none and result.metrics.accuracy >= performance_best.best_accuracy %}metric-best{% else %}metric-value{% endif %}"
               >
-                {{ "%.2f"|format(result.metrics.accuracy * 100) }}%
+                {{ "%.2f"|format(result.metrics.accuracy * 100) ~ '%' if result.metrics.accuracy is not none else 'N/A' }}
               </span>
               {% endif %}
             </td>

@@ -13,6 +13,7 @@ from rich.table import Table
 from tqdm import tqdm  # type: ignore[import-untyped]
 
 from valtron_core.client import LLMClient
+from valtron_core.content_resolution import resolve_content
 from valtron_core.evaluator import PromptEvaluator
 from valtron_core.scoring.json_eval import (
     ExpensiveListComparisonError,
@@ -422,10 +423,13 @@ class EvaluationRunner:
             meta = json.load(f)
 
         label_map = {d["id"]: d["label"] for d in meta.get("documents", [])}
+        # content_path entries in metadata.json were absolutized when saved (see
+        # _build_save_documents), so the base_dir here is never actually used --
+        # passed anyway to satisfy resolve_content's signature.
         documents = [
             Document(
                 id=d["id"],
-                content=d.get("content", ""),
+                content=resolve_content(d, run_dir),
                 metadata={},
                 attachments=d.get("attachments", []),
             )
@@ -624,11 +628,14 @@ class EvaluationRunner:
         for result in results:
             if not result.metrics:
                 continue
+            accuracy_str = (
+                f"{result.metrics.accuracy:.2%}" if result.metrics.accuracy is not None else "N/A"
+            )
             table.add_row(
                 result.model,
                 str(result.metrics.total_documents),
                 str(result.metrics.correct_predictions),
-                f"{result.metrics.accuracy:.2%}",
+                accuracy_str,
                 f"${result.metrics.total_cost:.6f}",
                 f"{result.metrics.average_time_per_document:.2f}s",
                 f"${result.metrics.average_cost_per_document:.6f}",
@@ -639,11 +646,13 @@ class EvaluationRunner:
         if len(results) > 1:
             valid = [r for r in results if r.metrics]
             if valid:
-                best_accuracy = max(valid, key=lambda r: r.metrics.accuracy)  # type: ignore[union-attr]
+                scored = [r for r in valid if r.metrics and r.metrics.accuracy is not None]
                 best_cost = min(valid, key=lambda r: r.metrics.total_cost)  # type: ignore[union-attr]
                 best_speed = min(valid, key=lambda r: r.metrics.total_time)  # type: ignore[union-attr]
                 console.print("\n[bold]Best Models:[/bold]")
-                console.print(f"  Accuracy: {escape(best_accuracy.model)}")
+                if scored:
+                    best_accuracy = max(scored, key=lambda r: r.metrics.accuracy)  # type: ignore[union-attr, arg-type, return-value]
+                    console.print(f"  Accuracy: {escape(best_accuracy.model)}")
                 console.print(f"  Cost:     {escape(best_cost.model)}")
                 console.print(f"  Speed:    {escape(best_speed.model)}")
 

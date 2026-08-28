@@ -198,6 +198,10 @@
           border-left: 3px solid #f85149;
       }
 
+      .model-card.neutral {
+          border-left: 3px solid #8b949e;
+      }
+
       .model-header {
           display: flex;
           justify-content: space-between;
@@ -249,6 +253,10 @@
           color: #f85149;
       }
 
+      .model-card.neutral .model-name {
+          color: #8b949e;
+      }
+
       .status-badge {
           display: inline-block;
           padding: 4px 10px;
@@ -267,6 +275,12 @@
           background: rgba(248, 81, 73, 0.15);
           color: #f85149;
           border: 1px solid #da3633;
+      }
+
+      .status-neutral {
+          background: rgba(139, 148, 158, 0.15);
+          color: #8b949e;
+          border: 1px solid #484f58;
       }
 
       .prediction-output {
@@ -289,6 +303,10 @@
 
       .model-card.incorrect .prediction-output {
           border-left-color: #da3633;
+      }
+
+      .model-card.neutral .prediction-output {
+          border-left-color: #484f58;
       }
 
       /* Hide overall border when we have field-level indicators */
@@ -591,14 +609,15 @@
 
           <div class="expected-box">
             <div class="expected-label">✓ Expected Output</div>
-            <div class="input-content" id="expected-{{ loop.index }}">{{ doc_data.expected_value }}</div>
+            <div class="input-content" id="expected-{{ loop.index }}">{% if doc_data.expected_value is not none %}{{ doc_data.expected_value }}{% else %}<em style="color:#8b949e;">No expected output for this task</em>{% endif %}</div>
           </div>
         </div>
 
         <div class="right-panel">
           {% for model_result in doc_data.model_results %}
+          {% set status = 'neutral' if model_result.is_correct is none else ('correct' if model_result.is_correct else 'incorrect') %}
           <div
-            class="model-card {{ 'correct' if model_result.is_correct else 'incorrect' }}"
+            class="model-card {{ status }}"
           >
             <div class="model-header" onclick="toggleModelCard(this.closest('.model-card'))">
               <div style="display:flex;align-items:center;gap:6px;">
@@ -606,10 +625,10 @@
                 <div class="model-name">{{ model_result.model }}</div>
               </div>
               <span
-                class="status-badge {{ 'status-correct' if model_result.is_correct else 'status-incorrect' }}"
+                class="status-badge status-{{ status }}"
               >
-                {{ '✓ CORRECT' if model_result.is_correct else '✗ INCORRECT' }}
-                (Score: {{ "%.2f"|format(model_result.example_score) }})
+                {% if status == 'correct' %}✓ CORRECT{% elif status == 'incorrect' %}✗ INCORRECT{% else %}{{ 'SCORED' if model_result.task_scores else 'NO GROUND TRUTH' }}{% endif %}
+                {% if model_result.example_score is not none %}(Score: {{ "%.2f"|format(model_result.example_score) }}){% endif %}
               </span>
             </div>
 
@@ -628,7 +647,7 @@
               >
                 {
                     "predicted": {{ model_result.predicted_value }},
-                    "expected": {{ doc_data.expected_value }},
+                    "expected": {{ doc_data.expected_value if doc_data.expected_value is not none else 'null' }},
                     "field_metrics": {{ model_result.field_metrics | tojson }}
                 }
               </script>

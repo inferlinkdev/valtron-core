@@ -33,15 +33,15 @@ class TestReportGeneratorInit:
 class TestGenerateRecommendation:
     """Tests for the generate_recommendation method."""
 
-    def test_generate_recommendation_success(
-        self, mock_llm_client, sample_evaluation_results
-    ):
+    def test_generate_recommendation_success(self, mock_llm_client, sample_evaluation_results):
         """Test successful recommendation generation."""
         # Create mock response with proper structure
         mock_response = Mock()
         mock_response.choices = [Mock()]
         mock_response.choices[0].message = Mock()
-        mock_response.choices[0].message.content = "Based on the results, gpt-3.5-turbo is recommended for its excellent accuracy-to-cost ratio."
+        mock_response.choices[0].message.content = (
+            "Based on the results, gpt-3.5-turbo is recommended for its excellent accuracy-to-cost ratio."
+        )
 
         mock_llm_client.complete_sync = Mock(return_value=mock_response)
         generator = ReportGenerator(client=mock_llm_client)
@@ -51,7 +51,9 @@ class TestGenerateRecommendation:
             use_case="sentiment classification",
         )
 
-        assert "gpt-3.5-turbo" in str(recommendation) or "recommended" in str(recommendation).lower()
+        assert (
+            "gpt-3.5-turbo" in str(recommendation) or "recommended" in str(recommendation).lower()
+        )
         mock_llm_client.complete_sync.assert_called_once()
 
     def test_generate_recommendation_with_custom_use_case(
@@ -93,9 +95,7 @@ class TestGenerateRecommendation:
 
         assert recommendation is not None
 
-    def test_generate_recommendation_llm_error(
-        self, mock_llm_client, sample_evaluation_results
-    ):
+    def test_generate_recommendation_llm_error(self, mock_llm_client, sample_evaluation_results):
         """Test recommendation handles LLM errors gracefully."""
         mock_llm_client.complete_sync = Mock(side_effect=Exception("API Error"))
         generator = ReportGenerator(client=mock_llm_client)
@@ -227,9 +227,10 @@ class TestComputePerformanceBestValues:
 
         best = generator._compute_performance_best_values([])
 
-        # Should return defaults
-        assert best["best_accuracy"] == -1.0
-        assert best["best_total_cost"] == float('inf')
+        # Should return defaults. best_accuracy stays None (rather than a -1.0
+        # sentinel) since no result means no defined accuracy to report.
+        assert best["best_accuracy"] is None
+        assert best["best_total_cost"] == float("inf")
 
 
 class TestFindBinIndex:
@@ -307,9 +308,7 @@ class TestPrepareHistogramData:
 class TestGenerateHtmlReport:
     """Tests for the generate_html_report method."""
 
-    def test_generate_html_report_basic(
-        self, mock_llm_client, sample_evaluation_results, tmp_path
-    ):
+    def test_generate_html_report_basic(self, mock_llm_client, sample_evaluation_results, tmp_path):
         """Test basic HTML report generation."""
         generator = ReportGenerator(client=mock_llm_client)
 
@@ -333,7 +332,9 @@ class TestGenerateHtmlReport:
         mock_response = Mock()
         mock_response.choices = [Mock()]
         mock_response.choices[0].message = Mock()
-        mock_response.choices[0].message.content = "I recommend using gpt-3.5-turbo for cost efficiency."
+        mock_response.choices[0].message.content = (
+            "I recommend using gpt-3.5-turbo for cost efficiency."
+        )
 
         mock_llm_client.complete_sync = Mock(return_value=mock_response)
         generator = ReportGenerator(client=mock_llm_client)
@@ -398,9 +399,7 @@ class TestGenerateHtmlReport:
 class TestGeneratePdfReport:
     """Tests for the generate_pdf_report method (using ReportLab — pure Python)."""
 
-    def test_generate_pdf_report_basic(
-        self, mock_llm_client, sample_evaluation_results, tmp_path
-    ):
+    def test_generate_pdf_report_basic(self, mock_llm_client, sample_evaluation_results, tmp_path):
         """Test that a real PDF file is created at the expected path."""
         generator = ReportGenerator(client=mock_llm_client)
 
@@ -443,9 +442,7 @@ class TestGeneratePdfReport:
         assert result.exists()
         assert result.read_bytes()[:4] == b"%PDF"
 
-    def test_generate_pdf_report_model_name_shortening(
-        self, mock_llm_client, tmp_path
-    ):
+    def test_generate_pdf_report_model_name_shortening(self, mock_llm_client, tmp_path):
         """Test that model names with provider prefix render without error."""
         result_obj = EvaluationResult(
             run_id="test",
@@ -475,9 +472,7 @@ class TestGeneratePdfReport:
         assert pdf_path.exists()
         assert pdf_path.read_bytes()[:4] == b"%PDF"
 
-    def test_generate_pdf_report_special_characters(
-        self, mock_llm_client, tmp_path
-    ):
+    def test_generate_pdf_report_special_characters(self, mock_llm_client, tmp_path):
         """Test that XML-special characters in prompts are escaped correctly."""
         result_obj = EvaluationResult(
             run_id="test_&_special",

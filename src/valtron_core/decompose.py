@@ -38,6 +38,7 @@ logger = structlog.get_logger()
 # filter_hallucinated_values
 # ---------------------------------------------------------------------------
 
+
 async def filter_hallucinated_values(
     predicted_json: str,
     document_text: str,
@@ -87,9 +88,9 @@ async def filter_hallucinated_values(
         try:
             prompt = (
                 "Does the EXACT name or phrase below appear word-for-word in the text? "
-                "Look carefully. If you cannot find it written in the text, answer \"no\".\n"
-                "Answer ONLY \"yes\" or \"no\". Default to \"no\" if uncertain.\n\n"
-                f"Name/phrase to find: \"{value}\"\n\n"
+                'Look carefully. If you cannot find it written in the text, answer "no".\n'
+                'Answer ONLY "yes" or "no". Default to "no" if uncertain.\n\n'
+                f'Name/phrase to find: "{value}"\n\n'
                 f"Text:\n{document_text}"
             )
             response = await client.complete(
@@ -103,9 +104,7 @@ async def filter_hallucinated_values(
             # Fail open – keep the value on LLM error.
             return path, True
 
-    llm_results = await asyncio.gather(
-        *[_verify(p, v) for p, v in needs_llm]
-    ) if needs_llm else []
+    llm_results = await asyncio.gather(*[_verify(p, v) for p, v in needs_llm]) if needs_llm else []
 
     results = pre_verified + list(llm_results)
 
@@ -190,9 +189,9 @@ def _remove_paths(
 
         # Remove marked indices and empty dicts (reverse to preserve order).
         obj[:] = [
-            item for idx, item in enumerate(obj)
-            if idx not in indices_to_remove
-            and not (isinstance(item, dict) and len(item) == 0)
+            item
+            for idx, item in enumerate(obj)
+            if idx not in indices_to_remove and not (isinstance(item, dict) and len(item) == 0)
         ]
 
 
@@ -283,9 +282,7 @@ def _deep_merge_dicts(dicts: list[dict]) -> dict:
                 combined.extend(v)
             # Deduplicate dicts; leave non-dicts as-is (dedup via set-like logic)
             dict_items = [x for x in combined if isinstance(x, dict)]
-            non_dict_items = list(dict.fromkeys(
-                x for x in combined if not isinstance(x, dict)
-            ))
+            non_dict_items = list(dict.fromkeys(x for x in combined if not isinstance(x, dict)))
             result[key] = _deduplicate_list(dict_items) + non_dict_items
         elif all(isinstance(v, dict) for v in values):
             result[key] = _deep_merge_dicts(values)
@@ -299,6 +296,7 @@ def _deep_merge_dicts(dicts: list[dict]) -> dict:
 # ---------------------------------------------------------------------------
 # SplitPointInfo
 # ---------------------------------------------------------------------------
+
 
 @dataclass
 class SplitPointInfo:
@@ -323,6 +321,7 @@ class SplitPointInfo:
 # ---------------------------------------------------------------------------
 # find_split_point
 # ---------------------------------------------------------------------------
+
 
 def find_split_point(response_format: type[BaseModel]) -> SplitPointInfo | None:
     """BFS over Pydantic model tree to find a model with >= 2 list fields.
@@ -365,6 +364,7 @@ def find_split_point(response_format: type[BaseModel]) -> SplitPointInfo | None:
 # create_sub_schemas
 # ---------------------------------------------------------------------------
 
+
 def create_sub_schemas(
     split_info: SplitPointInfo,
     response_format: type[BaseModel],
@@ -405,10 +405,16 @@ def create_sub_schemas(
         current_model = inner_model
         for ancestor_field in reversed(split_info.path_from_root):
             # Find the ancestor's original field info from the root model
-            ancestor_info = _resolve_field_info(response_format, split_info.path_from_root, ancestor_field)
-            desc = ancestor_info.description if ancestor_info and ancestor_info.description else None
+            ancestor_info = _resolve_field_info(
+                response_format, split_info.path_from_root, ancestor_field
+            )
+            desc = (
+                ancestor_info.description if ancestor_info and ancestor_info.description else None
+            )
             wrapper_fields: dict[str, Any] = {
-                ancestor_field: (current_model, Field(description=desc)) if desc else (current_model, Field()),
+                ancestor_field: (
+                    (current_model, Field(description=desc)) if desc else (current_model, Field())
+                ),
             }
             current_model = create_model(
                 f"{response_format.__name__}_{field_name}_wrap_{ancestor_field}",
@@ -433,7 +439,10 @@ def create_sub_schemas(
             # Rename to a cleaner name
             root_model = create_model(
                 f"{response_format.__name__}_{field_name}",
-                **{fname: (finfo.annotation, finfo) for fname, finfo in root_model.model_fields.items()},
+                **{
+                    fname: (finfo.annotation, finfo)
+                    for fname, finfo in root_model.model_fields.items()
+                },
             )
 
         sub_schemas[field_name] = root_model
@@ -466,6 +475,7 @@ def _resolve_field_info(
 # generate_sub_prompts
 # ---------------------------------------------------------------------------
 
+
 async def generate_sub_prompts(
     original_prompt: str,
     field_names: list[str],
@@ -482,9 +492,7 @@ async def generate_sub_prompts(
     if custom_sub_prompts is not None:
         missing = set(field_names) - set(custom_sub_prompts)
         if missing:
-            raise ValueError(
-                f"custom_sub_prompts is missing entries for: {sorted(missing)}"
-            )
+            raise ValueError(f"custom_sub_prompts is missing entries for: {sorted(missing)}")
         return {name: custom_sub_prompts[name] for name in field_names}
 
     client = client or LLMClient()
@@ -493,10 +501,10 @@ async def generate_sub_prompts(
         display_name = field_name.replace("_", " ")
         rewrite_instruction = (
             f"Rewrite the following extraction prompt so that it ONLY extracts "
-            f"\"{display_name}\". Remove all references to other entity types, "
+            f'"{display_name}". Remove all references to other entity types, '
             f"their definitions, and their formatting instructions. "
             f"Keep the same tone, style, and level of detail. "
-            f"The output schema should only contain the \"{field_name}\" field. "
+            f'The output schema should only contain the "{field_name}" field. '
             f"Return ONLY the rewritten prompt text, nothing else.\n\n"
             f"--- ORIGINAL PROMPT ---\n{original_prompt}"
         )
@@ -514,15 +522,14 @@ async def generate_sub_prompts(
         )
         return field_name, rewritten
 
-    results = await asyncio.gather(
-        *[_rewrite_for_field(name) for name in field_names]
-    )
+    results = await asyncio.gather(*[_rewrite_for_field(name) for name in field_names])
     return dict(results)
 
 
 # ---------------------------------------------------------------------------
 # merge_sub_results
 # ---------------------------------------------------------------------------
+
 
 def merge_sub_results(
     sub_results: dict[str, str],
@@ -578,6 +585,7 @@ def merge_sub_results(
 # decompose_few_shot_examples / inject_few_shot_into_sub_prompts
 # ---------------------------------------------------------------------------
 
+
 def decompose_few_shot_examples(
     examples: list[dict[str, str]],
     split_info: SplitPointInfo,
@@ -624,10 +632,12 @@ def decompose_few_shot_examples(
             for step in reversed(split_info.path_from_root):
                 rebuilt = {step: rebuilt}
 
-            field_examples[field_name].append({
-                "document": example["document"],
-                "label": json.dumps(rebuilt),
-            })
+            field_examples[field_name].append(
+                {
+                    "document": example["document"],
+                    "label": json.dumps(rebuilt),
+                }
+            )
 
     return field_examples
 
@@ -661,8 +671,11 @@ def inject_few_shot_into_sub_prompts(
         if "{content}" in prompt:
             parts = prompt.split("{content}", 1)
             result[field_name] = (
-                parts[0] + examples_text + caveat
-                + "Now extract from this document:\n\n{content}" + parts[1]
+                parts[0]
+                + examples_text
+                + caveat
+                + "Now extract from this document:\n\n{content}"
+                + parts[1]
             )
         else:
             result[field_name] = prompt + examples_text + caveat
@@ -691,8 +704,8 @@ async def cleanup_few_shot_sub_prompts(
             "into it mechanically. Clean up the formatting so it reads "
             "naturally:\n"
             "- Remove any dangling labels that now precede the examples "
-            "section instead of the document (e.g. a bare \"Text:\" line "
-            "right before \"Here are some examples\"). These labels were "
+            'section instead of the document (e.g. a bare "Text:" line '
+            'right before "Here are some examples"). These labels were '
             "originally meant to introduce the document but are now misplaced.\n"
             "- Fix awkward transitions between the instructions and the "
             "examples section, and between the examples and the document "
@@ -720,6 +733,7 @@ async def cleanup_few_shot_sub_prompts(
 # ---------------------------------------------------------------------------
 # DecomposedEvaluator
 # ---------------------------------------------------------------------------
+
 
 class DecomposedEvaluator:
     """Orchestrates decomposed per-field evaluation across documents."""
@@ -788,9 +802,7 @@ class DecomposedEvaluator:
                 on_document_complete(pred)
             return pred
 
-        predictions = await asyncio.gather(
-            *[eval_doc(doc) for doc in documents]
-        )
+        predictions = await asyncio.gather(*[eval_doc(doc) for doc in documents])
         result.predictions = [p for p in predictions if p is not None]
 
         result.compute_metrics()
@@ -843,11 +855,14 @@ class DecomposedEvaluator:
             )
             return field_name, pred
 
-        field_predictions = await asyncio.gather(
-            *[run_sub(fn) for fn in sub_prompts]
-        )
+        field_predictions = await asyncio.gather(*[run_sub(fn) for fn in sub_prompts])
 
         for field_name, pred in field_predictions:
+            if not isinstance(pred.predicted_value, str):
+                raise TypeError(
+                    f"decompose sub-prompt {field_name!r} returned a "
+                    f"{type(pred.predicted_value).__name__}, expected a string"
+                )
             sub_results[field_name] = pred.predicted_value
             total_cost += pred.llm_cost
             sub_metadata[field_name] = pred.predicted_value
@@ -858,7 +873,10 @@ class DecomposedEvaluator:
         # Apply hallucination filter to the merged result
         if hallucination_filter:
             merged_json = await filter_hallucinated_values(
-                merged_json, document.content, model, self.client,
+                merged_json,
+                document.content,
+                model,
+                self.client,
             )
 
         # Grade the merged result against the real label

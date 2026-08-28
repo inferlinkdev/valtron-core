@@ -20,23 +20,30 @@ class _ReportBase:
 
     def _compute_performance_best_values(
         self, results: list[EvaluationResult]
-    ) -> dict[str, float]:
+    ) -> dict[str, float | None]:
         """
         Compute the best values for performance metrics across all models.
         Best = highest accuracy, lowest cost, lowest time.
+
+        best_accuracy / best_avg_score stay None if no result has a defined
+        accuracy / average_example_score (e.g. a task with no ground truth).
         """
-        best_accuracy = -1.0
-        best_avg_score = -1.0
-        best_total_cost = float('inf')
-        best_avg_cost = float('inf')
-        best_total_time = float('inf')
-        best_avg_time = float('inf')
+        best_accuracy: float | None = None
+        best_avg_score: float | None = None
+        best_total_cost = float("inf")
+        best_avg_cost = float("inf")
+        best_total_time = float("inf")
+        best_avg_time = float("inf")
 
         for result in results:
             if result.metrics:
-                if result.metrics.accuracy > best_accuracy:
+                if result.metrics.accuracy is not None and (
+                    best_accuracy is None or result.metrics.accuracy > best_accuracy
+                ):
                     best_accuracy = result.metrics.accuracy
-                if result.metrics.average_example_score > best_avg_score:
+                if result.metrics.average_example_score is not None and (
+                    best_avg_score is None or result.metrics.average_example_score > best_avg_score
+                ):
                     best_avg_score = result.metrics.average_example_score
                 if result.metrics.total_cost < best_total_cost:
                     best_total_cost = result.metrics.total_cost
@@ -56,7 +63,6 @@ class _ReportBase:
             "best_avg_time": best_avg_time,
         }
 
-
     def _prepare_chart_data(self, results: list[EvaluationResult]) -> dict[str, Any]:
         """Prepare data for ECharts visualizations."""
         models = []
@@ -66,31 +72,39 @@ class _ReportBase:
         avg_cost = []
         total_cost = []
 
-        all_doc_data = {}
+        all_doc_data: dict[str, list[dict[str, str | int | float | None]]] = {}
         num_documents = 0
 
         for result in results:
             if result.metrics:
                 models.append(result.model)
-                accuracy.append(round(result.metrics.accuracy * 100, 2))
+                accuracy.append(
+                    round(result.metrics.accuracy * 100, 2)
+                    if result.metrics.accuracy is not None
+                    else None
+                )
                 avg_time.append(round(result.metrics.average_time_per_document, 3))
                 total_time.append(round(result.metrics.total_time, 2))
                 avg_cost.append(round(result.metrics.average_cost_per_document, 6))
                 total_cost.append(round(result.metrics.total_cost, 6))
 
-                doc_data = []
+                doc_data: list[dict[str, str | int | float | None]] = []
                 for i, pred in enumerate(result.predictions):
                     doc_id = pred.document_id if pred.document_id else f"Doc {i + 1}"
                     if pred.example_score is not None:
                         score = round(pred.example_score * 100, 1)
-                    else:
+                    elif pred.is_correct is not None:
                         score = 100 if pred.is_correct else 0
-                    doc_data.append({
-                        'id': doc_id,
-                        'cost': round(pred.llm_cost, 6),
-                        'time': round(pred.response_time, 3),
-                        'score': score
-                    })
+                    else:
+                        score = None
+                    doc_data.append(
+                        {
+                            "id": doc_id,
+                            "cost": round(pred.llm_cost, 6),
+                            "time": round(pred.response_time, 3),
+                            "score": score,
+                        }
+                    )
 
                 if len(result.predictions) > num_documents:
                     num_documents = len(result.predictions)
@@ -112,22 +126,27 @@ class _ReportBase:
         }
 
     def _prepare_histogram_data(
-        self, all_doc_data: dict[str, list[dict[str, str | int | float]]], models: list[str], num_bins: int = 10
+        self,
+        all_doc_data: dict[str, list[dict[str, str | int | float | None]]],
+        models: list[str],
+        num_bins: int = 10,
     ) -> dict[str, Any]:
         """Prepare histogram bin data for cost, time, and score distributions."""
         import math
 
-        result: dict[str, dict[str, list[float]]] = {"cost": {}, "time": {}, "score": {}}
+        result: dict[str, dict[str, Any]] = {"cost": {}, "time": {}, "score": {}}
 
-        all_costs = []
-        all_times = []
-        all_scores = []
+        all_costs: list[float] = []
+        all_times: list[float] = []
+        all_scores: list[float] = []
 
         for model, docs in all_doc_data.items():
             for doc in docs:
-                all_costs.append(doc['cost'])
-                all_times.append(doc['time'])
-                all_scores.append(doc['score'])
+                all_costs.append(doc["cost"])  # type: ignore[arg-type]
+                all_times.append(doc["time"])  # type: ignore[arg-type]
+                score = doc["score"]
+                if score is not None:
+                    all_scores.append(score)  # type: ignore[arg-type]
 
         if not all_costs:
             return result
@@ -138,7 +157,7 @@ class _ReportBase:
             sign = 1 if x >= 0 else -1
             x = abs(x)
             exponent = math.floor(math.log10(x))
-            fraction = x / (10 ** exponent)
+            fraction = x / (10**exponent)
 
             if round_up:
                 if fraction <= 1:
@@ -159,7 +178,7 @@ class _ReportBase:
                 else:
                     nice_fraction = 10
 
-            return sign * nice_fraction * (10 ** exponent)
+            return sign * nice_fraction * (10**exponent)
 
         def create_nice_bins(values: list[float], target_bins: int) -> list[float]:
             min_val = min(values)
@@ -188,7 +207,7 @@ class _ReportBase:
 
         cost_bins = create_nice_bins(all_costs, num_bins)
         time_bins = create_nice_bins(all_times, num_bins)
-        score_bins = create_nice_bins(all_scores, num_bins)
+        score_bins = create_nice_bins(all_scores, num_bins) if all_scores else []
 
         def get_decimal_places(bins: list[float]) -> int:
             if len(bins) < 2:
@@ -215,7 +234,9 @@ class _ReportBase:
             decimals = get_decimal_places(bins)
             labels = []
             for i in range(len(bins) - 1):
-                labels.append(f"{prefix}{bins[i]:.{decimals}f}{suffix} - {prefix}{bins[i+1]:.{decimals}f}{suffix}")
+                labels.append(
+                    f"{prefix}{bins[i]:.{decimals}f}{suffix} - {prefix}{bins[i+1]:.{decimals}f}{suffix}"
+                )
             return labels
 
         result["cost"]["bin_labels"] = create_bin_labels(cost_bins, prefix="$")
@@ -226,28 +247,28 @@ class _ReportBase:
         result["time"]["bins"] = time_bins
         result["score"]["bins"] = score_bins
 
-        all_doc_ids = set()
+        doc_id_set: set[str] = set()
         for model, docs in all_doc_data.items():
             for doc in docs:
-                all_doc_ids.add(doc['id'])
-        all_doc_ids = sorted(all_doc_ids)
+                doc_id_set.add(doc["id"])  # type: ignore[arg-type]
+        all_doc_ids = sorted(doc_id_set)
 
         raw_cost_data = []
         raw_time_data = []
         raw_score_data = []
 
         for doc_id in all_doc_ids:
-            cost_row = {"document": doc_id}
-            time_row = {"document": doc_id}
-            score_row = {"document": doc_id}
+            cost_row: dict[str, str | int | float | None] = {"document": doc_id}
+            time_row: dict[str, str | int | float | None] = {"document": doc_id}
+            score_row: dict[str, str | int | float | None] = {"document": doc_id}
 
             for model in models:
                 docs = all_doc_data.get(model, [])
-                doc_entry = next((d for d in docs if d['id'] == doc_id), None)
+                doc_entry = next((d for d in docs if d["id"] == doc_id), None)
                 if doc_entry:
-                    cost_row[model] = doc_entry['cost']
-                    time_row[model] = doc_entry['time']
-                    score_row[model] = doc_entry['score']
+                    cost_row[model] = doc_entry["cost"]
+                    time_row[model] = doc_entry["time"]
+                    score_row[model] = doc_entry["score"]
                 else:
                     cost_row[model] = None
                     time_row[model] = None
@@ -269,17 +290,19 @@ class _ReportBase:
             score_counts = [0] * (len(score_bins) - 1)
 
             for doc in docs:
-                cost_bin_idx = self._find_bin_index(doc['cost'], cost_bins)
+                cost_bin_idx = self._find_bin_index(doc["cost"], cost_bins)  # type: ignore[arg-type]
                 if cost_bin_idx is not None:
                     cost_counts[cost_bin_idx] += 1
 
-                time_bin_idx = self._find_bin_index(doc['time'], time_bins)
+                time_bin_idx = self._find_bin_index(doc["time"], time_bins)  # type: ignore[arg-type]
                 if time_bin_idx is not None:
                     time_counts[time_bin_idx] += 1
 
-                score_bin_idx = self._find_bin_index(doc['score'], score_bins)
-                if score_bin_idx is not None:
-                    score_counts[score_bin_idx] += 1
+                score = doc["score"]
+                if score is not None:
+                    score_bin_idx = self._find_bin_index(score, score_bins)  # type: ignore[arg-type]
+                    if score_bin_idx is not None:
+                        score_counts[score_bin_idx] += 1
 
             if "models" not in result["cost"]:
                 result["cost"]["models"] = {}

@@ -5,8 +5,6 @@ from typing import Any
 
 import structlog
 
-from valtron_core.client import LLMClient
-
 logger = structlog.get_logger()
 
 
@@ -25,165 +23,6 @@ class PromptOptimizationStrategy(ABC):
             Dictionary with optimization results
         """
         pass
-
-
-class PromptDecomposer(PromptOptimizationStrategy):
-    """
-    Decompose a complex prompt into multiple simpler prompts.
-
-    This strategy takes a large, complex prompt and breaks it down into
-    a chain of smaller prompts that can be executed sequentially to achieve
-    the same result. This can help cheaper models perform better by breaking
-    down complex tasks into simpler steps.
-    """
-
-    def __init__(
-        self,
-        client: LLMClient | None = None,
-        optimizer_model: str = "gemini-pro",
-        num_sub_prompts: int = 5,
-    ) -> None:
-        """
-        Initialize prompt decomposer.
-
-        Args:
-            client: LLM client for decomposition
-            optimizer_model: Model to use for decomposition (default: gemini-pro)
-            num_sub_prompts: Maximum number of sub-prompts to generate
-        """
-        self.client = client or LLMClient()
-        self.optimizer_model = optimizer_model
-        self.num_sub_prompts = num_sub_prompts
-
-    async def optimize(self, prompt: str) -> dict[str, Any]:
-        """
-        Decompose a prompt into smaller chained prompts.
-
-        Args:
-            prompt: Original prompt to decompose
-
-        Returns:
-            Dictionary containing:
-                - original_prompt: The original prompt
-                - sub_prompts: List of decomposed prompts
-                - chain_description: How to chain the prompts
-                - strategy: "decomposition"
-        """
-        logger.info(
-            "decomposing_prompt",
-            model=self.optimizer_model,
-            max_sub_prompts=self.num_sub_prompts,
-        )
-
-        # Create decomposition prompt
-        decomposition_prompt = f"""You are an expert at breaking down complex tasks into simpler steps.
-
-TASK: Decompose the following prompt into a chain of {self.num_sub_prompts} or fewer simpler prompts that, when executed sequentially, will accomplish the same goal as the original prompt.
-
-ORIGINAL PROMPT:
-{prompt}
-
-REQUIREMENTS:
-1. Each sub-prompt should be simpler than the original
-2. The sub-prompts should be executable in sequence (output of one feeds into the next)
-3. Together, they should accomplish the same task as the original prompt
-4. Use clear variable names like {{input}}, {{step1_output}}, {{step2_output}}, etc.
-5. Provide between 2 and {self.num_sub_prompts} sub-prompts
-
-RESPONSE FORMAT (JSON):
-{{
-  "num_steps": <number of steps>,
-  "sub_prompts": [
-    {{
-      "step": 1,
-      "prompt": "<first sub-prompt using {{input}}>",
-      "description": "<what this step does>",
-      "output_variable": "step1_output"
-    }},
-    {{
-      "step": 2,
-      "prompt": "<second sub-prompt using {{step1_output}}>",
-      "description": "<what this step does>",
-      "output_variable": "step2_output"
-    }}
-  ],
-  "execution_flow": "<brief description of how to chain these prompts>",
-  "benefits": "<why this decomposition might help cheaper models>"
-}}
-
-Respond with ONLY the JSON, no additional text."""
-
-        messages = [{"role": "user", "content": decomposition_prompt}]
-
-        try:
-            # Get decomposition from optimizer model
-            response = await self.client.complete(
-                model=self.optimizer_model,
-                messages=messages,
-                temperature=0.3,
-            )
-
-            response_text = response.choices[0].message.content.strip()
-
-            # Parse JSON response
-            import json
-
-            # Try to extract JSON if wrapped in markdown code blocks
-            if "```json" in response_text:
-                response_text = response_text.split("```json")[1].split("```")[0].strip()
-            elif "```" in response_text:
-                response_text = response_text.split("```")[1].split("```")[0].strip()
-
-            decomposition = json.loads(response_text)
-
-            logger.info(
-                "prompt_decomposed",
-                num_steps=decomposition.get("num_steps", 0),
-                optimizer_model=self.optimizer_model,
-            )
-
-            return {
-                "original_prompt": prompt,
-                "sub_prompts": decomposition["sub_prompts"],
-                "num_steps": decomposition.get("num_steps", len(decomposition["sub_prompts"])),
-                "execution_flow": decomposition.get("execution_flow", ""),
-                "benefits": decomposition.get("benefits", ""),
-                "strategy": "decomposition",
-                "optimizer_model": self.optimizer_model,
-            }
-
-        except Exception as e:
-            logger.error("decomposition_failed", error=str(e), model=self.optimizer_model)
-            raise ValueError(f"Failed to decompose prompt: {str(e)}")
-
-    def create_chained_prompts(
-        self,
-        decomposition: dict[str, Any],
-        document_placeholder: str = "{content}",
-    ) -> list[str]:
-        """
-        Create executable chained prompts from decomposition.
-
-        Args:
-            decomposition: Result from optimize()
-            document_placeholder: Placeholder for document content
-
-        Returns:
-            List of prompt templates ready for execution
-        """
-        sub_prompts = decomposition["sub_prompts"]
-        chained = []
-
-        for i, sub_prompt_info in enumerate(sub_prompts):
-            prompt_template = sub_prompt_info["prompt"]
-
-            # Replace {input} in first prompt with document placeholder
-            if i == 0:
-                prompt_template = prompt_template.replace("{input}", document_placeholder)
-
-            chained.append(prompt_template)
-
-        return chained
 
 
 class ExplanationEnhancer(PromptOptimizationStrategy):
@@ -363,9 +202,7 @@ Answer: [Your final answer in the requested format]"""
 
         return None
 
-    def _enhance_json_schema(
-        self, prompt: str, schema_info: dict[str, Any]
-    ) -> str:
+    def _enhance_json_schema(self, prompt: str, schema_info: dict[str, Any]) -> str:
         """
         Enhance prompt by adding explanation field to JSON schema.
 
@@ -395,9 +232,7 @@ Answer: [Your final answer in the requested format]"""
         # Build enhanced prompt
         # Replace the original JSON with the enhanced version
         enhanced_prompt = (
-            prompt[: schema_info["start_pos"]]
-            + enhanced_json
-            + prompt[schema_info["end_pos"] :]
+            prompt[: schema_info["start_pos"]] + enhanced_json + prompt[schema_info["end_pos"] :]
         )
 
         # Add instruction about the explanation field
@@ -408,67 +243,3 @@ IMPORTANT: Your response must be valid JSON with an "explanation" field containi
         enhanced_prompt += explanation_instruction
 
         return enhanced_prompt
-
-
-class PromptChainEvaluator:
-    """Evaluate a chain of prompts on documents."""
-
-    def __init__(self, client: LLMClient | None = None) -> None:
-        """
-        Initialize chain evaluator.
-
-        Args:
-            client: LLM client for execution
-        """
-        self.client = client or LLMClient()
-
-    async def execute_chain(
-        self,
-        prompts: list[str],
-        document_content: str,
-        model: str,
-        temperature: float = 0.0,
-    ) -> tuple[str, list[str]]:
-        """
-        Execute a chain of prompts sequentially.
-
-        Args:
-            prompts: List of prompt templates
-            document_content: Initial document content
-            model: Model to use for all steps
-            temperature: Temperature for generation
-
-        Returns:
-            Tuple of (final_output, intermediate_outputs)
-        """
-        intermediate_outputs = []
-        current_input = document_content
-
-        for i, prompt_template in enumerate(prompts):
-            # Format prompt with current input
-            if i == 0:
-                # First prompt gets the document
-                formatted_prompt = prompt_template.format(content=current_input)
-            else:
-                # Subsequent prompts get previous output
-                # Replace step variable with actual output
-                formatted_prompt = prompt_template.replace(
-                    f"{{step{i}_output}}", current_input
-                ).replace("{input}", current_input)
-
-            logger.info("executing_chain_step", step=i + 1, total_steps=len(prompts))
-
-            # Execute prompt
-            messages = [{"role": "user", "content": formatted_prompt}]
-            response = await self.client.complete(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-            )
-
-            output = response.choices[0].message.content.strip()
-            intermediate_outputs.append(output)
-            current_input = output  # Feed output to next step
-
-        final_output = intermediate_outputs[-1] if intermediate_outputs else ""
-        return final_output, intermediate_outputs
