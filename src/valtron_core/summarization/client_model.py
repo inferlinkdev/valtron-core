@@ -1,12 +1,12 @@
 """A :class:`Model` implemented over this codebase's ``LLMClient``.
 
 This is the whole of what the ported summarization logic needs in order to run
-here rather than standalone. Everything above it -- the judge, the pipeline, the
-scoring -- depends only on the abstract "run this prompt, get text or a
+here rather than standalone. Everything above it (the judge, the pipeline, the
+scoring) depends only on the abstract "run this prompt, get text or a
 validated object back" call that :mod:`valtron_core.summarization.model`
 defines, so swapping the implementation is the entire adaptation.
 
-Three things this adds on top of ``LLMClient.complete``, none of which it
+Four things this adds on top of ``LLMClient.complete``, none of which it
 provides and all of which the method needs:
 
 * **Structured output.** The judge's verdicts are Pydantic models. ``complete``
@@ -21,6 +21,11 @@ provides and all of which the method needs:
   generation spend.
 * **A fixed temperature.** ``complete`` defaults to 0.7; an evaluation wants 0.0
   so that a re-run is comparable.
+* **Attachment support.** ``complete`` takes plain message dicts; turning an
+  attachment list into the image/file content parts a provider expects is
+  shared with the rest of the codebase via
+  :func:`valtron_core.attachments.build_message_content`, checked against the
+  resolved model name rather than this instance's display name.
 
 What it deliberately does *not* add is retries, rate limiting or provider
 setup. ``LLMClient`` owns all three, and a second layer of them here is exactly
@@ -36,6 +41,7 @@ from litellm.types.utils import Choices
 from litellm.utils import ModelResponse  # type: ignore[attr-defined]
 from pydantic import BaseModel, ValidationError
 
+from valtron_core.attachments import build_message_content
 from valtron_core.client import LLMClient
 
 from .model import Model, Usage
@@ -77,18 +83,34 @@ class ClientModel(Model):
         resolved = model if isinstance(model, str) else str(model.get("model", "unknown"))
         super().__init__(name or resolved)
         self._model = model
+        self._resolved_model_name = resolved
         self._client = client
         self._temperature = temperature
         self._max_tokens = max_tokens
         self._usage = usage
 
-    async def run(self, prompt: Prompt, *, usage: Usage | None = None) -> str:
-        return await self._call(prompt, response_format=None, usage=usage)
+    async def run(
+        self,
+        prompt: Prompt,
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
+    ) -> str:
+        return await self._call(prompt, response_format=None, attachments=attachments, usage=usage)
 
     async def run_structured[
         T: BaseModel
-    ](self, prompt: Prompt, schema: type[T], *, usage: Usage | None = None) -> T:
-        content = await self._call(prompt, response_format=schema, usage=usage)
+    ](
+        self,
+        prompt: Prompt,
+        schema: type[T],
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
+    ) -> T:
+        content = await self._call(
+            prompt, response_format=schema, attachments=attachments, usage=usage
+        )
         try:
             return schema.model_validate_json(content)
         except ValidationError as error:
@@ -106,11 +128,17 @@ class ClientModel(Model):
         prompt: Prompt,
         *,
         response_format: type[BaseModel] | None,
+        attachments: list[str] | None,
         usage: Usage | None,
     ) -> str:
+        # Attachments are checked against the resolved model name, not the
+        # display name a caller may have given this instance as `name`.
+        message_content = build_message_content(
+            str(prompt), attachments or [], self._resolved_model_name
+        )
         response = await self._client.complete(
             model=self._model,
-            messages=[{"role": "user", "content": str(prompt)}],
+            messages=[{"role": "user", "content": message_content}],
             temperature=self._temperature,
             max_tokens=self._max_tokens,
             response_format=response_format,

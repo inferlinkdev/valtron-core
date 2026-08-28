@@ -39,6 +39,7 @@ from typing import TYPE_CHECKING, Any, Callable
 import structlog
 from tqdm import tqdm  # type: ignore[import-untyped]
 
+from valtron_core.attachments import check_attachment_support
 from valtron_core.cost_utils import _fallback_cost, _parse_time_unit_to_seconds
 from valtron_core.evaluation.config import BaseRecipeConfig, SummarizationConfig
 from valtron_core.evaluation.model_eval import ModelEval
@@ -171,7 +172,13 @@ class _StoredSummary(Model):
         super().__init__(name)
         self._summary = summary
 
-    async def run(self, prompt: Prompt, *, usage: Usage | None = None) -> str:
+    async def run(
+        self,
+        prompt: Prompt,
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
+    ) -> str:
         return self._summary
 
 
@@ -279,18 +286,15 @@ class SummarizationExperiment(ModelEval):
     def _validate_task_data(self) -> None:
         documents, _ = self._load_documents_and_labels()
 
-        structured = [d.id for d in documents if not isinstance(d.content, str)]
-        if structured:
-            raise ValueError(
-                "Summarization needs one piece of text per document, but these have "
-                f"structured content: {structured}. A dict maps placeholder names to "
-                "values, and nothing says which of them is the document to summarize."
-            )
-        blank = [d.id for d in documents if not str(d.content).strip()]
+        blank = [d.id for d in documents if not self._flatten_content(d.content).strip()]
         if blank:
             raise ValueError(f"These documents have no content to summarize: {blank}")
 
-        if "{content}" not in self.prompt_template:
+        # A dict document is shown to the candidate through its own named
+        # placeholders, so it need not use {content} at all. The single-string
+        # case has no other way to reach the candidate, so it is required there.
+        has_dict_content = any(isinstance(d.content, dict) for d in documents)
+        if not has_dict_content and "{content}" not in self.prompt_template:
             raise ValueError(
                 "The prompt must contain a {content} placeholder for the document. "
                 "Pass valtron_core.summarization.SALIENCE_SUMMARY_PROMPT to use the "
@@ -310,6 +314,14 @@ class SummarizationExperiment(ModelEval):
                 "Summarization supports LLM models only; transformer models cannot "
                 "generate free text."
             )
+
+        # The judge reads every document (fact extraction, salience marking), and
+        # every candidate reads it too (writing the summary), so both need to
+        # support whatever attachment types are present.
+        check_attachment_support(documents, self._settings.judge_model)
+        for model_config in self.models:
+            model_name = getattr(model_config, "name", None) or model_config.label
+            check_attachment_support(documents, model_name)
 
     # -------------------------------------------------------------------------
     # Shared per-document work
@@ -337,7 +349,8 @@ class SummarizationExperiment(ModelEval):
         async def extract(document: Document) -> tuple[str, DocumentFacts]:
             async with semaphore:
                 return document.id, await extract_document_facts(
-                    Doc(self._document_text(document)), self._judge
+                    Doc(self._document_text(document), attachments=document.attachments),
+                    self._judge,
                 )
 
         with tqdm(total=len(to_extract), unit="doc", desc="Reading documents") as bar:
@@ -356,10 +369,22 @@ class SummarizationExperiment(ModelEval):
         )
 
     @staticmethod
+    def _flatten_content(content: str | dict[str, str | None]) -> str:
+        """Join a document's content into the single text the judge reads.
+
+        A document's ``content`` can be a plain string or a dict of named
+        placeholder values. Either way, the judge needs one piece of text to
+        decompose into facts, so a dict is flattened into ``key: value``
+        lines, skipping blank values. This is the full document regardless of
+        which of its keys the prompt actually shows the candidate.
+        """
+        if isinstance(content, str):
+            return content
+        return "\n\n".join(f"{key}: {value}" for key, value in content.items() if value)
+
+    @staticmethod
     def _document_text(document: Document) -> str:
-        if not isinstance(document.content, str):  # guarded in _validate_task_data
-            raise TypeError(f"document {document.id} has structured content")
-        return document.content
+        return SummarizationExperiment._flatten_content(document.content)
 
     # -------------------------------------------------------------------------
     # Prompt preparation
@@ -469,12 +494,12 @@ class SummarizationExperiment(ModelEval):
 
         try:
             evaluation = await evaluate_candidate(
-                Doc(text),
+                Doc(text, attachments=document.attachments),
                 model,
                 self._judge,
                 shared,
                 self._checklist,
-                summary_prompt=TemplatePrompt(prompt, text),
+                summary_prompt=TemplatePrompt(prompt, document.content),
             )
         except Exception as error:
             # One document must not void a model's whole run: record the failure
@@ -738,10 +763,10 @@ class SummarizationExperiment(ModelEval):
 
         return None
 
-    def _document_text_map(self) -> dict[str, str]:
-        """Every document referenced in ``self.data``, by id, as plain text."""
+    def _document_map(self) -> dict[str, Document]:
+        """Every document referenced in ``self.data``, by id."""
         documents, _ = self._load_documents_and_labels()
-        return {document.id: self._document_text(document) for document in documents}
+        return {document.id: document for document in documents}
 
     async def _regrade_fully(self, judge_model: str | None, requirements: list[str] | None) -> None:
         """Rerun document facts, salience, and all four axes under a new judge.
@@ -758,14 +783,16 @@ class SummarizationExperiment(ModelEval):
             self._settings.requirements = requirements
             self._checklist = [Requirement(text) for text in requirements]
 
-        texts = self._document_text_map()
+        documents_by_id = self._document_map()
         self._document_facts = {}
         semaphore = asyncio.Semaphore(self._settings.max_concurrent_documents)
 
         async def extract(document_id: str) -> tuple[str, DocumentFacts]:
             async with semaphore:
+                document = documents_by_id[document_id]
                 return document_id, await extract_document_facts(
-                    Doc(texts[document_id]), self._judge
+                    Doc(self._document_text(document), attachments=document.attachments),
+                    self._judge,
                 )
 
         document_ids = {p.document_id for r in self.results for p in r.predictions}
@@ -785,9 +812,10 @@ class SummarizationExperiment(ModelEval):
                     f"is a {type(prediction.predicted_value).__name__}, expected a string."
                 )
             shared = self._document_facts[prediction.document_id]
+            document = documents_by_id[prediction.document_id]
             replay = _StoredSummary(result.model, prediction.predicted_value)
             evaluation = await evaluate_candidate(
-                Doc(texts[prediction.document_id]),
+                Doc(self._document_text(document), attachments=document.attachments),
                 replay,
                 self._judge,
                 shared,

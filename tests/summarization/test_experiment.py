@@ -60,8 +60,10 @@ class PositionalJudge(FakeJudge):
     no assertion here depends on.
     """
 
-    async def run_structured[T](self, prompt: Prompt, schema: type[T], *, usage: Any = None) -> T:
-        result = await super().run_structured(prompt, schema, usage=usage)
+    async def run_structured[
+        T
+    ](self, prompt: Prompt, schema: type[T], *, attachments: Any = None, usage: Any = None) -> T:
+        result = await super().run_structured(prompt, schema, attachments=attachments, usage=usage)
         if isinstance(prompt, DocumentSaliencePrompt):
             data = result.model_dump()  # type: ignore[attr-defined]
             for index, item in enumerate(data["saliences"]):
@@ -376,11 +378,30 @@ class TestFailures:
 class TestValidation:
     """What the recipe refuses, and why."""
 
-    async def test_structured_content_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
+    async def test_dict_content_reaches_the_judge_flattened(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        judge = FakeJudge()
         experiment = _experiment(
-            monkeypatch, {"good": GOOD}, data=[{"id": "d1", "content": {"a": "x"}}]
+            monkeypatch,
+            {"good": GOOD},
+            judge=judge,
+            data=[{"id": "d1", "content": {"a": "KEY alpha. KEY beta", "b": "minor gamma"}}],
         )
-        with pytest.raises(ValueError, match="structured content"):
+        await experiment.aevaluate()
+
+        # Two FactExtractionPrompts fly: one for the document, one for the
+        # candidate's generated summary. The document one carries the flattened dict.
+        extraction_texts = [p._text for p in judge.prompts if isinstance(p, FactExtractionPrompt)]
+        assert "a: KEY alpha. KEY beta\n\nb: minor gamma" in extraction_texts
+
+    async def test_dict_content_with_only_blank_values_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        experiment = _experiment(
+            monkeypatch, {"good": GOOD}, data=[{"id": "d1", "content": {"a": "", "b": None}}]
+        )
+        with pytest.raises(ValueError, match="no content to summarize"):
             await experiment.aevaluate()
 
     async def test_a_prompt_without_a_content_placeholder_is_rejected(
@@ -393,6 +414,17 @@ class TestValidation:
     async def test_an_empty_document_is_rejected(self, monkeypatch: pytest.MonkeyPatch) -> None:
         experiment = _experiment(monkeypatch, {"good": GOOD}, data=[{"id": "d1", "content": "  "}])
         with pytest.raises(ValueError, match="no content to summarize"):
+            await experiment.aevaluate()
+
+    async def test_an_unrecognized_attachment_type_is_rejected(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        experiment = _experiment(
+            monkeypatch,
+            {"good": GOOD},
+            data=[{"id": "d1", "content": DOCUMENT, "attachments": ["notes.exe"]}],
+        )
+        with pytest.raises(ValueError, match="Cannot determine attachment type"):
             await experiment.aevaluate()
 
 
@@ -422,6 +454,27 @@ class TestPrompt:
         await experiment.aevaluate()
         prompt = (experiment._model_prompts or {})["good"]
         assert "requirements" not in prompt.lower()
+
+    async def test_dict_content_with_a_custom_prompt_needs_no_content_placeholder(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A dict document is shown to the candidate through its own named
+        # placeholders, so {content} is not required the way it is for a string.
+        good = FakeSummarizer("good", GOOD)
+        _install(monkeypatch, {"good": good})
+        experiment = SummarizationExperiment(
+            config={
+                "models": [{"name": "good"}],
+                "judge_model": "judge",
+                "prompt": "Agenda:\n{agenda}\n\nTranscript:\n{transcript}\n\nSummarize.",
+            },
+            data=[{"id": "d1", "content": {"agenda": "KEY alpha", "transcript": "KEY beta"}}],
+        )
+        await experiment.aevaluate()  # would raise ValueError if {content} were still required
+
+        assert good.rendered_prompts == [
+            "Agenda:\nKEY alpha\n\nTranscript:\nKEY beta\n\nSummarize."
+        ]
 
 
 class TestPersistence:

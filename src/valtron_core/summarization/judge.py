@@ -108,14 +108,23 @@ class Judge:
         self._fact_tasks: dict[tuple[str, FactSource], asyncio.Task[list[Fact]]] = {}
 
     async def facts(
-        self, text: str, source: FactSource, *, usage: Usage | None = None
+        self,
+        text: str,
+        source: FactSource,
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
     ) -> list[Fact]:
         """Decompose ``text`` into atomic facts, extracting each text only once.
 
         The first caller for a given ``(text, source)`` starts the extraction; it
         and every later caller await the same task, so the judge decomposes each
-        distinct text once even when callers race concurrently -- something the
-        on-disk response cache cannot do, since it dedupes after the call is made.
+        distinct text once even when callers race concurrently. That is something
+        the on-disk response cache cannot do, since it dedupes after the call is
+        made.
+
+        ``attachments``, if given, are sent alongside ``text`` so the judge can
+        decompose facts an image or PDF conveys that the text alone does not.
 
         Only the first caller's ``usage`` is charged, because only that call is
         actually made. That is the honest accounting: a later caller awaiting the
@@ -126,13 +135,19 @@ class Judge:
         if task is None:
             # Store the task before the first ``await`` so concurrent callers
             # find it rather than starting a second extraction.
-            task = asyncio.create_task(self._extract(text, source, usage))
+            task = asyncio.create_task(self._extract(text, source, attachments, usage))
             self._fact_tasks[key] = task
         return await task
 
-    async def _extract(self, text: str, source: FactSource, usage: Usage | None) -> list[Fact]:
+    async def _extract(
+        self,
+        text: str,
+        source: FactSource,
+        attachments: list[str] | None,
+        usage: Usage | None,
+    ) -> list[Fact]:
         extracted = await self._model.run_structured(
-            FactExtractionPrompt(text), _ExtractedFacts, usage=usage
+            FactExtractionPrompt(text), _ExtractedFacts, attachments=attachments, usage=usage
         )
         prefix = _ID_PREFIX[source]
         return [

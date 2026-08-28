@@ -76,15 +76,31 @@ class FakeJudge(Model):
     def __init__(self, name: str = "fake-judge") -> None:
         super().__init__(name)
         self.prompts: list[Prompt] = []
+        self.attachments_seen: list[list[str] | None] = []
 
-    async def run(self, prompt: Prompt, *, usage: Usage | None = None) -> str:
+    async def run(
+        self,
+        prompt: Prompt,
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
+    ) -> str:
         self.prompts.append(prompt)
+        self.attachments_seen.append(attachments)
         raise NotImplementedError("the judge is only asked for structured output")
 
     async def run_structured[
         T: BaseModel
-    ](self, prompt: Prompt, schema: type[T], *, usage: Usage | None = None) -> T:
+    ](
+        self,
+        prompt: Prompt,
+        schema: type[T],
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
+    ) -> T:
         self.prompts.append(prompt)
+        self.attachments_seen.append(attachments)
         _record(self.name, usage)
         if isinstance(prompt, FactExtractionPrompt):
             return schema.model_validate({"facts": _sentences(_prompt_text(prompt, "_text"))})
@@ -151,8 +167,15 @@ class OmittingJudge(FakeJudge):
 
     async def run_structured[
         T: BaseModel
-    ](self, prompt: Prompt, schema: type[T], *, usage: Usage | None = None) -> T:
-        result = await super().run_structured(prompt, schema, usage=usage)
+    ](
+        self,
+        prompt: Prompt,
+        schema: type[T],
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
+    ) -> T:
+        result = await super().run_structured(prompt, schema, attachments=attachments, usage=usage)
         if not isinstance(prompt, self._prompt_type):
             return result
         data = result.model_dump()
@@ -167,14 +190,24 @@ class FakeSummarizer(Model):
         super().__init__(name)
         self._summary = summary
         self.calls = 0
+        self.attachments_seen: list[list[str] | None] = []
+        self.rendered_prompts: list[str] = []
 
-    async def run(self, prompt: Prompt, *, usage: Usage | None = None) -> str:
+    async def run(
+        self,
+        prompt: Prompt,
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
+    ) -> str:
         # Either shape of summarization request: built in code, or rendered
         # from a host application's configured template.
         assert isinstance(
             prompt, (SummaryPrompt, TemplatePrompt)
         ), f"expected a summarization prompt, got {type(prompt).__name__}"
         self.calls += 1
+        self.attachments_seen.append(attachments)
+        self.rendered_prompts.append(str(prompt))
         _record(self.name, usage)
         return self._summary
 
@@ -185,7 +218,13 @@ class FailingSummarizer(Model):
     def __init__(self, name: str = "fake/raises") -> None:
         super().__init__(name)
 
-    async def run(self, prompt: Prompt, *, usage: Usage | None = None) -> str:
+    async def run(
+        self,
+        prompt: Prompt,
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
+    ) -> str:
         raise RuntimeError("this model always fails")
 
 

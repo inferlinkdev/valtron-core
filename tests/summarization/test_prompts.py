@@ -17,6 +17,7 @@ from __future__ import annotations
 from valtron_core.summarization.prompts import (
     SALIENCE_SUMMARY_PROMPT,
     SummaryPrompt,
+    TemplatePrompt,
     render_requirements,
 )
 from valtron_core.summarization.text import Doc, Requirement
@@ -90,3 +91,26 @@ def test_braces_in_the_document_survive_rendering() -> None:
 
 def test_an_empty_checklist_renders_nothing_at_all() -> None:
     assert render_requirements([]) == ""
+
+
+def test_template_prompt_substitutes_a_single_content_placeholder() -> None:
+    prompt = TemplatePrompt("Summarize:\n\n{content}", "the document text")
+    assert str(prompt) == "Summarize:\n\nthe document text"
+
+
+def test_template_prompt_fills_named_placeholders_from_a_dict() -> None:
+    template = "Transcript:\n{transcript}\n\nSpeaker notes:\n{notes}"
+    content = {"transcript": "hello world", "notes": "informal tone"}
+    assert str(TemplatePrompt(template, content)) == (
+        "Transcript:\nhello world\n\nSpeaker notes:\ninformal tone"
+    )
+
+
+def test_template_prompt_blanks_a_placeholder_missing_from_the_dict() -> None:
+    prompt = TemplatePrompt("{a} and {b}", {"a": "present"})
+    assert str(prompt) == "present and "
+
+
+def test_template_prompt_dict_braces_survive_rendering() -> None:
+    prompt = TemplatePrompt("{content}", {"content": '{"key": "value"}'})
+    assert str(prompt) == '{"key": "value"}'

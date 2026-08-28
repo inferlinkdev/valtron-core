@@ -91,12 +91,29 @@ class Model(ABC):
         self.name = name
 
     @abstractmethod
-    async def run(self, prompt: Prompt, *, usage: Usage | None = None) -> str:
-        """Run the prompt and return the model's text response."""
+    async def run(
+        self,
+        prompt: Prompt,
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
+    ) -> str:
+        """Run the prompt and return the model's text response.
+
+        ``attachments`` are HTTP/HTTPS URLs or local file paths (images or
+        PDFs) sent alongside the prompt, for models that support them.
+        """
 
     async def run_structured[
         T: BaseModel
-    ](self, prompt: Prompt, schema: type[T], *, usage: Usage | None = None) -> T:
+    ](
+        self,
+        prompt: Prompt,
+        schema: type[T],
+        *,
+        attachments: list[str] | None = None,
+        usage: Usage | None = None,
+    ) -> T:
         """Run the prompt and return a validated instance of ``schema``.
 
         Raises:

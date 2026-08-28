@@ -22,6 +22,7 @@ The five, in the order an evaluation issues them:
 
 from __future__ import annotations
 
+import re
 from abc import ABC, abstractmethod
 
 from .text import Doc, Fact, Requirement
@@ -118,16 +119,25 @@ class TemplatePrompt(Prompt):
     code. :data:`SALIENCE_SUMMARY_PROMPT` is the template to pass to reproduce
     what :class:`SummaryPrompt` sends; anything else is a deliberate deviation
     from the configuration the method was validated under.
+
+    ``content`` is a plain string for a single ``{content}`` placeholder, or a
+    dict for a template with several named placeholders, one per key.
     """
 
-    def __init__(self, template: str, content: str) -> None:
+    def __init__(self, template: str, content: str | dict[str, str | None]) -> None:
         self._template = template
         self._content = content
 
     def __str__(self) -> str:
-        # Substituted rather than ``format``ted, for the same reason as
-        # SummaryPrompt: documents routinely contain braces.
-        return self._template.replace("{content}", self._content)
+        if isinstance(self._content, str):
+            # Substituted rather than ``format``ted, for the same reason as
+            # SummaryPrompt: documents routinely contain braces.
+            return self._template.replace("{content}", self._content)
+
+        result = self._template
+        for key in set(re.findall(r"\{(\w+)\}", result)):
+            result = result.replace(f"{{{key}}}", self._content.get(key) or "")
+        return result
 
 
 class FactExtractionPrompt(Prompt):

@@ -8,7 +8,7 @@ rendering, because everything that *interprets* text is a judge call.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 
 
@@ -17,6 +17,9 @@ class Doc:
     """A source document to be summarized."""
 
     text: str
+
+    attachments: list[str] = field(default_factory=list)
+    """HTTP/HTTPS URLs or local file paths (images or PDFs) alongside the text."""
 
     def __str__(self) -> str:
         return self.text

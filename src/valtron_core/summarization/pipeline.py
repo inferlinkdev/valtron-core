@@ -110,7 +110,9 @@ async def extract_document_facts(doc: Doc, judge: Judge) -> DocumentFacts:
     pass is re-asked. Callers that need it more than once should hold the result.
     """
     usage = Usage()
-    facts = await judge.facts(doc.text, FactSource.DOCUMENT, usage=usage)
+    facts = await judge.facts(
+        doc.text, FactSource.DOCUMENT, attachments=doc.attachments, usage=usage
+    )
     salience = await judge.mark_salient(facts, usage=usage)
     salient = [fact for fact in facts if salience[fact.id]]
     return DocumentFacts(facts=facts, salient=salient, salience=salience, usage=usage)
@@ -147,7 +149,9 @@ async def evaluate_candidate(
     started = time.monotonic()
     generation_usage = Usage()
     request = SummaryPrompt(doc, checklist) if summary_prompt is None else summary_prompt
-    summary = Summary((await model.run(request, usage=generation_usage)).strip())
+    summary = Summary(
+        (await model.run(request, attachments=doc.attachments, usage=generation_usage)).strip()
+    )
     generation_seconds = time.monotonic() - started
 
     judge_usage = Usage()
