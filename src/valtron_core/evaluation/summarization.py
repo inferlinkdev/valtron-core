@@ -181,12 +181,10 @@ class SummarizationExperiment(ModelEval):
     Usage mirrors every other recipe::
 
         from valtron_core.evaluation import SummarizationExperiment
-        from valtron_core.summarization import SALIENCE_SUMMARY_PROMPT
 
         experiment = SummarizationExperiment(
             config={
                 "models": [{"name": "gpt-4o-mini"}, {"name": "gemini/gemini-2.5-flash"}],
-                "prompt": SALIENCE_SUMMARY_PROMPT,
                 "judge_model": "gemini/gemini-2.5-pro",
                 "requirements": ["Name the parties.", "State the outcome."],
                 "output_dir": "./results",
@@ -197,6 +195,8 @@ class SummarizationExperiment(ModelEval):
         print(experiment.ranking.best)
 
     ``data`` needs only ``id`` and ``content``; a ``label`` is ignored if present.
+    ``prompt`` defaults to ``SALIENCE_SUMMARY_PROMPT``; pass your own to deviate
+    from the configuration this method was validated under.
     """
 
     _settings: SummarizationConfig

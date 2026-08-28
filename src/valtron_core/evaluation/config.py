@@ -6,6 +6,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from valtron_core.summarization.prompts import SALIENCE_SUMMARY_PROMPT
 from valtron_core.summarization.scoring import (
     DEFAULT_BETA,
     DEFAULT_GATE,
@@ -256,16 +257,23 @@ class SummarizationConfig(ModelEvalConfig):
     against that -- so prefer a strong model, and keep it fixed across runs you
     intend to compare.
 
-    ``prompt`` has no summarization-specific default on purpose. Pass
-    ``valtron_core.summarization.SALIENCE_SUMMARY_PROMPT`` to get the prompt the
-    method was validated under; supply your own to deviate deliberately. A
-    ``{requirements}`` placeholder, if present, is filled with the checklist
-    below; without one the checklist is still scored but never shown to the
-    candidate, which is not the configuration the published numbers came from.
+    ``prompt`` defaults to ``valtron_core.summarization.SALIENCE_SUMMARY_PROMPT``,
+    the prompt this scoring method was validated under; supply your own to
+    deviate deliberately. A ``{requirements}`` placeholder, if present, is
+    filled with the checklist below; without one the checklist is still scored
+    but never shown to the candidate, which is not the configuration the
+    published numbers came from.
     """
 
     use_case: str = "summarization evaluation"
 
+    prompt: str = Field(
+        default=SALIENCE_SUMMARY_PROMPT,
+        description=(
+            "Prompt template with a {content} placeholder for the document. Defaults to "
+            "SALIENCE_SUMMARY_PROMPT, the prompt this scoring method was validated under."
+        ),
+    )
     judge_model: str = Field(
         default="gemini/gemini-2.5-pro",
         description=(

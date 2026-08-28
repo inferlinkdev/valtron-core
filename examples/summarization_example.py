@@ -17,7 +17,6 @@ Run:
 from pathlib import Path
 
 from valtron_core.evaluation import SummarizationExperiment
-from valtron_core.summarization import SALIENCE_SUMMARY_PROMPT
 
 DATA_DIR = Path(__file__).resolve().parent / "summarization"
 DOCUMENT_IDS = ["0001", "0003", "0006"]
@@ -28,12 +27,11 @@ DATA = [
 
 CONFIG = {
     "models": [{"name": "gpt-4.1"}, {"name": "gpt-4.1-mini"}],
-    "prompt": SALIENCE_SUMMARY_PROMPT,
     "judge_model": "gpt-5.4-mini",
 }
 
 if __name__ == "__main__":
-    output_dir = Path(__file__).resolve().parent / "results" / "summarization"
+    output_dir = Path.cwd() / "results" / "summarization"
 
     experiment = SummarizationExperiment(config=CONFIG, data=DATA)
     report_path = experiment.run(output_dir=output_dir)

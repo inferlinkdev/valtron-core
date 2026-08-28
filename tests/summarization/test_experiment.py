@@ -399,6 +399,10 @@ class TestValidation:
 class TestPrompt:
     """What the candidates are actually asked."""
 
+    def test_prompt_defaults_to_salience_summary_prompt(self) -> None:
+        config = SummarizationConfig(models=[{"name": "good"}], judge_model="judge")
+        assert config.prompt == SALIENCE_SUMMARY_PROMPT
+
     async def test_the_checklist_is_rendered_into_the_prompt(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
