@@ -108,7 +108,7 @@ Building from source is mainly needed if you want to contribute to the project, 
 ```bash
 git clone https://github.com/inferlinkdev/valtron-core.git
 cd valtron-core
-poetry install --extras transformers
+uv sync --all-extras
 ```
 
 See the [repository on GitHub](https://github.com/inferlinkdev/valtron-core) for more details.

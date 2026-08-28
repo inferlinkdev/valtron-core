@@ -8,7 +8,7 @@ on:
       - "src/**"
       - "tests/**"
       - "pyproject.toml"
-      - "poetry.lock"
+      - "uv.lock"
       - "pytest.ini"
       - ".github/workflows/test.yml"
 
@@ -31,22 +31,18 @@ jobs:
         with:
           python-version: "3.12"
 
-      - uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('poetry.lock') }}
-          restore-keys: ${{ runner.os }}-pip-
-
-      - name: Install poetry
-        run: pip install poetry
+          enable-cache: true
+          cache-dependency-glob: "uv.lock"
 
       - name: Install dependencies
-        run: poetry install --with dev --all-extras
+        run: uv sync --frozen --all-extras --group dev
 
       - name: Run tests
         run: |
           mkdir -p test-reports
-          poetry run pytest tests/ -v \
+          uv run pytest tests/ -v \
             --junitxml=test-reports/report.xml \
             --cov=src/valtron_core \
             --cov-branch \
