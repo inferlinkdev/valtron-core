@@ -5,6 +5,7 @@
 
 sentiment-classification
 affiliation-extraction
+summarization
 transformer-comparison
 tradeoff-analysis
 multimodal-molecules
@@ -17,6 +18,7 @@ Each example is a self-contained Python file in the [`examples/`](https://github
 |---|---|---|
 | [Sentiment Classification](./sentiment-classification) | Classification | Minimal setup, multiple LLMs |
 | [Affiliation Extraction](./affiliation-extraction) | Structured extraction | Multi-institution grading, field metrics |
+| [Summarization](./summarization) | Summarization | Reference-free judging, no labels required |
 | [Transformer Comparison](./transformer-comparison) | Classification | Train DistilBERT, compare to cloud LLMs |
 | [Tradeoff Analysis](./tradeoff-analysis) | Classification | Train, evaluate, then find cost/accuracy routing thresholds |
 | [Multimodal Molecules](./multimodal-molecules) | Multimodal classification | Image attachments, vision-capable models |

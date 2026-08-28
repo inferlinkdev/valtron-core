@@ -1,6 +1,6 @@
 ClassificationExperiment
 =========================
 
-.. autoclass:: valtron_core.evaluation.model_eval.ClassificationExperiment
+.. autoclass:: valtron_core.evaluation.classification.ClassificationExperiment
    :members:
    :show-inheritance:

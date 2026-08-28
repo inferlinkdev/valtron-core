@@ -15,6 +15,7 @@ extensions = [
     "sphinx.ext.napoleon",
     "sphinx.ext.viewcode",
     "sphinx.ext.intersphinx",
+    "sphinx.ext.mathjax",
     "myst_parser",
     "sphinx_design",
     "sphinx_copybutton",
@@ -25,7 +26,7 @@ extensions = [
 copybutton_prompt_text = r"\$ |>>> |\.\.\. "
 copybutton_prompt_is_regexp = True
 
-myst_enable_extensions = ["colon_fence", "deflist"]
+myst_enable_extensions = ["colon_fence", "deflist", "dollarmath"]
 # Auto-generates a #slug anchor for every heading up to this depth, matching
 # how Docusaurus auto-anchors headings; without this, cross-file links to
 # `#some-heading` (used throughout these pages) don't resolve.

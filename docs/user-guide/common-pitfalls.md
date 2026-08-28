@@ -80,7 +80,22 @@ analyzer = TradeoffAnalyzer.from_model_eval(experiment)
 # ValueError: ground truth has more than two unique labels
 ```
 
-Multi-class cascades aren't supported yet. See [Chapter 5: Constraints](./combining-models.md#constraints).
+Multi-class cascades aren't supported yet. See [Chapter 6: Constraints](./combining-models.md#constraints).
+
+## Requirements checklist scored but never shown to the candidate
+
+```python
+config = {
+    "prompt": "Summarize the document.\n\n{content}",  # no {requirements} placeholder
+    "requirements": ["Name the parties.", "State the outcome."],
+    "judge_model": "gpt-4o",
+    "models": [{"name": "gpt-4o-mini"}],
+}
+# logs `requirements_not_in_prompt` and still grades against the checklist,
+# but the candidate is never told what's on it
+```
+
+Valtron doesn't fail the run, but scoring a candidate against criteria it never saw rarely matches what you want. Add a `{requirements}` placeholder to the prompt (`SALIENCE_SUMMARY_PROMPT` has one built in) so the checklist is rendered into what the candidate actually reads. See [Summarization Config Format: The Requirements Checklist](./summarization/config-format.md#the-requirements-checklist).
 
 ## The `transformers` extra isn't installed by default
 
