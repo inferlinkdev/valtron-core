@@ -139,6 +139,7 @@ def save_run_dir(
     prompt_manipulations: "dict[str, list[str]] | None" = None,
     model_override_prompts: "dict[str, str] | None" = None,
     response_format_schema: "dict[str, Any] | None" = None,
+    task_config: "dict[str, Any] | None" = None,
 ) -> Path:
     """Write evaluation results to the canonical run directory layout.
 
@@ -159,6 +160,10 @@ def save_run_dir(
             Defaults to ``[]`` when absent.
         model_override_prompts: Mapping of model name → per-model override prompt (pre-manipulation).
             Only present when a model defines its own ``prompt`` field in config.
+        task_config: Task-specific extra config fields (from
+            ``ModelEval._extra_metadata()``) needed to restore a reloaded instance
+            to the same state as the one that produced this run -- see
+            ``ModelEval._restore_config()``, the read-side counterpart.
 
     Returns:
         Resolved Path to *run_dir*.
@@ -183,6 +188,7 @@ def save_run_dir(
             "original_prompt": original_prompt,
             "field_metrics_config": {"config": field_config} if field_config else None,
             "response_format_schema": response_format_schema,
+            "task_config": task_config or None,
             "documents": documents,
             "total_cost": total_cost,
             "cost": model_costs,

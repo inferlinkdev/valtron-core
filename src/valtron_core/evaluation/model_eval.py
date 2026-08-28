@@ -204,12 +204,22 @@ class ModelEval(ABC):
     # Load from disk (the read side of save_experiment_results)
     # -------------------------------------------------------------------------
 
+    def _extra_metadata(self) -> "dict[str, Any]":
+        """Task-specific extra config to persist for ``_restore_config()`` to read back.
+
+        Default is ``{}``. Override alongside ``_restore_config()`` -- this is its
+        write-side counterpart -- so a reloaded instance matches the one that
+        produced the run. Written into ``metadata.json`` by ``save_experiment_results()``.
+        """
+        return {}
+
     @classmethod
     def _restore_config(cls, meta: "dict[str, Any]") -> "dict[str, Any]":
         """Return task-specific extra config fields to restore from a saved ``metadata.json``.
 
         Default is ``{}``. Override to pull additional config fields out of ``meta``
-        so a reloaded instance matches the one that produced the run.
+        so a reloaded instance matches the one that produced the run. ``meta`` is
+        whatever ``_extra_metadata()`` wrote, read back out.
         """
         return {}
 
@@ -1133,6 +1143,7 @@ class ModelEval(ABC):
             prompt_manipulations=self._manipulations_applied,
             model_override_prompts=self._model_override_prompts,
             response_format_schema=getattr(self, "_response_format_schema", None),
+            task_config=self._extra_metadata(),
         )
         return run_dir
 

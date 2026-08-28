@@ -242,6 +242,37 @@ class SummarizationExperiment(ModelEval):
         self._models_in_pass = max(len(self.models), 1)
 
     # -------------------------------------------------------------------------
+    # Persistence: round-tripping config through load_experiment_results()
+    # -------------------------------------------------------------------------
+
+    def _extra_metadata(self) -> dict[str, Any]:
+        """Persist the scheme and judge config so a reload can reproduce this run's score.
+
+        Every one of these changes the axes or how they combine into a score, so
+        without them a reloaded instance would silently fall back to
+        ``SummarizationConfig``'s defaults instead of what this run actually used.
+        """
+        return {
+            "judge_model": self._settings.judge_model,
+            "requirements": list(self._settings.requirements),
+            "gate": self._settings.gate,
+            "beta": self._settings.beta,
+            "requirement_weight": self._settings.requirement_weight,
+            "tier_gap": self._settings.tier_gap,
+            "max_concurrent_documents": self._settings.max_concurrent_documents,
+        }
+
+    @classmethod
+    def _restore_config(cls, meta: dict[str, Any]) -> dict[str, Any]:
+        """Read back whatever ``_extra_metadata()`` wrote.
+
+        A run saved before this existed has no ``task_config`` key, so this
+        returns ``{}`` and ``SummarizationConfig``'s field defaults apply --
+        the same (imperfect) behavior reloading has always had, not a new failure.
+        """
+        return dict(meta.get("task_config") or {})
+
+    # -------------------------------------------------------------------------
     # Preflight
     # -------------------------------------------------------------------------
 

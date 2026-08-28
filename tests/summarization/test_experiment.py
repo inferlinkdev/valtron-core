@@ -20,6 +20,7 @@ from unittest.mock import ANY, patch
 
 import pytest
 
+from valtron_core.evaluation.config import SummarizationConfig
 from valtron_core.evaluation.summarization import (
     JUDGE_LABEL,
     SummarizationExperiment,
@@ -473,6 +474,70 @@ class TestPersistence:
         cached = store.get_valid_cached("good", {"d1": DOCUMENT}, "prompt", {"model": "good"})
 
         assert cached["d1"].task_scores == prediction.task_scores
+
+    async def test_task_config_survives_a_save_and_reload(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # judge_model/requirements/the four scheme scalars/max_concurrent_documents
+        # all change the score or how it's computed, so a reload that lost any of
+        # them would silently be scoring under a different configuration.
+        experiment = _experiment(
+            monkeypatch,
+            {"padded": PADDED},
+            gate=0.7,
+            beta=2.0,
+            requirement_weight=0.9,
+            tier_gap=0.05,
+            max_concurrent_documents=3,
+        )
+        await experiment.aevaluate()
+        experiment.save_experiment_results(tmp_path)
+
+        reloaded = SummarizationExperiment.load_experiment_results(tmp_path)
+        assert reloaded._settings.judge_model == "judge"
+        assert reloaded._settings.requirements == REQUIREMENTS
+        assert reloaded._settings.gate == 0.7
+        assert reloaded._settings.beta == 2.0
+        assert reloaded._settings.requirement_weight == 0.9
+        assert reloaded._settings.tier_gap == 0.05
+        assert reloaded._settings.max_concurrent_documents == 3
+
+    async def test_a_reload_reproduces_the_original_score(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Regression: gate/beta/etc. used to reset to SummarizationConfig's
+        # defaults on reload, so a reloaded run's recomputed score could
+        # silently differ from the one the run actually produced.
+        experiment = _experiment(monkeypatch, {"padded": PADDED}, gate=0.6)
+        await experiment.aevaluate()
+        assert experiment.ranking.scores[0].score == pytest.approx(0.0)  # fails the 0.6 gate
+        experiment.save_experiment_results(tmp_path)
+
+        reloaded = SummarizationExperiment.load_experiment_results(tmp_path)
+        stats = reloaded.compute_task_statistics(reloaded.results or [])
+        assert stats["models"]["padded"]["score"] == pytest.approx(0.0)
+
+    async def test_a_run_without_task_config_still_loads(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # A run directory saved before task_config existed has no such key; the
+        # reload must fall back to SummarizationConfig's defaults, not error.
+        experiment = _experiment(monkeypatch, {"padded": PADDED}, gate=0.7)
+        await experiment.aevaluate()
+        run_dir = experiment.save_experiment_results(tmp_path)
+
+        metadata_path = run_dir / "metadata.json"
+        metadata = json.loads(metadata_path.read_text())
+        assert "task_config" in metadata
+        del metadata["task_config"]
+        metadata_path.write_text(json.dumps(metadata))
+
+        reloaded = SummarizationExperiment.load_experiment_results(run_dir)
+        assert (
+            reloaded._settings.judge_model
+            == SummarizationConfig.model_fields["judge_model"].default
+        )
+        assert reloaded._settings.gate == SummarizationConfig.model_fields["gate"].default
 
 
 class TestReevaluate:
