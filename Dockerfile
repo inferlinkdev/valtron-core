@@ -4,15 +4,13 @@ FROM python:3.12-slim
 # Set environment variables
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    POETRY_VERSION=1.8.2 \
-    POETRY_HOME="/opt/poetry" \
-    POETRY_NO_INTERACTION=1 \
-    POETRY_VIRTUALENVS_CREATE=false \
+    UV_LINK_MODE=copy \
     PYSETUP_PATH="/opt/pysetup" \
-    VENV_PATH="/opt/pysetup/.venv"
+    VENV_PATH="/opt/pysetup/.venv" \
+    UV_PROJECT_ENVIRONMENT="/opt/pysetup/.venv"
 
-# Add poetry to PATH
-ENV PATH="$POETRY_HOME/bin:$VENV_PATH/bin:$PATH"
+# Add the uv-managed venv to PATH
+ENV PATH="$VENV_PATH/bin:$PATH"
 
 # Install system dependencies
 RUN apt-get update \
@@ -23,28 +21,26 @@ RUN apt-get update \
         fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Poetry
-RUN curl -sSL https://install.python-poetry.org | python3 -
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /usr/local/bin/
 
 # Set working directory
 WORKDIR $PYSETUP_PATH
 
 # Copy dependency files
-COPY pyproject.toml poetry.lock* ./
+COPY pyproject.toml uv.lock ./
 
 # Install dependencies with cache mount for faster rebuilds
-RUN --mount=type=cache,target=/root/.cache/pypoetry \
-    --mount=type=cache,target=/root/.cache/pip \
-    poetry install --no-root --with dev --all-extras
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --no-install-project --all-extras --group dev
 
 # Copy application code
 COPY . /app
 WORKDIR /app
 
 # Install the project itself
-RUN --mount=type=cache,target=/root/.cache/pypoetry \
-    --mount=type=cache,target=/root/.cache/pip \
-    poetry install --only-root
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen --all-extras --group dev
 
 # Create a non-root user
 RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app

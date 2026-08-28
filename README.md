@@ -35,7 +35,7 @@ Valtron lets you run the same task across multiple LLMs simultaneously, then com
 ### Prerequisites
 
 - Python 3.12+
-- [Poetry](https://python-poetry.org/) for dependency management
+- [uv](https://docs.astral.sh/uv/) for dependency management
 - Docker (optional)
 
 ### Install
@@ -44,10 +44,10 @@ Valtron lets you run the same task across multiple LLMs simultaneously, then com
 pip install valtron-core
 ```
 
-Or with Poetry:
+Or with uv:
 
 ```bash
-poetry install
+uv sync
 ```
 
 Copy `.env.example` to `.env` and add at least one provider key:
@@ -110,9 +110,9 @@ See [Config Format](https://valtron.ai/docs/config-format) for the full referenc
 **Prefer a guided setup?** The Configuration Wizard is a browser-based UI that builds your config file step by step:
 
 ```bash
-poetry run python -m valtron_core.utilities.config_wizard
+uv run python -m valtron_core.utilities.config_wizard
 # or with Docker
-docker compose run --rm -p 5000:5000 server poetry run python -m valtron_core.utilities.config_wizard
+docker compose run --rm -p 5000:5000 server python -m valtron_core.utilities.config_wizard
 ```
 
 Open `http://localhost:5000` in your browser.
@@ -129,10 +129,10 @@ Open `http://localhost:5000` in your browser.
 
 ```bash
 # Run any example
-poetry run python examples/sentiment_classification.py
+uv run python examples/sentiment_classification.py
 
 # With Docker
-docker compose run --rm server poetry run python examples/sentiment_classification.py
+docker compose run --rm server python examples/sentiment_classification.py
 ```
 
 See [Examples](https://valtron.ai/docs/examples/) for detailed walkthroughs.
@@ -144,7 +144,7 @@ See [Examples](https://valtron.ai/docs/examples/) for detailed walkthroughs.
 docker compose build server
 
 # Run an example
-docker compose run --rm server poetry run python examples/sentiment_classification.py
+docker compose run --rm server python examples/sentiment_classification.py
 
 # Interactive shell
 docker compose run --rm --service-ports server bash
@@ -159,22 +159,22 @@ docker compose run --rm pipeline-test
 
 ```bash
 # Install dependencies
-poetry install
+uv sync
 
 # or, if you want to run pytest
-poetry env use 3.13
-poetry install --all-extras
+uv venv --python 3.13
+uv sync --all-extras
 
 # Run tests
-poetry run pytest
+uv run pytest
 
 # Run with coverage
-poetry run pytest --cov=src/valtron_core --cov-report=html
+uv run pytest --cov=src/valtron_core --cov-report=html
 
 # Format and lint
-poetry run black src/ tests/
-poetry run ruff check src/ tests/
-poetry run mypy src/
+uv run black src/ tests/
+uv run ruff check src/ tests/
+uv run mypy src/
 ```
 
 The test suite covers the evaluation pipeline, report generation, prompt optimizers, few-shot generation, transformer training, and the `ModelEval` recipe. The Docker Compose `pipeline-test` service runs the full suite with coverage and JUnit XML output.

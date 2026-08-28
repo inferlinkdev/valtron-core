@@ -10,7 +10,7 @@ dependencies = [
     "myst-parser>=4",
     "sphinx-design>=0.6",
     "sphinx-copybutton>=0.5",
-    # valtron_core's own runtime dependencies (mirrors [tool.poetry.dependencies]
+    # valtron_core's own runtime dependencies (mirrors [project.dependencies]
     # in ../pyproject.toml). autodoc imports the real package from ../src, so
     # these need to be importable: this is NOT a "transformers" extra install,
     # just what plain `import valtron_core` already requires.
