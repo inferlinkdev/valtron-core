@@ -540,6 +540,40 @@ class TestPersistence:
         assert reloaded._settings.gate == SummarizationConfig.model_fields["gate"].default
 
 
+class TestResumeFromDiskOnFreshInstance:
+    """A fresh instance -- never routed through ``load_experiment_results()`` --
+    resuming against an ``output_dir`` that already has a completed model on
+    disk. This is the crash-recovery shape ``aevaluate()``'s docstring promises:
+    restart the same script and it picks up only what's actually missing.
+    """
+
+    async def test_completed_model_on_disk_is_reused_not_dropped(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        first = _experiment(monkeypatch, {"good": GOOD}, output_dir=str(tmp_path))
+        await first.aevaluate()
+        first.save_experiment_results()
+
+        good = FakeSummarizer("good", GOOD)
+        padded = FakeSummarizer("padded", PADDED)
+        _install(monkeypatch, {"good": good, "padded": padded})
+        second = SummarizationExperiment(
+            config=_config({"good": GOOD, "padded": PADDED}, output_dir=str(tmp_path)),
+            data=[{"id": "d1", "content": DOCUMENT}],
+        )
+        await second.aevaluate()
+
+        # "good" was already completed on disk: reused, not re-run.
+        assert good.calls == 0
+        assert padded.calls == 1
+        assert {r.model for r in second.results} == {"good", "padded"}
+
+        # Previously crashed here with "Call evaluate() before
+        # save_experiment_results()" once every configured model happened to
+        # already be complete on disk -- self.results was never populated.
+        second.save_experiment_results()
+
+
 class TestReevaluate:
     """Reweighting the scheme and regrading against a new judge or checklist.
 

@@ -110,18 +110,22 @@ def save_single_model_result(
     return out_file
 
 
-def _completed_model_labels_on_disk(output_dir: Path) -> set[str]:
-    """Return model labels whose ``models/{name}.json`` file has ``status=completed``."""
+def _completed_model_files_on_disk(output_dir: Path) -> dict[str, Path]:
+    """Map model label -> its ``models/{name}.json`` file, for files with ``status=completed``.
+
+    Returning the file (not just the label) is what lets a caller actually rebuild
+    the model's ``EvaluationResult`` rather than merely knowing it exists.
+    """
     models_dir = output_dir / "models"
     if not models_dir.exists():
-        return set()
-    completed: set[str] = set()
+        return {}
+    completed: dict[str, Path] = {}
     for json_file in models_dir.glob("*.json"):
         try:
             with open(json_file) as f:
                 data = json.load(f)
             if data.get("status") == "completed":
-                completed.add(data["model"])
+                completed[data["model"]] = json_file
         except Exception:
             pass
     return completed
