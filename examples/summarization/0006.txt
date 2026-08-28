@@ -1,0 +1,107 @@
+SECTION 1. SHORT TITLE.
+
+    This Act may be cited as the ``Prescription Drug Monitoring Act of 
+2016''.
+
+SEC. 2. DEFINITIONS.
+
+    In this Act:
+            (1) Controlled substance.--The term ``controlled 
+        substance'' has the meaning given the term in section 102 of 
+        the Controlled Substances Act (21 U.S.C. 802).
+            (2) Covered state.--The term ``covered State'' means a 
+        State that receives funding under the Harold Rogers 
+        Prescription Drug Monitoring Program established under the 
+        Departments of Commerce, Justice, and State, the Judiciary, and 
+        Related Agencies Appropriations Act, 2002 (Public Law 107-77; 
+        115 Stat. 748) or the controlled substance monitoring program 
+        under section 399O of the Public Health Service Act (42 U.S.C. 
+        280g-3).
+            (3) Dispenser.--The term ``dispenser''--
+                    (A) means person licensed or otherwise authorized 
+                by a State to deliver a prescription drug product to a 
+                patient or an agent of the patient; and
+                    (B) does not include a person involved in oversight 
+                or payment for prescription drugs.
+            (4) PDMP.--The term ``PDMP'' means a prescription drug 
+        monitoring program.
+            (5) Practitioner.--The term ``practitioner'' means a 
+        practitioner registered under section 303(f) of the Controlled 
+        Substances Act (21 U.S.C. 823(f)) to prescribe, administer, or 
+        dispense controlled substances.
+            (6) State.--The term ``State'' means each of the several 
+        States and the District of Columbia.
+
+SEC. 3. PRESCRIPTION DRUG MONITORING PROGRAM REQUIREMENTS.
+
+    (a) In General.--Beginning 2 years after the date of enactment of 
+this Act, each covered State shall require--
+            (1) each prescribing practitioner within the covered State 
+        or their designee, who shall be licensed or registered 
+        healthcare professionals or other employees who report directly 
+        to the practitioner, to consult the PDMP of the covered State 
+        before initiating treatment with a prescription for a 
+        controlled substance listed in schedule II, III, or IV of 
+        section 202(c) of the Controlled Substances Act (21 U.S.C. 
+        812(c)), and every 3 months thereafter as long as the treatment 
+        continues;
+            (2) the PDMP of the covered State to provide proactive 
+        notification to a practitioner when patterns indicative of 
+        controlled substance misuse, including opioid misuse, are 
+        detected;
+            (3) each dispenser within the covered State to report each 
+        prescription for a controlled substance dispensed by the 
+        dispenser to the PDMP not later than 24 hours after the 
+        controlled substance is dispensed to the patient; and
+            (4) that the PDMP make available a quarterly de-identified 
+        data set and an annual report for public and private use, which 
+        shall, at a minimum, meet requirements established by the 
+        Attorney General, in coordination with the Secretary of Health 
+        and Human Services.
+    (b) Noncompliance.--If a covered State fails to comply with 
+subsection (a), the Attorney General or the Secretary of Health and 
+Human Services, as appropriate, may withhold grant funds from being 
+awarded to the covered State under the Harold Rogers Prescription Drug 
+Monitoring Program established under the Departments of Commerce, 
+Justice, and State, the Judiciary, and Related Agencies Appropriations 
+Act, 2002 (Public Law 107-77; 115 Stat. 748) or the controlled 
+substance monitoring program under section 399O of the Public Health 
+Service Act (42 U.S.C. 280g-3).
+
+SEC. 4. SHARING PDMP INFORMATION AMONG STATES.
+
+    (a) Requirement.--Beginning 2 years after the date of enactment of 
+this Act, each covered State shall make the data contained in the PDMP 
+of the covered State available to other States through the data-sharing 
+single technology solution established under subsection (b).
+    (b) Data-Sharing Single Technology Solution.--
+            (1) In general.--The Attorney General, in coordination with 
+        the Secretary of Health and Human Services, shall award, on a 
+        competitive basis, a grant to an eligible entity to establish 
+        and maintain an inter-State data-sharing single hub to 
+        facilitate the sharing of PDMP data among States and the 
+        accessing of such data by practitioners.
+            (2) Requirements.--The data-sharing single hub established 
+        under paragraph (1)--
+                    (A) shall--
+                            (i) allow States to retain ownership of the 
+                        data submitted by the States;
+                            (ii) provide a source of de-identified data 
+                        that can be used for statistical, research, or 
+                        educational purposes;
+                            (iii) allow State authorized users to 
+                        access data from a PDMP of a covered State 
+                        without requiring a user fee; and
+                            (iv) conform with the standards of the 
+                        Prescription Monitoring Information Exchange; 
+                        and
+                    (B) may not--
+                            (i) distribute, in whole or in part, any 
+                        PDMP data without the express written consent 
+                        of the PDMP State authority; and
+                            (ii) limit, in whole or in part, 
+                        distribution of PDMP data as approved by the 
+                        PDMP State authority.
+            (3) Authorization of appropriations.--There are authorized 
+        to be appropriated to the Attorney General $2,000,000 for 
+        fiscal years 2017 through 2020 to carry out this subsection.
