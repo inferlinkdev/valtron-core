@@ -226,4 +226,4 @@ class TestStartWizard:
         with patch("valtron_core.utilities.config_wizard.app.run") as mock_run:
             start_wizard(host="0.0.0.0", port=5000)
 
-            mock_run.assert_called_once_with(host="0.0.0.0", port=5000, debug=True)
+            mock_run.assert_called_once_with(host="0.0.0.0", port=5000)

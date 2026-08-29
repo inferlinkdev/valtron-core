@@ -10,10 +10,12 @@ import litellm
 litellm.suppress_debug_info = True
 import requests  # type: ignore[import-untyped]
 from flask import Flask, Response, jsonify, render_template, request, send_from_directory
-from flask_cors import CORS  # type: ignore[import-untyped]
 
 app = Flask(__name__, template_folder="../templates")
-CORS(app)
+# No CORS(app) here: the wizard UI is served by this same Flask app, so the
+# frontend never needs cross-origin requests. Enabling CORS would let any
+# other origin (e.g. a malicious page open in the same browser) call these
+# unauthenticated, file-writing/URL-fetching endpoints against 127.0.0.1.
 app.config["MAX_CONTENT_LENGTH"] = 1024 * 1024 * 1024  # 1 GB
 
 _LITELLM_PRICES_URL = (
@@ -423,7 +425,10 @@ def api_save_config() -> Response:
     """Save the generated configuration to a file."""
     data = request.json
     config = data.get("config", {})
-    filename = data.get("filename", "custom_config.json")
+    # .name strips any directory components (both "../" traversal and a
+    # leading "/" absolute path), so config_path below can never resolve
+    # outside config_dir.
+    filename = Path(data.get("filename", "custom_config.json")).name or "custom_config.json"
 
     # Save to ./configs/ relative to the user's working directory
     config_dir = Path.cwd() / "configs"
