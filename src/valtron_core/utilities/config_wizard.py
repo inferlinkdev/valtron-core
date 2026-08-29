@@ -447,7 +447,7 @@ def start_wizard(host: str = "127.0.0.1", port: int = 5000) -> None:
     print("label classification recipe.\n")
     print(f"{'=' * 80}\n")
 
-    app.run(host=host, port=port, debug=True)
+    app.run(host=host, port=port)
 
 
 if __name__ == "__main__":
