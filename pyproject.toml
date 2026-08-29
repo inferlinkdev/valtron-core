@@ -36,7 +36,7 @@ dependencies = [
     "jinja2>=3.1.0,<4",
     # Configuration wizard UI
     "flask>=3.0.0,<4",
-    "flask-cors>=4.0.0,<5",
+    "flask-cors>=6.0.0,<7",
     "nltk>=3.9.2,<4",
     "reportlab==4.4.10",
     "jsonschema>=4.26.0,<5",
@@ -46,6 +46,12 @@ dependencies = [
 # Optional: transformer model training/inference (pip install valtron-core[transformers])
 transformers = [
     "torch>=2.4.0,<3",
+    # NOTE: known CVEs at 4.57.6 (see GHSA-69w3-r845-3855, GHSA-29pf-2h5f-8g72,
+    # GHSA-fgcw-684q-jj6r); the fix requires transformers>=5, but 5.x drops
+    # support for loading tokenizers that ship only a legacy `vocab.txt` with
+    # no `tokenizer.json` (e.g. prajjwal1/bert-tiny, used in tests), which
+    # breaks bert_trainer.py/transformer_classifier.py as written. Left
+    # pinned below 5 until that tokenizer-loading path is updated.
     "transformers>=4.35.0,<5",
     "scikit-learn>=1.3.0,<2",
     "datasets>=2.18.0",
@@ -58,9 +64,14 @@ Documentation = "https://valtron.ai/docs/"
 
 [dependency-groups]
 dev = [
-    "pytest>=8.0.0,<9",
-    "pytest-asyncio>=0.23.0,<0.24",
+    "pytest>=9.0.3,<10",
+    "pytest-asyncio>=1.0.0,<2",
     "pytest-cov>=4.1.0,<5",
+    # NOTE: known CVEs at 24.10.0 (see GHSA-v53h-f6m7-xcgm and others,
+    # arbitrary file write via unsanitized cache filename); the fix
+    # requires black>=26.3.1, but that reformats ~40 files repo-wide, which
+    # would conflict with other pending PR changes right now. Left pinned
+    # until those land.
     "black>=24.0.0,<25",
     "ruff>=0.3.0,<0.4",
     "mypy>=1.9.0,<2",
