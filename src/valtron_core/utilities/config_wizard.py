@@ -1,6 +1,7 @@
 """Configuration wizard web UI for creating recipe configs."""
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -435,7 +436,7 @@ def api_save_config() -> Response:
     return jsonify({"success": True, "path": str(config_path)})
 
 
-def start_wizard(host: str = "0.0.0.0", port: int = 5000) -> None:
+def start_wizard(host: str = "127.0.0.1", port: int = 5000) -> None:
     """Start the configuration wizard server."""
     print(f"\n{'=' * 80}")
     print("CONFIGURATION WIZARD")
@@ -450,4 +451,7 @@ def start_wizard(host: str = "0.0.0.0", port: int = 5000) -> None:
 
 
 if __name__ == "__main__":
-    start_wizard()
+    # WIZARD_HOST lets the Docker entrypoint opt into binding all interfaces
+    # (required for the container's published port to be reachable from the
+    # host); direct/local invocation stays on the safe localhost-only default.
+    start_wizard(host=os.environ.get("WIZARD_HOST", "127.0.0.1"))

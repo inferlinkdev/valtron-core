@@ -26,6 +26,8 @@ services:
     container_name: valtron-wizard
     ports:
       - "5000:5000"
+    environment:
+      - WIZARD_HOST=0.0.0.0
     volumes:
       - ./src:/app/src
     working_dir: /app
