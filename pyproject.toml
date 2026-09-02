@@ -73,7 +73,7 @@ dev = [
     # would conflict with other pending PR changes right now. Left pinned
     # until those land.
     "black>=24.0.0,<25",
-    "ruff>=0.3.0,<0.4",
+    "ruff>=0.3.0,<0.17",
     "mypy>=1.9.0,<2",
     "ipython>=8.0.0,<9",
 ]
