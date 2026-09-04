@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field, create_model
 from rapidfuzz import fuzz
 
 from valtron_core.client import LLMClient
+from valtron_core.evaluation.stages import LLMGenerator, RawPrediction
 from valtron_core.evaluator import PromptEvaluator
 from valtron_core.models import (
     Document,
@@ -735,12 +736,92 @@ async def cleanup_few_shot_sub_prompts(
 # ---------------------------------------------------------------------------
 
 
+class DecomposedGenerator:
+    """Runs a document's N sub-prompts in parallel and merges them into one prediction.
+
+    The generation half of what ``DecomposedEvaluator._evaluate_single_decomposed``
+    used to do inline: no scoring, no grading against a label, just "call the
+    model N times, merge the JSON." Not (yet) typed as ``Generator`` (see
+    ``evaluation.stages.generate``'s module docstring on why): it needs
+    ``sub_prompts``/``sub_schemas``/``split_info``, none of which a plain LLM or
+    transformer ``Generator`` call takes.
+    """
+
+    def __init__(self, client: LLMClient | None = None) -> None:
+        self.client = client or LLMClient()
+        self._generator = LLMGenerator(client=self.client)
+
+    async def generate(
+        self,
+        document: Document,
+        sub_prompts: dict[str, str],
+        sub_schemas: dict[str, type[BaseModel]],
+        split_info: SplitPointInfo,
+        model: str,
+        temperature: float = 0.0,
+        max_tokens: int | None = None,
+        multi_pass: int = 1,
+        hallucination_filter: bool = False,
+    ) -> RawPrediction:
+        start_time = time.time()
+
+        async def run_sub(field_name: str) -> tuple[str, RawPrediction]:
+            raw = await self._generator.generate(
+                document,
+                sub_prompts[field_name],
+                model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                response_format=sub_schemas.get(field_name),
+                multi_pass=multi_pass,
+            )
+            return field_name, raw
+
+        field_results = await asyncio.gather(*[run_sub(fn) for fn in sub_prompts])
+
+        sub_results: dict[str, str] = {}
+        total_cost = 0.0
+        sub_metadata: dict[str, Any] = {}
+        for field_name, raw in field_results:
+            if not isinstance(raw.predicted_value, str):
+                raise TypeError(
+                    f"decompose sub-prompt {field_name!r} returned a "
+                    f"{type(raw.predicted_value).__name__}, expected a string"
+                )
+            sub_results[field_name] = raw.predicted_value
+            total_cost += raw.llm_cost
+            sub_metadata[field_name] = raw.predicted_value
+
+        merged_json = merge_sub_results(sub_results, split_info)
+
+        if hallucination_filter:
+            merged_json = await filter_hallucinated_values(
+                merged_json,
+                document.content,
+                model,
+                self.client,
+            )
+
+        return RawPrediction(
+            document_id=document.id,
+            predicted_value=merged_json,
+            llm_cost=total_cost,
+            response_time=time.time() - start_time,
+            metadata={
+                "content": document.content,
+                "decomposed": True,
+                "sub_results": sub_metadata,
+            },
+        )
+
+
 class DecomposedEvaluator:
     """Orchestrates decomposed per-field evaluation across documents."""
 
     def __init__(self, client: LLMClient | None = None) -> None:
         self.client = client or LLMClient()
         self.evaluator = PromptEvaluator(client=self.client)
+        self._generator = DecomposedGenerator(client=self.client)
 
     async def evaluate(
         self,
@@ -833,51 +914,18 @@ class DecomposedEvaluator:
         multi_pass: int = 1,
     ) -> PredictionResult:
         """Run all sub-prompts for a single document, merge, and grade."""
-        start_time = time.time()
-        sub_results: dict[str, str] = {}
-        total_cost = 0.0
-        sub_metadata: dict[str, Any] = {}
-
-        # Dummy label — we only care about the raw LLM output per sub-task
-        dummy_label = Label(document_id=document.id, value="{}")
-
-        # Run sub-prompts in parallel
-        async def run_sub(field_name: str) -> tuple[str, PredictionResult]:
-            pred = await self.evaluator.evaluate_single(
-                document=document,
-                label=dummy_label,
-                prompt_template=sub_prompts[field_name],
-                model=model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                response_format=sub_schemas.get(field_name),
-                multi_pass=multi_pass,
-            )
-            return field_name, pred
-
-        field_predictions = await asyncio.gather(*[run_sub(fn) for fn in sub_prompts])
-
-        for field_name, pred in field_predictions:
-            if not isinstance(pred.predicted_value, str):
-                raise TypeError(
-                    f"decompose sub-prompt {field_name!r} returned a "
-                    f"{type(pred.predicted_value).__name__}, expected a string"
-                )
-            sub_results[field_name] = pred.predicted_value
-            total_cost += pred.llm_cost
-            sub_metadata[field_name] = pred.predicted_value
-
-        # Merge sub-results
-        merged_json = merge_sub_results(sub_results, split_info)
-
-        # Apply hallucination filter to the merged result
-        if hallucination_filter:
-            merged_json = await filter_hallucinated_values(
-                merged_json,
-                document.content,
-                model,
-                self.client,
-            )
+        raw = await self._generator.generate(
+            document,
+            sub_prompts,
+            sub_schemas,
+            split_info,
+            model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            multi_pass=multi_pass,
+            hallucination_filter=hallucination_filter,
+        )
+        merged_json = raw.predicted_value
 
         # Grade the merged result against the real label
         from valtron_core.scoring.json_eval import JsonEvaluator
@@ -912,7 +960,6 @@ class DecomposedEvaluator:
                     error=str(e),
                 )
 
-        response_time = time.time() - start_time
         model_name = model if isinstance(model, str) else model.get("model", "unknown")
 
         return PredictionResult(
@@ -921,14 +968,10 @@ class DecomposedEvaluator:
             expected_value=label.value,
             is_correct=is_correct,
             example_score=example_score,
-            response_time=response_time,
-            llm_cost=total_cost,
+            response_time=raw.response_time,
+            llm_cost=raw.llm_cost,
             evaluation_cost=total_evaluation_cost,
             model=model_name,
             field_metrics=field_metrics,
-            metadata={
-                "content": document.content,
-                "decomposed": True,
-                "sub_results": sub_metadata,
-            },
+            metadata=raw.metadata,
         )
