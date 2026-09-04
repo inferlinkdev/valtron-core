@@ -169,7 +169,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
 
         return field_max_values
 
-    def _build_field_metrics_tree(
+    def _build_field_metrics_tree(  # noqa: C901
         self, results: list[EvaluationResult], all_field_names: list[str]
     ) -> dict[str, Any]:
         """Build a hierarchical tree from flat dot-separated field paths."""
@@ -241,7 +241,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
         except Exception:
             return {"url": s, "mime_type": "", "type": "", "data": None}
 
-    def _prepare_detailed_analysis_data(
+    def _prepare_detailed_analysis_data(  # noqa: C901, PLR0912
         self, results: list[EvaluationResult], documents: list[Any] | None = None
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Prepare data for detailed input/output analysis page."""

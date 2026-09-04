@@ -125,7 +125,7 @@ class _ReportBase:
             "histogram_score": histogram_data["score"],
         }
 
-    def _prepare_histogram_data(
+    def _prepare_histogram_data(  # noqa: C901, PLR0912, PLR0915
         self,
         all_doc_data: dict[str, list[dict[str, str | int | float | None]]],
         models: list[str],
@@ -209,7 +209,7 @@ class _ReportBase:
         time_bins = create_nice_bins(all_times, num_bins)
         score_bins = create_nice_bins(all_scores, num_bins) if all_scores else []
 
-        def get_decimal_places(bins: list[float]) -> int:
+        def get_decimal_places(bins: list[float]) -> int:  # noqa: PLR0911
             if len(bins) < 2:
                 return 2
             bin_width = bins[1] - bins[0]

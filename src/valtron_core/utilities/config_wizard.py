@@ -275,7 +275,7 @@ def _analyze_classification(
     }
 
 
-def _analyze_extraction(
+def _analyze_extraction(  # noqa: C901
     data_list: list[Any], first_label: str, content_keys: list[str]
 ) -> dict[str, Any]:
     """JSON-shaped labels: build a nested Pydantic-class preview and JSON Schema."""
@@ -283,7 +283,7 @@ def _analyze_extraction(
 
     field_config = infer_field_config(first_label)
 
-    def _collect_classes(data: object, class_name: str, out: list[str]) -> str:
+    def _collect_classes(data: object, class_name: str, out: list[str]) -> str:  # noqa: PLR0911
         if isinstance(data, bool):
             return "bool"
         if isinstance(data, int):
@@ -305,7 +305,7 @@ def _analyze_extraction(
             return "list[str]"
         return "str"
 
-    def _json_schema_from_value(value: object, title: str) -> dict[str, Any]:
+    def _json_schema_from_value(value: object, title: str) -> dict[str, Any]:  # noqa: PLR0911
         if isinstance(value, bool):
             return {"type": "boolean"}
         if isinstance(value, int):
@@ -364,7 +364,7 @@ def _analyze_extraction(
 
 
 @app.route("/api/analyze-data", methods=["POST"])
-def api_analyze_data() -> Response | tuple[Response, int]:
+def api_analyze_data() -> Response | tuple[Response, int]:  # noqa: C901, PLR0911, PLR0912
     """Analyze training data to detect JSON labels and infer field metrics config."""
     payload = request.json
     inline_data = payload.get("data")

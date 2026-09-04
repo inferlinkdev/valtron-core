@@ -682,7 +682,7 @@ class ModelEval(ABC):
             f"{type(self).__name__} must implement _evaluate_model_documents()."
         )
 
-    async def _run_evaluations(
+    async def _run_evaluations(  # noqa: C901, PLR0915
         self,
         model_prompts: "dict[str, str]",
         field_metrics_config: Any = None,
@@ -775,7 +775,7 @@ class ModelEval(ABC):
             except Exception as e:
                 logger.warning("eager_model_save_failed", model=model_label, error=str(e))
 
-        async def _evaluate_single_model(
+        async def _evaluate_single_model(  # noqa: C901, PLR0912
             index: int, model_config: Any
         ) -> "tuple[int, EvaluationResult, str, list[Any], str | None]":
             model_name = getattr(model_config, "name", None) or model_config.label

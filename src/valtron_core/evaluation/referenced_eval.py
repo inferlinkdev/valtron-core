@@ -210,7 +210,7 @@ class ReferencedEval(ModelEval):
             or (isinstance(annotation, type) and issubclass(annotation, enum.Enum))
         )
 
-    def _validate_labels_against_schema(self) -> None:
+    def _validate_labels_against_schema(self) -> None:  # noqa: C901, PLR0912
         """Validate each label against the response schema, raising if any fail.
 
         Handles both Pydantic response_format (via model_validate_json) and
@@ -412,7 +412,9 @@ class ReferencedEval(ModelEval):
     # -------------------------------------------------------------------------
 
     @classmethod
-    def load_experiment_results(cls, dir_path: "str | Path") -> "ReferencedEval":
+    def load_experiment_results(  # noqa: C901, PLR0912, PLR0915
+        cls, dir_path: "str | Path"
+    ) -> "ReferencedEval":
         """Restore a previously saved experiment from disk.
 
         Returns a ``ReferencedEval`` instance in the same state as after
@@ -624,7 +626,7 @@ class ReferencedEval(ModelEval):
             }
         )
 
-    def reevaluate(  # type: ignore[override]
+    def reevaluate(  # type: ignore[override]  # noqa: C901, PLR0912
         self,
         data: "list[dict[str, Any]] | str | Path | None" = None,
         output_dir: "str | Path | None" = None,
@@ -1042,7 +1044,7 @@ class ReferencedEval(ModelEval):
     # Transformer evaluation (label mode only)
     # -------------------------------------------------------------------------
 
-    async def _evaluate_transformer(
+    async def _evaluate_transformer(  # noqa: C901, PLR0912, PLR0915
         self,
         model_config: Any,
         documents: list[Document],
@@ -1177,7 +1179,7 @@ class ReferencedEval(ModelEval):
     # Evaluation loop
     # -------------------------------------------------------------------------
 
-    async def _evaluate_model_documents(
+    async def _evaluate_model_documents(  # noqa: C901
         self,
         model_config: Any,
         documents: list[Document],

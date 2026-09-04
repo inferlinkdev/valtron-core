@@ -226,7 +226,7 @@ class EvaluationRunner:
         self.evaluator = PromptEvaluator(client=self.client)
         self.loader = DocumentLoader()
 
-    def _check_api_keys(self, models: "list[Any]") -> None:
+    def _check_api_keys(self, models: "list[Any]") -> None:  # noqa: C901, PLR0912
         """Raise ValueError if any model is missing its required API key env vars."""
         missing_by_model: dict[str, list[str]] = {}
         for model in models:
@@ -721,7 +721,7 @@ class EvaluationRunner:
         self.loader.save_results_to_json(result, output_file)
         console.print(f"[green]Results saved to {output_file}[/green]")
 
-    def generate_report(
+    def generate_report(  # noqa: C901, PLR0912, PLR0915
         self,
         results: list[EvaluationResult] | None = None,
         output_dir: str | Path | None = None,

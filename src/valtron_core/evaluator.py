@@ -160,7 +160,7 @@ class PromptEvaluator:
         # Default: case-insensitive string comparison
         return self._normalize_value(predicted) == self._normalize_value(expected)
 
-    async def evaluate_single(
+    async def evaluate_single(  # noqa: C901, PLR0912
         self,
         document: Document,
         label: Label,

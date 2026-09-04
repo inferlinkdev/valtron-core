@@ -270,7 +270,14 @@ class JsonEvaluator:
             is_correct=(len(exp) == len(act) and all(a.result.is_correct for a in alignments)),
         )
 
-    def _eval_list_unordered(self, config: FieldConfig, exp: list[Any], act: list[Any], path: str, m_cfg: ListMetricConfig) -> EvalResult:
+    def _eval_list_unordered(  # noqa: C901
+        self,
+        config: FieldConfig,
+        exp: list[Any],
+        act: list[Any],
+        path: str,
+        m_cfg: ListMetricConfig,
+    ) -> EvalResult:
         item_logic = m_cfg.item_logic
         assert item_logic is not None
         potential_matches: list[AlignmentItem] = []
@@ -567,7 +574,7 @@ class JsonEvaluator:
         stats["n_matched"] = sum(1 for v in e_assignment.values() if v is not None)
         return e_assignment, stats
 
-    def _eval_list_unordered_with_alignment(
+    def _eval_list_unordered_with_alignment(  # noqa: C901
         self,
         config: FieldConfig,
         exp: list[Any],
