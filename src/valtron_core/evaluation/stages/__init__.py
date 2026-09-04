@@ -11,6 +11,7 @@ from valtron_core.evaluation.stages.generate import (
     Generator,
     LLMGenerator,
     RawPrediction,
+    TransformerGenerator,
     format_prompt,
 )
 from valtron_core.evaluation.stages.score import (
@@ -28,5 +29,6 @@ __all__ = [
     "Generator",
     "RawPrediction",
     "LLMGenerator",
+    "TransformerGenerator",
     "format_prompt",
 ]

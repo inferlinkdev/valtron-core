@@ -33,6 +33,7 @@ from valtron_core.evaluation.config import (
     TransformerModelConfig,
 )
 from valtron_core.evaluation.model_eval import ModelEval
+from valtron_core.evaluation.stages import TransformerGenerator
 from valtron_core.evaluator import _score_prediction
 from valtron_core.few_shot_training_data_generator import (
     FewShotTrainingDataGenerator,
@@ -1052,9 +1053,7 @@ class ReferencedEval(ModelEval):
 
         logger.info("evaluating_transformer", model=model_name, path=model_path)
 
-        from valtron_core.transformer_wrapper import TransformerModelWrapper
-
-        transformer = TransformerModelWrapper(model_path, model_name)
+        generator = TransformerGenerator(model_path, model_name)
 
         # Build label map from self.data (no file I/O)
         label_map: dict[str, str] = {}
@@ -1091,9 +1090,10 @@ class ReferencedEval(ModelEval):
         for doc in documents:
             expected_label = label_map.get(doc.id, "")
 
-            pred_start = time.time()
-            prediction, confidence = transformer.predict_with_confidence(doc.content)
-            pred_time = time.time() - pred_start
+            raw = await generator.generate(doc)
+            prediction = raw.predicted_value
+            confidence = raw.confidence_score
+            pred_time = raw.response_time
 
             if self._auto_wrap_string_labels:
                 prediction = json.dumps({"label": prediction})

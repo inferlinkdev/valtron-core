@@ -79,6 +79,7 @@ class RawPrediction:
     llm_cost: float = 0.0
     response_time: float = 0.0
     error: "str | None" = None
+    confidence_score: "float | None" = None
     metadata: "dict[str, Any]" = field(default_factory=dict)
 
 
@@ -215,3 +216,37 @@ class LLMGenerator:
                 error=str(e),
                 metadata={"error": str(e), "content": document.content},
             )
+
+
+class TransformerGenerator:
+    """Wraps a local TransformerModelWrapper: synchronous inference, no scoring.
+
+    Not (yet) typed as Generator: it takes no prompt_template/model/temperature/
+    etc. at all, since a local transformer classifier has no prompt or sampling
+    params to speak of. Same deferral as JudgeScorer vs. Scorer: expected to
+    unify once the fuller Generator/RawPrediction/Ingestor shape exists and
+    every implementation is rewired at once.
+
+    Constructed fresh per call (matching today's ``_evaluate_transformer``,
+    which builds a new ``TransformerModelWrapper`` every time it runs, not a
+    cached one) so that tests patching
+    ``valtron_core.transformer_wrapper.TransformerModelWrapper`` keep working:
+    the import inside ``__init__`` is deliberately inline, resolved fresh on
+    each construction, not hoisted to module level.
+    """
+
+    def __init__(self, model_path: str, model_name: str) -> None:
+        from valtron_core.transformer_wrapper import TransformerModelWrapper
+
+        self._model = TransformerModelWrapper(model_path, model_name)
+
+    async def generate(self, document: Document) -> RawPrediction:
+        start_time = time.time()
+        prediction, confidence = self._model.predict_with_confidence(document.content)
+        return RawPrediction(
+            document_id=document.id,
+            predicted_value=prediction,
+            response_time=time.time() - start_time,
+            confidence_score=confidence,
+            metadata={"content": document.content},
+        )
