@@ -30,6 +30,7 @@ How it uses the base class's seams:
 """
 
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -43,6 +44,7 @@ from valtron_core.attachments import check_attachment_support
 from valtron_core.cost_utils import _fallback_cost, _parse_time_unit_to_seconds
 from valtron_core.evaluation.config import BaseRecipeConfig, SummarizationConfig
 from valtron_core.evaluation.model_eval import ModelEval
+from valtron_core.evaluation.stages.summarization_score import JudgeScorer
 from valtron_core.models import Document, EvaluationResult, PredictionResult
 from valtron_core.summarization import (
     Axes,
@@ -58,6 +60,7 @@ from valtron_core.summarization import (
     Usage,
     evaluate_candidate,
     extract_document_facts,
+    generate_summary,
     mean_axes,
     rank,
     render_requirements,
@@ -244,6 +247,7 @@ class SummarizationExperiment(ModelEval):
         self._judge = Judge(
             ClientModel(self._settings.judge_model, client=self.client, name=JUDGE_LABEL)
         )
+        self._scorer = JudgeScorer(self._judge)
         # How many models split each document's shared judge cost. Set per pass
         # in _run_evaluations, since add_models() + evaluate() can run a subset.
         self._models_in_pass = max(len(self.models), 1)
@@ -493,14 +497,15 @@ class SummarizationExperiment(ModelEval):
         shared = self._document_facts[document.id]
 
         try:
-            evaluation = await evaluate_candidate(
+            started = time.monotonic()
+            summary, generation_usage, generation_seconds = await generate_summary(
                 Doc(text, attachments=document.attachments),
                 model,
-                self._judge,
-                shared,
                 self._checklist,
                 summary_prompt=TemplatePrompt(prompt, document.content),
             )
+            grade = await self._scorer.score(summary, shared, self._checklist)
+            seconds = time.monotonic() - started
         except Exception as error:
             # One document must not void a model's whole run: record the failure
             # and let it be ranked on the documents it managed. An unscored
@@ -520,29 +525,27 @@ class SummarizationExperiment(ModelEval):
                 metadata={"content": document.content, "error": str(error)},
             )
 
-        self._generation_usage.merge(evaluation.generation_usage)
-        self._candidate_judge_usage.merge(evaluation.judge_usage)
+        self._generation_usage.merge(generation_usage)
+        self._candidate_judge_usage.merge(grade.judge_usage)
 
-        original_cost = evaluation.generation_usage.cost_usd
-        llm_cost = self._effective_cost(model_config, original_cost, evaluation.generation_seconds)
+        original_cost = generation_usage.cost_usd
+        llm_cost = self._effective_cost(model_config, original_cost, generation_seconds)
         # The shared per-document judge work is divided evenly: it belongs to no
         # single candidate, but leaving it out would make the run's total cost
         # understate what was actually spent.
-        evaluation_cost = (
-            evaluation.judge_usage.cost_usd + shared.usage.cost_usd / self._models_in_pass
-        )
+        evaluation_cost = grade.judge_usage.cost_usd + shared.usage.cost_usd / self._models_in_pass
 
-        axes = evaluation.axes
+        axes = grade.axes
         task_scores = {
             name: value for name in AXIS_NAMES if (value := getattr(axes, name)) is not None
         }
 
         return PredictionResult(
             document_id=document.id,
-            predicted_value=evaluation.summary.text,
+            predicted_value=summary.text,
             # No ground truth, so expected_value/is_correct/example_score stay unset.
             task_scores=task_scores or None,
-            response_time=evaluation.seconds,
+            response_time=seconds,
             original_cost=original_cost,
             llm_cost=llm_cost,
             evaluation_cost=evaluation_cost,
@@ -551,17 +554,17 @@ class SummarizationExperiment(ModelEval):
                 # Required: _run_evaluations hashes this to decide what a resumed
                 # run can skip. Without it, partial-result caching silently no-ops.
                 "content": document.content,
-                "generation_seconds": evaluation.generation_seconds,
+                "generation_seconds": generation_seconds,
                 "document_facts": [fact.text for fact in shared.facts],
                 "salient_facts": [fact.text for fact in shared.salient],
-                "summary_facts": [fact.text for fact in evaluation.summary_facts],
-                "faithful_verdicts": evaluation.faithful_verdicts,
-                "coverage_verdicts": evaluation.coverage_verdicts,
-                "precision_verdicts": evaluation.precision_verdicts,
-                "requirement_verdicts": evaluation.requirement_verdicts,
+                "summary_facts": [fact.text for fact in grade.summary_facts],
+                "faithful_verdicts": grade.faithful_verdicts,
+                "coverage_verdicts": grade.coverage_verdicts,
+                "precision_verdicts": grade.precision_verdicts,
+                "requirement_verdicts": grade.requirement_verdicts,
                 "requirements": list(self._settings.requirements),
-                "generation_usage": _usage_dict(evaluation.generation_usage),
-                "judge_usage": _usage_dict(evaluation.judge_usage),
+                "generation_usage": _usage_dict(generation_usage),
+                "judge_usage": _usage_dict(grade.judge_usage),
             },
         )
 
