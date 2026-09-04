@@ -25,7 +25,13 @@ from valtron_core.decompose import (
     generate_sub_prompts,
     inject_few_shot_into_sub_prompts,
 )
-from valtron_core.evaluation.config import STRUCTURED_MANIPULATIONS, Manipulation, ModelEvalConfig
+from valtron_core.evaluation.config import (
+    STRUCTURED_MANIPULATIONS,
+    LLMModelConfig,
+    Manipulation,
+    ModelEvalConfig,
+    TransformerModelConfig,
+)
 from valtron_core.evaluation.model_eval import ModelEval
 from valtron_core.evaluator import _score_prediction
 from valtron_core.few_shot_training_data_generator import (
@@ -135,8 +141,6 @@ class ReferencedEval(ModelEval):
         self._validate_labels_against_schema()
 
     def _check_model_param_support(self) -> None:
-        from valtron_core.evaluation.config import LLMModelConfig
-
         wants_response_format = self.response_format is not None
 
         self._auto_wrap_string_labels = self._compute_auto_wrap_string_labels()
@@ -260,62 +264,38 @@ class ReferencedEval(ModelEval):
     # Model management
     # -------------------------------------------------------------------------
 
+    def _build_model_config(self, entry: "str | dict[str, Any] | Any") -> Any:
+        """Normalize one raw model entry, additionally accepting transformer-model dicts.
+
+        Falls back to ``ModelEval._build_model_config`` (str -> ``LLMModelConfig``,
+        dict -> ``LLMModelConfig``, already-a-config-object -> passthrough) for
+        everything else.
+        """
+        if isinstance(entry, dict) and entry.get("type", "llm") == "transformer":
+            return TransformerModelConfig.model_validate(entry)
+        return super()._build_model_config(entry)
+
     def add_models(self, models: "Sequence[str | dict[str, Any] | Any]") -> None:
         """Add new models to the experiment.
 
-        All model validation (uniqueness, structured-manipulation guards) is
-        handled here — ``__init__`` delegates to this method for its own model
-        initialization.  On the next ``evaluate()`` / ``run()`` call only newly
-        added models are evaluated; models that already have results are skipped
-        automatically.
+        Label-uniqueness validation and normalization (including transformer-model
+        dicts, via the ``_build_model_config`` override above) are handled by
+        ``ModelEval.add_models``; this method only adds the extra guard that a
+        structured prompt manipulation (decompose, hallucination_filter,
+        multi_pass) requires ``response_format`` to be set. ``__init__``
+        delegates to this method for its own model initialization. On the next
+        ``evaluate()`` / ``run()`` call only newly added models are evaluated;
+        models that already have results are skipped automatically.
 
         Args:
             models: Model name strings, model config dicts, or ``ModelConfig`` objects.
 
         Raises:
-            ValueError: Duplicate label or structured manipulation without
-                ``response_format``.
+            ValueError: Duplicate label (raised by the base class), structured
+                manipulation without ``response_format``, or an unrecognized
+                model entry.
         """
-        from valtron_core.evaluation.config import LLMModelConfig, TransformerModelConfig
-
-        normalized: list[Any] = []
-        for m in models:
-            if isinstance(m, str):
-                normalized.append(LLMModelConfig(name=m))
-            elif isinstance(m, dict):
-                model_type = m.get("type", "llm")
-                if model_type == "transformer":
-                    normalized.append(TransformerModelConfig.model_validate(m))
-                else:
-                    normalized.append(LLMModelConfig.model_validate(m))
-            else:
-                normalized.append(m)
-
-        existing_labels = {str(mc.label or getattr(mc, "name", None)) for mc in self.models}
-        seen_in_batch: set[str] = set()
-        for mc in normalized:
-            model_name = getattr(mc, "name", None)
-            label = str(mc.label or model_name)
-            label_source = (
-                f"label={mc.label!r}"
-                if mc.label
-                else f"name={model_name!r} (label inferred from name)"
-            )
-            if label in existing_labels:
-                raise ValueError(
-                    f"Duplicate model label {label!r} in config ({label_source}). "
-                    "Each model entry must have a unique label. "
-                    "You can use the same model twice by giving one entry a distinct label "
-                    "(e.g. label='gpt-5-mini-v2')."
-                )
-            if label in seen_in_batch:
-                raise ValueError(
-                    f"Duplicate model label {label!r} in config ({label_source}). "
-                    "Each model entry must have a unique label. "
-                    "You can use the same model twice by giving one entry a distinct label "
-                    "(e.g. label='gpt-5-mini-v2')."
-                )
-            seen_in_batch.add(label)
+        normalized = [self._build_model_config(m) for m in models]
 
         structured_requested = [
             (str(mc.label or getattr(mc, "name", None)), manip)
@@ -332,8 +312,7 @@ class ReferencedEval(ModelEval):
                 "which require response_format to be provided."
             )
 
-        self.models.extend(normalized)
-        self.config.models.extend(normalized)
+        super().add_models(models)
 
     # -------------------------------------------------------------------------
     # Parsing helpers (used by load_experiment_results)
