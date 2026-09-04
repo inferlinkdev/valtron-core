@@ -1142,6 +1142,69 @@ class TestIncrementalEvaluation:
         assert "gpt-4o-mini" in eval_._manipulations_applied
 
 
+class TestResumeFromDiskOnFreshInstance:
+    """A fresh instance (never went through load_experiment_results()) pointed at
+    an output_dir that already has a completed model file on disk -- the crash-
+    recovery scenario aevaluate()'s docstring promises is safe."""
+
+    @pytest.mark.asyncio
+    async def test_completed_model_on_disk_is_reconstructed_not_dropped(self, tmp_path):
+        run_dir = _write_mock_run_dir(tmp_path)
+        config = {
+            "models": [{"name": "gpt-4o-mini"}, {"name": "gpt-4o", "label": "gpt-4o-new"}],
+            "prompt": "Classify: {content}",
+            "response_format_schema": _LABEL_SCHEMA,
+            "output_dir": str(run_dir),
+        }
+        data = [
+            {"id": "d1", "content": "Hello", "label": "positive"},
+            {"id": "d2", "content": "Bye", "label": "negative"},
+        ]
+        eval_ = ReferencedEval(config=config, data=data)
+
+        new_result = _mock_result("gpt-4o-new")
+        with patch.object(
+            eval_.runner, "evaluate", new_callable=AsyncMock, return_value=new_result
+        ) as mock_eval:
+            await eval_.aevaluate()
+
+        # gpt-4o-mini was already completed on disk; only the new model ran.
+        assert mock_eval.call_count == 1
+        assert {r.model for r in eval_.results} == {"gpt-4o-mini", "gpt-4o-new"}
+
+        reconstructed = next(r for r in eval_.results if r.model == "gpt-4o-mini")
+        assert len(reconstructed.predictions) == 2
+
+        # Previously crashed here: self.results was None because the disk-completed
+        # model was never loaded, so nothing populated it when models_to_run was
+        # non-empty for reasons unrelated to gpt-4o-mini.
+        eval_.save_experiment_results()
+
+    @pytest.mark.asyncio
+    async def test_in_memory_results_do_not_hide_a_disk_completed_model(self, tmp_path):
+        """A model already completed on disk must be reused even when self.results
+        already holds a *different* model -- not silently re-run and re-billed."""
+        run_dir = _write_mock_run_dir(tmp_path)
+        config = {
+            "models": [{"name": "gpt-4o-mini"}, {"name": "gpt-4o", "label": "gpt-4o-new"}],
+            "prompt": "Classify: {content}",
+            "response_format_schema": _LABEL_SCHEMA,
+            "output_dir": str(run_dir),
+        }
+        data = [
+            {"id": "d1", "content": "Hello", "label": "positive"},
+            {"id": "d2", "content": "Bye", "label": "negative"},
+        ]
+        eval_ = ReferencedEval(config=config, data=data)
+        eval_.results = [_mock_result("gpt-4o-new")]
+
+        with patch.object(eval_.runner, "evaluate", new_callable=AsyncMock) as mock_eval:
+            await eval_.aevaluate()
+
+        mock_eval.assert_not_called()
+        assert {r.model for r in eval_.results} == {"gpt-4o-mini", "gpt-4o-new"}
+
+
 # ===========================================================================
 # infer_schema (auto-inferred label schema for classification-shaped data)
 # ===========================================================================

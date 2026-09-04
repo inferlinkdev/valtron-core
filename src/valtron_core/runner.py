@@ -78,6 +78,11 @@ def save_single_model_result(
             "response_time": p.response_time,
             "is_correct": p.is_correct,
             "example_score": p.example_score,
+            # Both are read back by ModelEval.load_experiment_results, so they
+            # have to be written here or a reloaded run silently loses them.
+            # task_scores is the only signal a task with no ground truth has.
+            "task_scores": p.task_scores,
+            "error": p.error,
         }
         if p.field_metrics:
             pred_dict["field_metrics"] = p.field_metrics.model_dump()
@@ -105,18 +110,22 @@ def save_single_model_result(
     return out_file
 
 
-def _completed_model_labels_on_disk(output_dir: Path) -> set[str]:
-    """Return model labels whose ``models/{name}.json`` file has ``status=completed``."""
+def _completed_model_files_on_disk(output_dir: Path) -> dict[str, Path]:
+    """Map model label -> its ``models/{name}.json`` file, for files with ``status=completed``.
+
+    Returning the file (not just the label) is what lets a caller actually rebuild
+    the model's ``EvaluationResult`` rather than merely knowing it exists.
+    """
     models_dir = output_dir / "models"
     if not models_dir.exists():
-        return set()
-    completed: set[str] = set()
+        return {}
+    completed: dict[str, Path] = {}
     for json_file in models_dir.glob("*.json"):
         try:
             with open(json_file) as f:
                 data = json.load(f)
             if data.get("status") == "completed":
-                completed.add(data["model"])
+                completed[data["model"]] = json_file
         except Exception:
             pass
     return completed
@@ -134,6 +143,7 @@ def save_run_dir(
     prompt_manipulations: "dict[str, list[str]] | None" = None,
     model_override_prompts: "dict[str, str] | None" = None,
     response_format_schema: "dict[str, Any] | None" = None,
+    task_config: "dict[str, Any] | None" = None,
 ) -> Path:
     """Write evaluation results to the canonical run directory layout.
 
@@ -154,6 +164,10 @@ def save_run_dir(
             Defaults to ``[]`` when absent.
         model_override_prompts: Mapping of model name → per-model override prompt (pre-manipulation).
             Only present when a model defines its own ``prompt`` field in config.
+        task_config: Task-specific extra config fields (from
+            ``ModelEval._extra_metadata()``) needed to restore a reloaded instance
+            to the same state as the one that produced this run -- see
+            ``ModelEval._restore_config()``, the read-side counterpart.
 
     Returns:
         Resolved Path to *run_dir*.
@@ -178,6 +192,7 @@ def save_run_dir(
             "original_prompt": original_prompt,
             "field_metrics_config": {"config": field_config} if field_config else None,
             "response_format_schema": response_format_schema,
+            "task_config": task_config or None,
             "documents": documents,
             "total_cost": total_cost,
             "cost": model_costs,

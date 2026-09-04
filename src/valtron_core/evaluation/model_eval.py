@@ -45,7 +45,7 @@ from tqdm import tqdm  # type: ignore[import-untyped]
 from valtron_core.client import LLMClient
 from valtron_core.content_resolution import absolutize_local_path, is_local_path, resolve_content
 from valtron_core.evaluation.config import BaseRecipeConfig, LLMModelConfig, ModelEvalConfig
-from valtron_core.models import Document, FieldMetricsConfig, PredictionResult
+from valtron_core.models import Document, EvaluationMetrics, FieldMetricsConfig, PredictionResult
 from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
 from valtron_core.progress import ProgressTracker, write_status
 from valtron_core.runner import EvaluationResult, EvaluationRunner, PreflightError
@@ -204,12 +204,22 @@ class ModelEval(ABC):
     # Load from disk (the read side of save_experiment_results)
     # -------------------------------------------------------------------------
 
+    def _extra_metadata(self) -> "dict[str, Any]":
+        """Task-specific extra config to persist for ``_restore_config()`` to read back.
+
+        Default is ``{}``. Override alongside ``_restore_config()`` -- this is its
+        write-side counterpart -- so a reloaded instance matches the one that
+        produced the run. Written into ``metadata.json`` by ``save_experiment_results()``.
+        """
+        return {}
+
     @classmethod
     def _restore_config(cls, meta: "dict[str, Any]") -> "dict[str, Any]":
         """Return task-specific extra config fields to restore from a saved ``metadata.json``.
 
         Default is ``{}``. Override to pull additional config fields out of ``meta``
-        so a reloaded instance matches the one that produced the run.
+        so a reloaded instance matches the one that produced the run. ``meta`` is
+        whatever ``_extra_metadata()`` wrote, read back out.
         """
         return {}
 
@@ -268,6 +278,68 @@ class ModelEval(ABC):
             return ""
         return str(label)
 
+    @staticmethod
+    def _result_from_model_data(
+        md: "dict[str, Any]", label_map: "dict[str, str]"
+    ) -> EvaluationResult:
+        """Reconstruct one model's ``EvaluationResult`` from ``_model_data_from_file()``'s output.
+
+        Shared by ``load_experiment_results()`` and ``aevaluate()``'s disk-resume
+        path -- both need to turn a saved ``models/<name>.json`` back into a live
+        result the same way.
+        """
+        model_label = md["label"] or md["name"]
+
+        try:
+            from valtron_core.scoring.json_eval import EvalResult
+
+            _eval_result_cls: Any = EvalResult
+        except ImportError:
+            _eval_result_cls = None
+
+        predictions = []
+        for p in md.get("predictions", []):
+            field_metrics = None
+            if p.get("field_metrics") and _eval_result_cls is not None:
+                try:
+                    field_metrics = _eval_result_cls.model_validate(p["field_metrics"])
+                except Exception:
+                    pass
+            predictions.append(
+                PredictionResult(
+                    document_id=p["document_id"],
+                    predicted_value=p["predicted_value"],
+                    expected_value=p.get("expected_value", label_map.get(p["document_id"])),
+                    is_correct=p.get("is_correct"),
+                    example_score=p.get("example_score"),
+                    error=p.get("error"),
+                    task_scores=p.get("task_scores"),
+                    response_time=p.get("response_time", 0.0),
+                    original_cost=p.get("original_cost", 0.0),
+                    llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
+                    evaluation_cost=p.get("evaluation_cost", 0.0),
+                    model=model_label,
+                    field_metrics=field_metrics,
+                )
+            )
+
+        result = EvaluationResult(
+            run_id=md["run_id"],
+            model=model_label,
+            predictions=predictions,
+            metrics=EvaluationMetrics(**md["metrics"]) if md.get("metrics") else None,
+            prompt_template=md["prompt_template"],
+            llm_config=md.get("llm_config", {}),
+            status=md.get("status", "completed"),
+        )
+        if md.get("started_at"):
+            result.started_at = md["started_at"]
+        if md.get("completed_at"):
+            result.completed_at = md["completed_at"]
+        if not result.metrics and result.predictions:
+            result.compute_metrics()
+        return result
+
     @classmethod
     def _config_and_data_from_metadata(
         cls, metadata_path: Path
@@ -306,8 +378,6 @@ class ModelEval(ABC):
             FileNotFoundError: ``metadata.json`` is absent.
             ValueError: ``models/`` directory is empty.
         """
-        from valtron_core.models import EvaluationMetrics
-
         dir_path = Path(dir_path)
         metadata_path = dir_path / "metadata.json"
         if not metadata_path.exists():
@@ -348,56 +418,7 @@ class ModelEval(ABC):
             model_label = md["label"] or md["name"]
             model_prompts[model_label] = md["prompt_template"]
             manipulations_applied[model_label] = md["prompt_manipulation"]
-
-            try:
-                from valtron_core.scoring.json_eval import EvalResult
-
-                _eval_result_cls: Any = EvalResult
-            except ImportError:
-                _eval_result_cls = None
-
-            predictions = []
-            for p in md.get("predictions", []):
-                field_metrics = None
-                if p.get("field_metrics") and _eval_result_cls is not None:
-                    try:
-                        field_metrics = _eval_result_cls.model_validate(p["field_metrics"])
-                    except Exception:
-                        pass
-                predictions.append(
-                    PredictionResult(
-                        document_id=p["document_id"],
-                        predicted_value=p["predicted_value"],
-                        expected_value=p.get("expected_value", label_map.get(p["document_id"])),
-                        is_correct=p.get("is_correct"),
-                        example_score=p.get("example_score"),
-                        error=p.get("error"),
-                        task_scores=p.get("task_scores"),
-                        response_time=p.get("response_time", 0.0),
-                        original_cost=p.get("original_cost", 0.0),
-                        llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
-                        evaluation_cost=p.get("evaluation_cost", 0.0),
-                        model=model_label,
-                        field_metrics=field_metrics,
-                    )
-                )
-
-            result = EvaluationResult(
-                run_id=md["run_id"],
-                model=model_label,
-                predictions=predictions,
-                metrics=EvaluationMetrics(**md["metrics"]) if md.get("metrics") else None,
-                prompt_template=md["prompt_template"],
-                llm_config=md.get("llm_config", {}),
-                status=md.get("status", "completed"),
-            )
-            if md.get("started_at"):
-                result.started_at = md["started_at"]
-            if md.get("completed_at"):
-                result.completed_at = md["completed_at"]
-            if not result.metrics and result.predictions:
-                result.compute_metrics()
-            results.append(result)
+            results.append(cls._result_from_model_data(md, label_map))
 
         instance.results = results
         instance._model_prompts = model_prompts
@@ -1063,10 +1084,13 @@ class ModelEval(ABC):
         """Run the evaluation pipeline and populate results on this instance (async).
 
         Does not write any files -- call ``save_experiment_results()`` /
-        ``save_html_report()`` / ``save_pdf_report()`` afterwards for that. Skips any
-        model already in ``self.results`` or already persisted under
-        ``output_dir`` from a prior run, which is what makes ``add_models()`` +
-        ``aevaluate()`` safe to call again later.
+        ``save_html_report()`` / ``save_pdf_report()`` afterwards for that. A model
+        already in ``self.results``, or already persisted as ``completed`` under
+        ``output_dir`` from a prior run, is not re-run -- for the disk case, its
+        saved result is reconstructed into ``self.results`` rather than merely
+        skipped, so it is not silently dropped from this run's output. This is what
+        makes ``add_models()`` + ``aevaluate()`` safe to call again later, including
+        from a fresh instance that never called ``load_experiment_results()``.
         """
         logger.info("evaluation_pipeline_started", evaluation=type(self).__name__)
 
@@ -1080,10 +1104,23 @@ class ModelEval(ABC):
         self._model_prompts = await self._prepare_model_prompts()
 
         existing_labels: set[str] = {r.model for r in (self.results or [])}
-        if self.output_dir is not None and not self.results:
-            from valtron_core.runner import _completed_model_labels_on_disk
+        if self.output_dir is not None:
+            from valtron_core.runner import _completed_model_files_on_disk
 
-            existing_labels |= _completed_model_labels_on_disk(Path(self.output_dir))
+            label_map = {
+                str(d.get("id", "")): self._stringify_label(d.get("label")) for d in self.data
+            }
+            for label, model_file in _completed_model_files_on_disk(Path(self.output_dir)).items():
+                if label in existing_labels:
+                    continue
+                md = self._model_data_from_file(model_file)
+                self.results = (self.results or []) + [self._result_from_model_data(md, label_map)]
+                self._model_prompts = {**(self._model_prompts or {}), label: md["prompt_template"]}
+                self._manipulations_applied = {
+                    **(self._manipulations_applied or {}),
+                    label: md["prompt_manipulation"],
+                }
+                existing_labels.add(label)
         models_to_run = [m for m in self.models if (m.label or m.name) not in existing_labels]
 
         if models_to_run:
@@ -1133,6 +1170,7 @@ class ModelEval(ABC):
             prompt_manipulations=self._manipulations_applied,
             model_override_prompts=self._model_override_prompts,
             response_format_schema=getattr(self, "_response_format_schema", None),
+            task_config=self._extra_metadata(),
         )
         return run_dir
 

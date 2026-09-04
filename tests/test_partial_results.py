@@ -10,7 +10,7 @@ import pytest
 
 from valtron_core.models import PredictionResult
 from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
-from valtron_core.runner import _completed_model_labels_on_disk, save_single_model_result
+from valtron_core.runner import _completed_model_files_on_disk, save_single_model_result
 
 
 # ---------------------------------------------------------------------------
@@ -349,21 +349,22 @@ class TestRunnerHelpers:
         assert data["prompt_manipulations"] == ["few_shot"]
         assert data["override_prompt"] == "override"
 
-    def test_completed_model_labels_on_disk_empty_dir(self, tmp_path: Path):
+    def test_completed_model_files_on_disk_empty_dir(self, tmp_path: Path):
         (tmp_path / "models").mkdir()
-        assert _completed_model_labels_on_disk(tmp_path) == set()
+        assert _completed_model_files_on_disk(tmp_path) == {}
 
-    def test_completed_model_labels_on_disk_no_models_dir(self, tmp_path: Path):
-        assert _completed_model_labels_on_disk(tmp_path) == set()
+    def test_completed_model_files_on_disk_no_models_dir(self, tmp_path: Path):
+        assert _completed_model_files_on_disk(tmp_path) == {}
 
-    def test_completed_model_labels_on_disk_finds_completed(self, tmp_path: Path):
+    def test_completed_model_files_on_disk_finds_completed(self, tmp_path: Path):
         _make_result("gpt-4o", ["doc-1", "doc-2"], tmp_path)
         _make_result("claude-3", ["doc-1"], tmp_path)
 
-        labels = _completed_model_labels_on_disk(tmp_path)
-        assert labels == {"gpt-4o", "claude-3"}
+        found = _completed_model_files_on_disk(tmp_path)
+        assert found.keys() == {"gpt-4o", "claude-3"}
+        assert found["gpt-4o"] == tmp_path / "models" / "gpt-4o.json"
 
-    def test_completed_model_labels_on_disk_ignores_running(self, tmp_path: Path):
+    def test_completed_model_files_on_disk_ignores_running(self, tmp_path: Path):
         from valtron_core.models import EvaluationResult
 
         result = EvaluationResult(
@@ -375,15 +376,15 @@ class TestRunnerHelpers:
         )
         save_single_model_result(tmp_path, result)
 
-        assert _completed_model_labels_on_disk(tmp_path) == set()
+        assert _completed_model_files_on_disk(tmp_path) == {}
 
-    def test_completed_model_labels_skips_partial_jsonl_files(self, tmp_path: Path):
+    def test_completed_model_files_skips_partial_jsonl_files(self, tmp_path: Path):
         models_dir = tmp_path / "models"
         models_dir.mkdir()
         (models_dir / ".gpt-4o.partial.jsonl").write_text(
             json.dumps({"model": "gpt-4o", "status": "completed"}) + "\n"
         )
-        assert _completed_model_labels_on_disk(tmp_path) == set()
+        assert _completed_model_files_on_disk(tmp_path) == {}
 
 
 # ---------------------------------------------------------------------------
@@ -473,9 +474,9 @@ class TestCrashRecoveryIntegration:
         """Models with a final completed JSON are skipped entirely on re-run."""
         _make_result("gpt-4o", ["doc-1", "doc-2"], tmp_path)
 
-        labels = _completed_model_labels_on_disk(tmp_path)
-        assert "gpt-4o" in labels
+        found = _completed_model_files_on_disk(tmp_path)
+        assert "gpt-4o" in found
 
         all_model_labels = ["gpt-4o", "claude-3"]
-        models_to_run = [m for m in all_model_labels if m not in labels]
+        models_to_run = [m for m in all_model_labels if m not in found]
         assert models_to_run == ["claude-3"]

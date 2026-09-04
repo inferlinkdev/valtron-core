@@ -4,6 +4,7 @@ import asyncio
 import json
 import re
 import time
+import traceback
 import uuid
 from datetime import datetime
 from typing import Any, AsyncIterator, Callable
@@ -12,6 +13,7 @@ import structlog
 from litellm import BaseModel, completion_cost
 from litellm.utils import ModelResponse  # type: ignore[attr-defined]
 
+from valtron_core.attachments import build_message_content, check_attachment_support
 from valtron_core.client import LLMClient
 from valtron_core.scoring.json_eval import JsonEvaluator
 from valtron_core.models import (
@@ -22,14 +24,6 @@ from valtron_core.models import (
     Label,
     PredictionResult,
 )
-
-import base64
-import urllib.request
-from pathlib import Path
-import traceback
-import litellm
-
-from valtron_core.attachments import _EXT_MIME, _MAGIC, detect_mime_hint
 from valtron_core.cost_utils import (
     _TIME_UNIT_RE,
     _fallback_cost,
@@ -117,7 +111,7 @@ class PromptEvaluator:
             return template.replace("{content}", document.content)
 
         result = template
-        for key in set(re.findall(r'\{(\w+)\}', template)):
+        for key in set(re.findall(r"\{(\w+)\}", template)):
             if key in document.content:
                 result = result.replace(f"{{{key}}}", document.content[key] or "")
             else:
@@ -128,162 +122,6 @@ class PromptEvaluator:
                 )
                 result = result.replace(f"{{{key}}}", "")
         return result
-
-    def _preflight_attachment_check(self, documents: list[Document], model_name: str) -> None:
-        """
-        Verify the model supports every attachment type across all documents before
-        any evaluation runs. Uses extension/data-URI detection only — no I/O.
-
-        Raises:
-            ValueError: If any document has an attachment type the model cannot handle,
-                        or if an attachment's type cannot be determined from its extension.
-        """
-        supported_exts = ", ".join(_EXT_MIME.keys())
-
-        for doc in documents:
-            if not doc.attachments:
-                continue
-            for attachment in doc.attachments:
-                mime_type = detect_mime_hint(attachment)
-
-                if not mime_type:
-                    raise ValueError(
-                        f"Cannot determine attachment type for document '{doc.id}' "
-                        f"(attachment: '{attachment}'). "
-                        f"Supported extensions: {supported_exts}."
-                    )
-
-                if mime_type.startswith("image/") and not litellm.supports_vision(model_name):
-                    raise ValueError(
-                        f"Model '{model_name}' does not support image inputs, "
-                        f"but document '{doc.id}' has an image attachment."
-                    )
-                if mime_type == "application/pdf" and not litellm.supports_pdf_input(model_name):
-                    raise ValueError(
-                        f"Model '{model_name}' does not support PDF inputs, "
-                        f"but document '{doc.id}' has a PDF attachment."
-                    )
-
-    def _load_attachment(self, s: str) -> tuple[bytes, str, bool]:
-        """
-        Load attachment data and detect its MIME type.
-
-        Args:
-            s: HTTP/HTTPS URL or local file path.
-
-        Returns:
-            (data, mime_type, is_url) where is_url indicates the source was a URL.
-            For URL sources where MIME was determined from the extension alone,
-            data is empty bytes — callers that support URL passthrough can skip fetching.
-        """
-        is_url = s.startswith(("http://", "https://"))
-
-        # Data URI: data:<mime>;base64,<data>
-        if s.startswith("data:"):
-            header, _, b64 = s.partition(",")
-            mime_type = header.split(":")[1].split(";")[0]
-            return base64.b64decode(b64), mime_type, False
-
-        # Detect MIME from extension first (strips query strings for URLs)
-        mime_type = detect_mime_hint(s)
-
-        if is_url:
-            if mime_type:
-                # Extension was sufficient — skip the network fetch.
-                # Callers that support URL passthrough won't need the bytes.
-                return b"", mime_type, True
-            with urllib.request.urlopen(s) as resp:
-                raw = resp.read()
-                ct = resp.headers.get("Content-Type", "").split(";")[0].strip()
-                mime_type = ct if ct else ""
-        else:
-            raw = Path(s).read_bytes()
-
-        # Magic-byte fallback if MIME still unknown
-        if not mime_type:
-            for magic, mime in _MAGIC:
-                if raw[: len(magic)] == magic:
-                    mime_type = mime
-                    break
-
-        if not mime_type:
-            mime_type = "application/octet-stream"
-
-        return raw, mime_type, is_url
-
-    def _build_message_content(
-        self, prompt: str, document: Document, model: str
-    ) -> str | list[dict[str, str]]:
-        """
-        Build the user message content, adding attachment parts when present.
-
-        Returns a plain string when there are no attachments, or a list of
-        provider-appropriate content parts when there are.
-
-        Each entry in document.attachments is an HTTP/HTTPS URL or a local file
-        path. The file type is auto-detected from the extension or magic bytes.
-        LiteLLM translates the content blocks to the correct format per provider.
-
-        Raises:
-            ValueError: If the model does not support the required input type.
-        """
-        if not document.attachments:
-            return prompt
-
-        import base64
-        import litellm
-
-        parts: list[dict[str, str]] = [{"type": "text", "text": prompt}]
-
-        for s in document.attachments:
-            try:
-                raw, mime_type, is_url = self._load_attachment(s)
-            except Exception as e:
-                logger.warning("attachment_load_failed", attachment=s, error=str(e))
-                continue
-
-            is_image = mime_type.startswith("image/")
-            is_pdf = mime_type == "application/pdf"
-
-            if not is_image and not is_pdf:
-                logger.warning("attachment_unsupported_mime", attachment=s, mime_type=mime_type)
-                continue
-
-            is_data_uri = s.startswith("data:")
-
-            if is_image:
-                if not litellm.supports_vision(model):
-                    raise ValueError(f"Model '{model}' does not support image inputs.")
-                # image_url is LiteLLM's universal format for images across all providers.
-                if is_url or is_data_uri:
-                    # URL and data URIs can be passed directly — no encode/decode needed.
-                    parts.append({"type": "image_url", "image_url": {"url": s}})
-                else:
-                    b64 = base64.b64encode(raw).decode()
-                    parts.append(
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:{mime_type};base64,{b64}"},
-                        }
-                    )
-
-            elif is_pdf:
-                if not litellm.utils.supports_pdf_input(model):
-                    raise ValueError(f"Model '{model}' does not support PDF inputs.")
-                if is_data_uri:
-                    # Already a data URI — pass directly as file_data.
-                    parts.append({"type": "file", "file": {"file_data": s}})
-                elif is_url and not raw:
-                    # URL passthrough — LiteLLM fetches and routes per-provider.
-                    parts.append(
-                        {"type": "file", "file": {"file_id": s, "format": "application/pdf"}}
-                    )
-                else:
-                    # Local file or URL whose bytes were already fetched during MIME detection.
-                    b64_data = f"data:application/pdf;base64,{base64.b64encode(raw).decode()}"
-                    parts.append({"type": "file", "file": {"file_data": b64_data}})
-
-        return parts
 
     def _normalize_value(self, value: str) -> str:
         """
@@ -359,7 +197,7 @@ class PromptEvaluator:
 
         # Format prompt and build message content (may include attachment parts)
         prompt = self._format_prompt(prompt_template, document)
-        content = self._build_message_content(prompt, document, model_name)
+        content = build_message_content(prompt, document.attachments, model_name)
         messages = [{"role": "user", "content": content}]
 
         # Track time
@@ -432,9 +270,7 @@ class PromptEvaluator:
 
             # Build template vars for field metrics (prompt_used + doc content fields)
             if isinstance(document.content, dict):
-                doc_vars: dict[str, Any] = {
-                    f"example_{k}": v for k, v in document.content.items()
-                }
+                doc_vars: dict[str, Any] = {f"example_{k}": v for k, v in document.content.items()}
             else:
                 doc_vars = {"example_content": document.content}
             extra_template_vars = {"prompt_used": prompt, **doc_vars}
@@ -538,13 +374,15 @@ class PromptEvaluator:
                 logger.warning("missing_label", document_id=doc.id)
 
         # Preflight: verify model supports all attachment types before running anything
-        self._preflight_attachment_check(eval_input.documents, model_name)
+        check_attachment_support(eval_input.documents, model_name)
 
         try:
             # Use semaphore to limit concurrent requests
             semaphore = asyncio.Semaphore(max_concurrent)
             _fallback_warning_logged = False
-            _has_user_cost_rate = isinstance(eval_input.model, dict) and eval_input.model.get("cost_rate") is not None
+            _has_user_cost_rate = (
+                isinstance(eval_input.model, dict) and eval_input.model.get("cost_rate") is not None
+            )
 
             json_evaluator = (
                 JsonEvaluator(
@@ -614,7 +452,6 @@ class PromptEvaluator:
             result.error = str(e)
             result.completed_at = datetime.now()
 
-
             tb_str = "".join(traceback.format_tb(e.__traceback__))
 
             logger.error(
@@ -627,4 +464,3 @@ class PromptEvaluator:
             )
 
         return result
-

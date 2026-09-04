@@ -1,0 +1,657 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Valtron Summarization Report</title>
+    <link rel="icon" href="favicon.svg" type="image/svg+xml">
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+      {% include 'common.css' %}
+
+      body {
+          max-width: 1400px;
+          padding: 40px 20px;
+          background-attachment: fixed;
+      }
+
+      .header {
+          background: #161b22;
+          color: #c9d1d9;
+          padding: 40px;
+          border-radius: 6px;
+          margin-bottom: 30px;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+          border: 1px solid #30363d;
+      }
+
+      h1 {
+          font-size: 2.4em;
+          letter-spacing: 0.05em;
+          margin-bottom: 8px;
+      }
+
+      .subtitle {
+          color: #8b949e;
+          font-size: 1.0em;
+          margin-top: 8px;
+      }
+
+      .meta-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+          gap: 16px;
+          margin-top: 24px;
+      }
+      .meta-item {
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 14px 16px;
+      }
+      .meta-label {
+          color: #8b949e;
+          font-size: 0.78em;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          margin-bottom: 6px;
+      }
+      .meta-value {
+          color: #c9d1d9;
+          font-size: 1.05em;
+          font-weight: 600;
+      }
+      .meta-value.accent { color: #58a6ff; }
+
+      .panel {
+          background: #161b22;
+          padding: 30px;
+          margin-bottom: 25px;
+          border-radius: 6px;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+          border: 1px solid #30363d;
+      }
+      .panel h2 {
+          color: #58a6ff;
+          border-bottom: 1px solid #30363d;
+          padding-bottom: 12px;
+          margin-top: 0;
+          margin-bottom: 14px;
+          font-size: 1.4em;
+          font-weight: 600;
+          letter-spacing: 0.03em;
+      }
+      .panel .panel-desc {
+          color: #8b949e;
+          font-size: 0.88em;
+          margin-bottom: 20px;
+      }
+
+      table.data-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 0.9em;
+      }
+      table.data-table th, table.data-table td {
+          text-align: left;
+          padding: 10px 12px;
+          border-bottom: 1px solid #21262d;
+          color: #c9d1d9;
+      }
+      table.data-table th {
+          background: #21262d;
+          color: #8b949e;
+          font-weight: 600;
+          text-transform: uppercase;
+          font-size: 0.75em;
+          letter-spacing: 0.05em;
+          border-bottom: 1px solid #30363d;
+          border-top: 1px solid #30363d;
+      }
+      table.data-table td.num, table.data-table th.num {
+          text-align: right;
+          font-variant-numeric: tabular-nums;
+      }
+      table.data-table tr:hover td { background: #1a2029; }
+      table.data-table tr.winner td {
+          background: rgba(88, 166, 255, 0.08);
+          border-bottom: 1px solid #1f6feb55;
+      }
+      table.data-table tr.winner td:first-child { border-left: 3px solid #58a6ff; }
+
+      .tier {
+          display: inline-block;
+          min-width: 22px;
+          padding: 2px 8px;
+          border-radius: 999px;
+          background: rgba(88, 166, 255, 0.15);
+          color: #58a6ff;
+          font-size: 0.78em;
+          font-weight: 700;
+          text-align: center;
+      }
+      .score {
+          font-weight: 700;
+          color: #e6edf3;
+          font-variant-numeric: tabular-nums;
+      }
+      .badge {
+          display: inline-block;
+          padding: 2px 8px;
+          border-radius: 4px;
+          font-size: 0.72em;
+          font-weight: 600;
+          margin-left: 6px;
+      }
+      .badge.gated { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+      .badge.met { background: rgba(63, 185, 80, 0.15); color: #3fb950; }
+      .badge.missed { background: rgba(248, 81, 73, 0.15); color: #f85149; }
+      .undef { color: #6e7681; font-style: italic; }
+
+      .note {
+          margin-top: 16px;
+          padding: 10px 14px;
+          background: #0d1117;
+          border-left: 3px solid #30363d;
+          border-radius: 0 6px 6px 0;
+          color: #8b949e;
+          font-size: 0.85em;
+          line-height: 1.6;
+      }
+      .note strong { color: #c9d1d9; }
+
+      .chart-box {
+          width: 100%;
+          height: 380px;
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 10px;
+          margin-top: 10px;
+      }
+      .chart-box.short { height: 280px; }
+      .chart-title {
+          color: #8b949e;
+          text-align: center;
+          font-size: 0.9em;
+          font-weight: 600;
+          margin: 0 0 4px;
+      }
+      .charts-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+          gap: 20px;
+          margin-top: 20px;
+      }
+
+      .recommendation {
+          background: #161b22;
+          padding: 24px;
+          border-left: 4px solid #a371f7;
+          border-radius: 6px;
+          margin: 4px 0 0;
+          color: #c9d1d9;
+          line-height: 1.7;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+          font-weight: 400;
+          font-size: 0.95rem;
+          overflow-wrap: break-word;
+          word-break: break-word;
+      }
+      .recommendation h1 { font-size: 1.3em; color: #e6edf3; margin: 16px 0 8px; }
+      .recommendation h2 { font-size: 1.15em; color: #e6edf3; margin: 16px 0 8px; }
+      .recommendation h3 { font-size: 1.05em; color: #e6edf3; margin: 16px 0 8px; }
+      .recommendation h1:first-child, .recommendation h2:first-child, .recommendation h3:first-child { margin-top: 0; }
+      .recommendation ul, .recommendation ol { padding-left: 24px; margin: 8px 0; }
+      .recommendation li { margin: 4px 0; }
+      .recommendation strong, .recommendation b { color: #e6edf3; font-weight: 700; }
+      .recommendation code {
+          background: #0d1117;
+          padding: 2px 6px;
+          border-radius: 4px;
+      }
+      .recommendation pre {
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 12px 14px;
+          margin: 8px 0;
+          max-width: 100%;
+          white-space: pre-wrap;
+          overflow-wrap: break-word;
+      }
+      .recommendation pre code {
+          background: none;
+          padding: 0;
+      }
+      .recommendation table {
+          display: block;
+          overflow-x: auto;
+          max-width: 100%;
+      }
+      .recommendation p { margin: 8px 0; }
+      .recommendation p:first-child { margin-top: 0; }
+
+      details.doc, details.prompt {
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          margin-bottom: 10px;
+          background: #0d1117;
+      }
+      details.doc > summary, details.prompt > summary {
+          cursor: pointer;
+          padding: 12px 16px;
+          font-weight: 600;
+          font-size: 0.95em;
+          color: #c9d1d9;
+          list-style: none;
+      }
+      details.doc > summary::-webkit-details-marker,
+      details.prompt > summary::-webkit-details-marker { display: none; }
+      details.doc > summary::before, details.prompt > summary::before {
+          content: '▸ ';
+          color: #58a6ff;
+      }
+      details.doc[open] > summary::before, details.prompt[open] > summary::before {
+          content: '▾ ';
+      }
+      .doc-body {
+          padding: 6px 16px 18px;
+          border-top: 1px solid #21262d;
+      }
+      .field-label {
+          display: block;
+          color: #8b949e;
+          font-size: 0.75em;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          margin: 14px 0 6px;
+      }
+      .field-label:first-child { margin-top: 4px; }
+      .facts {
+          margin: 0 0 16px;
+          padding-left: 20px;
+          color: #c9d1d9;
+          font-size: 0.88em;
+      }
+      .facts li { margin-bottom: 4px; }
+      .summary-text {
+          background: #161b22;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 12px 14px;
+          font-size: 0.88em;
+          white-space: pre-wrap;
+          margin: 0 0 8px;
+          color: #c9d1d9;
+      }
+      .summary-text.err { border-color: #f85149; color: #ff9492; }
+      pre.prompt-code {
+          background: #0d1117;
+          border: 1px solid #30363d;
+          border-radius: 6px;
+          padding: 16px 18px;
+          overflow-x: auto;
+          font-size: 0.85em;
+          line-height: 1.6;
+          color: #c9d1d9;
+          white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="header">
+      <h1>Summarization Evaluation</h1>
+      <div class="subtitle">{{ use_case }}</div>
+      <div class="meta-grid">
+        <div class="meta-item">
+          <div class="meta-label">Models</div>
+          <div class="meta-value">{{ num_models }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Documents</div>
+          <div class="meta-value">{{ num_documents }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Judge model</div>
+          <div class="meta-value accent">{{ judge_model }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Total cost</div>
+          <div class="meta-value">${{ "%.6f"|format(total_cost) }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Tokens</div>
+          <div class="meta-value">{{ "{:,}".format(total_tokens) }}</div>
+        </div>
+        <div class="meta-item">
+          <div class="meta-label">Generated</div>
+          <div class="meta-value">{{ generated_at }}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Ranking</h2>
+      <div class="panel-desc">
+        Scored with no reference summaries. Models sharing a tier are being called
+        equivalent, not merely close.
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Tier</th><th>Model</th><th class="num">Score</th>
+            {% for label in axis_labels.values() %}<th class="num">{{ label }}</th>{% endfor %}
+            <th class="num">Docs</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in scores %}
+          <tr class="{% if loop.first %}winner{% endif %}">
+            <td><span class="tier">{{ row.tier }}</span></td>
+            <td>
+              {{ row.model }}
+              {% if row.gated %}<span class="badge gated">gated</span>{% endif %}
+            </td>
+            <td class="num score">{{ "%.4f"|format(row.score) }}</td>
+            {% for name in axis_labels %}
+            <td class="num {% if row.axes[name] == '—' %}undef{% endif %}">{{ row.axes[name] }}</td>
+            {% endfor %}
+            <td class="num">{{ row.documents_scored }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <div class="note">
+        <strong>Faithfulness is a gate, not a term.</strong> Below
+        {{ "%.0f"|format(parameters.gate * 100) }}% a model scores zero however well it
+        covers the document, so a fluent fabrication can never outrank a dull, correct
+        summary. Coverage and precision are combined as a harmonic mean
+        (&beta; = {{ parameters.beta }}), which is what stops the score being a length
+        proxy: padding a summary raises coverage but costs precision. A checklist, when
+        supplied, enters as its own term at weight {{ parameters.requirement_weight }}.
+        The dash shown for an axis means it was undefined for that model, which is not
+        the same as a zero.
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Why each model placed where it did</h2>
+      <div class="panel-desc">
+        The score is a blend, so it cannot say what went wrong. These can: a low
+        coverage bar and a low faithfulness bar mean very different problems.
+      </div>
+      <div id="axesChart" class="chart-box"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Cost and latency</h2>
+      <div class="panel-desc">
+        Split by what incurred it. The shared row is the per-document fact extraction
+        and salience pass every candidate reuses; it is divided evenly between them in
+        the per-model figures, since it belongs to no single one.
+      </div>
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>What</th><th class="num">Calls</th><th class="num">Prompt tokens</th>
+            <th class="num">Completion tokens</th><th class="num">Cost</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Generating summaries</td>
+            <td class="num">{{ usage.generation.calls }}</td>
+            <td class="num">{{ "{:,}".format(usage.generation.prompt_tokens) }}</td>
+            <td class="num">{{ "{:,}".format(usage.generation.completion_tokens) }}</td>
+            <td class="num">${{ "%.6f"|format(usage.generation.cost_usd) }}</td>
+          </tr>
+          <tr>
+            <td>Judging each summary</td>
+            <td class="num">{{ usage.judge_per_candidate.calls }}</td>
+            <td class="num">{{ "{:,}".format(usage.judge_per_candidate.prompt_tokens) }}</td>
+            <td class="num">{{ "{:,}".format(usage.judge_per_candidate.completion_tokens) }}</td>
+            <td class="num">${{ "%.6f"|format(usage.judge_per_candidate.cost_usd) }}</td>
+          </tr>
+          <tr>
+            <td>Shared per-document work</td>
+            <td class="num">{{ usage.judge_shared.calls }}</td>
+            <td class="num">{{ "{:,}".format(usage.judge_shared.prompt_tokens) }}</td>
+            <td class="num">{{ "{:,}".format(usage.judge_shared.completion_tokens) }}</td>
+            <td class="num">${{ "%.6f"|format(usage.judge_shared.cost_usd) }}</td>
+          </tr>
+        </tbody>
+      </table>
+      <div class="charts-grid">
+        <div>
+          <div class="chart-title">Total cost by model</div>
+          <div id="costChart" class="chart-box short"></div>
+        </div>
+        <div>
+          <div class="chart-title">Average seconds per document</div>
+          <div id="timeChart" class="chart-box short"></div>
+        </div>
+      </div>
+    </div>
+
+    {% if recommendation %}
+    <div class="panel">
+      <h2>Recommendation</h2>
+      <div class="recommendation" id="recommendation"></div>
+      <script>
+        (function() {
+          var raw = {{ recommendation | tojson }};
+          document.getElementById('recommendation').innerHTML = marked.parse(raw);
+        })();
+      </script>
+    </div>
+    {% endif %}
+
+    {% if documents %}
+    <div class="panel">
+      <h2>Per-document detail</h2>
+      <div class="panel-desc">
+        What the judge actually decided. The ranking is arguable only if you can see
+        which facts it turned on.
+      </div>
+      {% for doc in documents %}
+      <details class="doc">
+        <summary>{{ doc.id }} ({{ doc.salient_facts|length }} must-convey fact{% if doc.salient_facts|length != 1 %}s{% endif %})</summary>
+        <div class="doc-body">
+          {% if doc.salient_facts %}
+          <span class="field-label">Facts a good summary must convey</span>
+          <ul class="facts">
+            {% for fact in doc.salient_facts %}<li>{{ fact }}</li>{% endfor %}
+          </ul>
+          {% endif %}
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Model</th>
+                {% for label in axis_labels.values() %}<th class="num">{{ label }}</th>{% endfor %}
+                <th class="num">Salient hits</th><th class="num">Cost</th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for entry in doc.models %}
+              <tr>
+                <td>{{ entry.model }}</td>
+                {% for name in axis_labels %}
+                <td class="num {% if entry.axes[name] == '—' %}undef{% endif %}">{{ entry.axes[name] }}</td>
+                {% endfor %}
+                <td class="num">{{ entry.hits }}/{{ entry.salient_total }}</td>
+                <td class="num">${{ "%.6f"|format(entry.cost) }}</td>
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+          {% for entry in doc.models %}
+          <span class="field-label">{{ entry.model }}</span>
+          {% if entry.error %}
+          <div class="summary-text err">Failed: {{ entry.error }}</div>
+          {% else %}
+          <div class="summary-text">{{ entry.summary }}</div>
+          {% endif %}
+          {% if doc.requirements and entry.requirement_verdicts %}
+          <div style="margin: 0 0 8px">
+            {% for req in doc.requirements %}
+            {% set key = 'r' ~ loop.index0 %}
+            <span class="badge {% if entry.requirement_verdicts.get(key) %}met{% else %}missed{% endif %}"
+                  title="{{ req }}">
+              {% if entry.requirement_verdicts.get(key) %}&check;{% else %}&times;{% endif %}
+              {{ req[:60] }}{% if req|length > 60 %}…{% endif %}
+            </span>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% endfor %}
+        </div>
+      </details>
+      {% endfor %}
+    </div>
+    {% endif %}
+
+    <div class="panel">
+      <h2>Prompts</h2>
+      <div class="panel-desc">Exactly what each candidate was asked, checklist included.</div>
+      {% for model, prompt in model_prompts.items() %}
+      <details class="prompt">
+        <summary>{{ model }}</summary>
+        <div class="doc-body"><pre class="prompt-code">{{ prompt }}</pre></div>
+      </details>
+      {% endfor %}
+    </div>
+
+    <div class="footer">
+      <p>Generated by <strong>valtron_core</strong> - summarization evaluation, judged by {{ judge_model }}</p>
+    </div>
+
+    <script>
+      const AXES = {{ chart | tojson }};
+      const COSTS = {{ cost_chart | tojson }};
+      const AXIS_PALETTE = ["#58a6ff", "#3fb950", "#a371f7", "#e3b341"];
+
+      function baseGrid() {
+          return { left: 55, right: 25, top: 55, bottom: 55, containLabel: true };
+      }
+
+      const axesChart = echarts.init(document.getElementById("axesChart"), "dark");
+      axesChart.setOption({
+          backgroundColor: "#0d1117",
+          tooltip: {
+              trigger: "axis",
+              axisPointer: { type: "shadow" },
+              backgroundColor: "#161b22",
+              borderColor: "#30363d",
+              textStyle: { color: "#c9d1d9" },
+              valueFormatter: v => (v === null ? "undefined" : v + "%")
+          },
+          legend: { top: 4, textStyle: { color: "#8b949e" } },
+          grid: baseGrid(),
+          xAxis: {
+              type: "category",
+              data: AXES.models,
+              axisLabel: { color: "#8b949e", rotate: 15 },
+              axisLine: { lineStyle: { color: "#30363d" } }
+          },
+          yAxis: {
+              type: "value",
+              max: 100,
+              axisLabel: { color: "#8b949e", formatter: "{value}%" },
+              axisLine: { lineStyle: { color: "#30363d" } },
+              splitLine: { lineStyle: { color: "#21262d" } }
+          },
+          color: AXIS_PALETTE,
+          series: AXES.series.map(s => ({
+              name: s.name,
+              type: "bar",
+              data: s.data,
+              barMaxWidth: 34,
+              emphasis: { focus: "series" }
+          }))
+      });
+
+      const costChart = echarts.init(document.getElementById("costChart"), "dark");
+      costChart.setOption({
+          backgroundColor: "#0d1117",
+          tooltip: {
+              trigger: "axis",
+              backgroundColor: "#161b22",
+              borderColor: "#30363d",
+              textStyle: { color: "#c9d1d9" },
+              valueFormatter: v => "$" + Number(v).toFixed(6)
+          },
+          grid: baseGrid(),
+          xAxis: {
+              type: "category",
+              data: COSTS.models,
+              axisLabel: { color: "#8b949e", rotate: 15 },
+              axisLine: { lineStyle: { color: "#30363d" } }
+          },
+          yAxis: {
+              type: "value",
+              axisLabel: { color: "#8b949e", formatter: v => "$" + v },
+              axisLine: { lineStyle: { color: "#30363d" } },
+              splitLine: { lineStyle: { color: "#21262d" } }
+          },
+          series: [{
+              type: "bar",
+              data: COSTS.total_cost,
+              barMaxWidth: 46,
+              itemStyle: {
+                  color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                      { offset: 0, color: "#3fb950" },
+                      { offset: 1, color: "#238636" }
+                  ]),
+                  borderRadius: [4, 4, 0, 0]
+              }
+          }]
+      });
+
+      const timeChart = echarts.init(document.getElementById("timeChart"), "dark");
+      timeChart.setOption({
+          backgroundColor: "#0d1117",
+          tooltip: {
+              trigger: "axis",
+              backgroundColor: "#161b22",
+              borderColor: "#30363d",
+              textStyle: { color: "#c9d1d9" },
+              valueFormatter: v => Number(v).toFixed(2) + "s"
+          },
+          grid: baseGrid(),
+          xAxis: {
+              type: "category",
+              data: COSTS.models,
+              axisLabel: { color: "#8b949e", rotate: 15 },
+              axisLine: { lineStyle: { color: "#30363d" } }
+          },
+          yAxis: {
+              type: "value",
+              axisLabel: { color: "#8b949e", formatter: "{value}s" },
+              axisLine: { lineStyle: { color: "#30363d" } },
+              splitLine: { lineStyle: { color: "#21262d" } }
+          },
+          series: [{
+              type: "bar",
+              data: COSTS.avg_time,
+              barMaxWidth: 46,
+              itemStyle: {
+                  color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+                      { offset: 0, color: "#a371f7" },
+                      { offset: 1, color: "#8957e5" }
+                  ]),
+                  borderRadius: [4, 4, 0, 0]
+              }
+          }]
+      });
+
+      window.addEventListener("resize", () => {
+          axesChart.resize();
+          costChart.resize();
+          timeChart.resize();
+      });
+    </script>
+  </body>
+</html>

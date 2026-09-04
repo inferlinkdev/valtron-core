@@ -4,8 +4,10 @@ from .model_eval import ModelEval
 from .referenced_eval import ReferencedEval
 from .classification import ClassificationExperiment
 from .extraction import ExtractionExperiment
+from .summarization import SummarizationExperiment
 from .config import (
     ClassificationConfig,
+    SummarizationConfig,
     ModelEvalConfig,
     ModelConfig,
     LLMModelConfig,
@@ -21,8 +23,10 @@ __all__ = [
     "ReferencedEval",
     "ClassificationExperiment",
     "ExtractionExperiment",
+    "SummarizationExperiment",
     "ModelEvalConfig",
     "ClassificationConfig",
+    "SummarizationConfig",
     "ModelConfig",
     "LLMModelConfig",
     "TransformerModelConfig",

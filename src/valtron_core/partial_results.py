@@ -167,6 +167,11 @@ class PartialResultStore:
             "response_time": prediction.response_time,
             "is_correct": prediction.is_correct,
             "example_score": prediction.example_score,
+            # Without these a resumed run reuses the prediction but loses its
+            # score, which for a task scored only via task_scores means the
+            # resumed half silently contributes nothing to the aggregate.
+            "task_scores": prediction.task_scores,
+            "error": prediction.error,
             "model": prediction.model,
         }
         if prediction.field_metrics is not None:

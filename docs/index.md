@@ -56,6 +56,26 @@ Compare models on a single label per document (sentiment, topic, category), stri
 Extract nested JSON (multiple fields, lists, sub-objects) with per-field precision/recall/F1 instead of a single pass/fail.
 :::
 
+:::{grid-item-card} Summarization
+:link: user-guide/summarization/index
+:link-type: doc
+:class-header: sd-card-icon-header
+
+```{raw} html
+<svg class="sd-card-icon" width="56" height="54" viewBox="0 0 44 54" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+<rect x="2" y="2" width="40" height="4" fill="currentColor"/>
+<rect x="2" y="10" width="40" height="4" fill="currentColor"/>
+<rect x="2" y="18" width="40" height="4" fill="currentColor"/>
+<path d="M2 26H42L27 39H17L2 26Z" fill="currentColor"/>
+<rect x="12" y="45" width="20" height="6" fill="currentColor"/>
+</svg>
+```
+
+^^^
+
+Rank models on free-text summaries with no reference summary required: an LLM judge scores each one against the source document's own must-convey facts.
+:::
+
 :::{grid-item-card} Self-Hosting
 :link: user-guide/self-hosting/index
 :link-type: doc
