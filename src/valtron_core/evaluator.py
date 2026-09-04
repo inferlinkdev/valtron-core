@@ -7,7 +7,7 @@ import time
 import traceback
 import uuid
 from datetime import datetime
-from typing import Any, AsyncIterator, Callable
+from typing import Any, AsyncIterator, Callable, cast
 
 import structlog
 from litellm import BaseModel, completion_cost
@@ -15,6 +15,7 @@ from litellm.utils import ModelResponse  # type: ignore[attr-defined]
 
 from valtron_core.attachments import build_message_content, check_attachment_support
 from valtron_core.client import LLMClient
+from valtron_core.evaluation.stages import ExactMatchScorer, FieldMetricsScorer, Scorer
 from valtron_core.scoring.json_eval import JsonEvaluator
 from valtron_core.models import (
     Document,
@@ -44,41 +45,35 @@ def _score_prediction(
 ) -> tuple[Any, float, bool, float]:
     """Compute (field_metrics, example_score, is_correct, evaluation_cost).
 
-    Uses JsonEvaluator when field_metrics_config is provided; falls back to
-    case-insensitive string comparison otherwise. evaluation_cost is non-zero
-    only when JsonEvaluator makes LLM-as-judge calls.
+    Thin wrapper kept for existing callers/importers: builds the Scorer this
+    call needs (FieldMetricsScorer when field_metrics_config is given, else
+    ExactMatchScorer) and delegates to it. See
+    valtron_core.evaluation.stages.score for the Scorer protocol and its
+    implementations, which is where this logic now actually lives.
 
     Pass a pre-built ``json_evaluator`` to share its cache across documents in a run.
     If omitted, a fresh JsonEvaluator is constructed from ``field_metrics_config``.
     """
-    is_correct = predicted_value.strip().lower() == expected_value.strip().lower()
-    example_score = 1.0 if is_correct else 0.0
-    field_metrics = None
-    evaluation_cost = 0.0
-
-    if field_metrics_config:
-        try:
-            evaluator = json_evaluator or JsonEvaluator(
-                custom_metrics=field_metrics_config.custom_metrics,
-                custom_aggs=field_metrics_config.custom_aggs,
-            )
-            result, evaluation_cost = evaluator.evaluate(
-                field_metrics_config.config,
-                expected_value,
-                predicted_value,
-                extra_template_vars=extra_template_vars or {},
-            )
-            field_metrics = result
-            example_score = result.score
-            is_correct = result.is_correct
-        except Exception as e:
-            logger.warning(
-                "field_metrics_error",
-                document_id=document_id,
-                error=str(e),
-            )
-
-    return field_metrics, example_score, is_correct, evaluation_cost
+    scorer: Scorer = (
+        FieldMetricsScorer(field_metrics_config, json_evaluator=json_evaluator)
+        if field_metrics_config
+        else ExactMatchScorer()
+    )
+    outcome = scorer.score(
+        predicted_value,
+        expected_value,
+        extra_template_vars=extra_template_vars,
+        document_id=document_id,
+    )
+    # ExactMatchScorer/FieldMetricsScorer (unlike a reference-free Scorer) always
+    # set example_score/is_correct; ScoreOutcome types them Optional for the
+    # Protocol as a whole, so the cast documents that narrower guarantee here.
+    return (
+        outcome.field_metrics,
+        cast(float, outcome.example_score),
+        cast(bool, outcome.is_correct),
+        outcome.evaluation_cost,
+    )
 
 
 class PromptEvaluator:
