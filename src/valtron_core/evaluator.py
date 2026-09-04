@@ -1,21 +1,23 @@
 """Evaluation engine for LLM prompt testing."""
 
 import asyncio
-import json
-import re
-import time
 import traceback
 import uuid
 from datetime import datetime
-from typing import Any, AsyncIterator, Callable, cast
+from typing import Any, Callable, cast
 
 import structlog
-from litellm import BaseModel, completion_cost
-from litellm.utils import ModelResponse  # type: ignore[attr-defined]
+from litellm import BaseModel
 
-from valtron_core.attachments import build_message_content, check_attachment_support
+from valtron_core.attachments import check_attachment_support
 from valtron_core.client import LLMClient
-from valtron_core.evaluation.stages import ExactMatchScorer, FieldMetricsScorer, Scorer
+from valtron_core.evaluation.stages import (
+    ExactMatchScorer,
+    FieldMetricsScorer,
+    LLMGenerator,
+    Scorer,
+    format_prompt,
+)
 from valtron_core.scoring.json_eval import JsonEvaluator
 from valtron_core.models import (
     Document,
@@ -25,12 +27,7 @@ from valtron_core.models import (
     Label,
     PredictionResult,
 )
-from valtron_core.cost_utils import (
-    _TIME_UNIT_RE,
-    _fallback_cost,
-    _get_fallback_rate_info,
-    _parse_time_unit_to_seconds,
-)
+from valtron_core.cost_utils import _get_fallback_rate_info
 
 logger = structlog.get_logger()
 
@@ -87,6 +84,7 @@ class PromptEvaluator:
             client: Optional LLMClient instance. Creates new one if not provided.
         """
         self.client = client or LLMClient()
+        self._generator = LLMGenerator(client=self.client)
 
     def _format_prompt(self, template: str, document: Document) -> str:
         """
@@ -99,24 +97,18 @@ class PromptEvaluator:
 
         Returns:
             Formatted prompt string
-        """
-        if isinstance(document.content, str):
-            # Use replace() instead of format() to avoid issues with curly braces in document content
-            # This prevents JSON examples in prompts from being interpreted as format placeholders
-            return template.replace("{content}", document.content)
 
-        result = template
-        for key in set(re.findall(r"\{(\w+)\}", template)):
-            if key in document.content:
-                result = result.replace(f"{{{key}}}", document.content[key] or "")
-            else:
-                logger.warning(
-                    "prompt_variable_missing",
-                    document_id=document.id,
-                    key=key,
-                )
-                result = result.replace(f"{{{key}}}", "")
-        return result
+        Thin wrapper over evaluation.stages.generate.format_prompt, kept on this
+        class (rather than called directly) so its exact tested name/behavior,
+        including logging via this module's own ``logger``, is unchanged.
+        """
+        return format_prompt(
+            template,
+            document,
+            on_missing_key=lambda key: logger.warning(
+                "prompt_variable_missing", document_id=document.id, key=key
+            ),
+        )
 
     def _normalize_value(self, value: str) -> str:
         """
@@ -155,7 +147,7 @@ class PromptEvaluator:
         # Default: case-insensitive string comparison
         return self._normalize_value(predicted) == self._normalize_value(expected)
 
-    async def evaluate_single(  # noqa: C901, PLR0912
+    async def evaluate_single(
         self,
         document: Document,
         label: Label,
@@ -186,138 +178,70 @@ class PromptEvaluator:
 
         Returns:
             PredictionResult
+
+        Thin wrapper: generation (this method's former body) now lives in
+        LLMGenerator.generate(); this composes it with a Scorer, exactly the
+        Generator-then-Scorer shape the rest of the shared engine is moving to.
         """
-        # Extract model name for logging
         model_name = model if isinstance(model, str) else model.get("model", "unknown")
 
-        # Format prompt and build message content (may include attachment parts)
-        prompt = self._format_prompt(prompt_template, document)
-        content = build_message_content(prompt, document.attachments, model_name)
-        messages = [{"role": "user", "content": content}]
+        raw = await self._generator.generate(
+            document,
+            prompt_template,
+            model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            post_extraction_filter=post_extraction_filter,
+            multi_pass=multi_pass,
+        )
 
-        # Track time
-        start_time = time.time()
-
-        try:
-            # Multi-pass: run N completions with varying temperatures, then merge
-            if multi_pass > 1:
-                temperatures = [0.0, 0.3]
-
-                async def _single_pass(temp: float) -> ModelResponse | AsyncIterator[ModelResponse]:
-                    return await self.client.complete(
-                        model=model,
-                        messages=messages,
-                        temperature=temp,
-                        max_tokens=max_tokens,
-                        response_format=response_format,
-                    )
-
-                responses = await asyncio.gather(*[_single_pass(t) for t in temperatures])
-
-                raw_values = [r.choices[0].message.content.strip() for r in responses]
-
-                from valtron_core.decompose import _multi_pass_merge
-
-                predicted_value = _multi_pass_merge(raw_values)
-
-                end_time = time.time()
-                response_time = end_time - start_time
-
-                cost = 0.0
-                for resp in responses:
-                    try:
-                        cost += completion_cost(completion_response=resp)
-                    except Exception:
-                        pass
-            else:
-                # Get prediction
-                response = await self.client.complete(
-                    model=model,
-                    messages=messages,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    response_format=response_format,
-                )
-
-                end_time = time.time()
-                response_time = end_time - start_time
-
-                # Extract predicted value
-                predicted_value = response.choices[0].message.content.strip()
-
-                cost = 0.0
-                try:
-                    cost = completion_cost(completion_response=response)
-                except Exception:
-                    pass
-
-            # Resolve effective cost: user cost_rate > litellm pricing > fallback estimate
-            original_cost = cost
-            if isinstance(model, dict) and model.get("cost_rate") is not None:
-                unit_seconds = _parse_time_unit_to_seconds(model.get("cost_rate_time_unit", "1hr"))
-                cost = float(model["cost_rate"]) * (response_time / unit_seconds)
-            elif cost == 0.0:
-                cost = _fallback_cost(model, response_time)
-
-            # Apply post-extraction filter (e.g. hallucination filter)
-            if post_extraction_filter is not None:
-                predicted_value = await post_extraction_filter(predicted_value, document)
-
-            # Build template vars for field metrics (prompt_used + doc content fields)
-            if isinstance(document.content, dict):
-                doc_vars: dict[str, Any] = {f"example_{k}": v for k, v in document.content.items()}
-            else:
-                doc_vars = {"example_content": document.content}
-            extra_template_vars = {"prompt_used": prompt, **doc_vars}
-
-            # Score prediction (string comparison + optional JsonEvaluator)
-            field_metrics, example_score, is_correct, evaluation_cost = _score_prediction(
-                predicted_value=predicted_value,
-                expected_value=label.value,
-                field_metrics_config=field_metrics_config,
-                extra_template_vars=extra_template_vars,
-                document_id=document.id,
-                json_evaluator=json_evaluator,
-            )
-
+        if raw.error is not None:
+            # Generation itself failed: an automatic wrong answer, same as before,
+            # without asking a Scorer to judge a non-existent prediction.
             return PredictionResult(
                 document_id=document.id,
-                predicted_value=predicted_value,
-                expected_value=label.value,
-                is_correct=is_correct,
-                example_score=example_score,
-                response_time=response_time,
-                original_cost=original_cost,
-                llm_cost=cost,
-                evaluation_cost=evaluation_cost,
-                model=model_name,
-                field_metrics=field_metrics,
-                metadata={"content": document.content, "attachments": document.attachments},
-            )
-
-        except Exception as e:
-            end_time = time.time()
-            response_time = end_time - start_time
-
-            logger.error(
-                "evaluation_error",
-                document_id=document.id,
-                error=str(e),
-                time=response_time,
-            )
-
-            # Return a failed prediction
-            return PredictionResult(
-                document_id=document.id,
-                predicted_value=f"ERROR: {str(e)}",
+                predicted_value=raw.predicted_value,
                 expected_value=label.value,
                 is_correct=False,
-                response_time=response_time,
-                original_cost=0.0,
-                llm_cost=0.0,
+                response_time=raw.response_time,
+                original_cost=raw.original_cost,
+                llm_cost=raw.llm_cost,
                 model=model_name,
-                metadata={"error": str(e), "content": document.content},
+                metadata=raw.metadata,
             )
+
+        # Build template vars for field metrics (prompt_used + doc content fields)
+        if isinstance(document.content, dict):
+            doc_vars: dict[str, Any] = {f"example_{k}": v for k, v in document.content.items()}
+        else:
+            doc_vars = {"example_content": document.content}
+        extra_template_vars = {"prompt_used": raw.prompt, **doc_vars}
+
+        # Score prediction (string comparison + optional JsonEvaluator)
+        field_metrics, example_score, is_correct, evaluation_cost = _score_prediction(
+            predicted_value=raw.predicted_value,
+            expected_value=label.value,
+            field_metrics_config=field_metrics_config,
+            extra_template_vars=extra_template_vars,
+            document_id=document.id,
+            json_evaluator=json_evaluator,
+        )
+
+        return PredictionResult(
+            document_id=document.id,
+            predicted_value=raw.predicted_value,
+            expected_value=label.value,
+            is_correct=is_correct,
+            example_score=example_score,
+            response_time=raw.response_time,
+            original_cost=raw.original_cost,
+            llm_cost=raw.llm_cost,
+            evaluation_cost=evaluation_cost,
+            model=model_name,
+            field_metrics=field_metrics,
+            metadata=raw.metadata,
+        )
 
     async def evaluate(
         self,

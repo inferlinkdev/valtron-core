@@ -7,6 +7,12 @@ evaluation/README.md for the full picture; this package only grows one
 stage at a time as each is extracted from where it lives today.
 """
 
+from valtron_core.evaluation.stages.generate import (
+    Generator,
+    LLMGenerator,
+    RawPrediction,
+    format_prompt,
+)
 from valtron_core.evaluation.stages.score import (
     ExactMatchScorer,
     FieldMetricsScorer,
@@ -19,4 +25,8 @@ __all__ = [
     "ScoreOutcome",
     "ExactMatchScorer",
     "FieldMetricsScorer",
+    "Generator",
+    "RawPrediction",
+    "LLMGenerator",
+    "format_prompt",
 ]
