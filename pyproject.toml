@@ -1,6 +1,6 @@
 [project]
 name = "valtron-core"
-version = "0.1.20"
+version = "0.1.21"
 description = "LLM call optimization across various providers (online and local models)"
 authors = [{name = "InferLink", email = "valtron@inferlink.com"}]
 license = "Apache-2.0"
