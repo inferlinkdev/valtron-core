@@ -376,6 +376,113 @@ class TestDecomposedEvaluator:
         assert "pathogens" in merged["entities"]
 
     @pytest.mark.asyncio
+    async def test_evaluate_scores_correctly_without_field_metrics_config(self, mock_env_vars):
+        """Regression test: a decomposed prediction with no field_metrics_config
+        and no comparison_fn must be scored by comparing the merged result
+        against the real label (exact match), not hardcoded to
+        is_correct=False regardless of content."""
+        split_info = find_split_point(ExtractionSchema)
+        assert split_info is not None
+        sub_schemas = create_sub_schemas(split_info, ExtractionSchema)
+        sub_prompts = {
+            "people": "Extract ONLY people from: {content}",
+            "pathogens": "Extract ONLY pathogens from: {content}",
+        }
+
+        people_response = json.dumps({"entities": {"people": [{"name": "Alice", "type": "person"}]}})
+        pathogens_response = json.dumps(
+            {"entities": {"pathogens": [{"name": "E.coli", "type": "bacteria"}]}}
+        )
+
+        # The real merge, computed directly, is the one source of truth for
+        # what a byte-identical label needs to look like: avoids guessing
+        # merge_sub_results' exact key order/formatting.
+        expected_merged = merge_sub_results(
+            {"people": people_response, "pathogens": pathogens_response}, split_info
+        )
+
+        documents = [Document(id="doc-1", content="Alice found E.coli in the sample.")]
+        labels = [Label(document_id="doc-1", value=expected_merged)]
+
+        async def mock_complete(model, messages, **kwargs):
+            response = Mock()
+            response.choices = [Mock()]
+            response.choices[0].message = Mock()
+            response._hidden_params = {"response_cost": 0.0001}
+            prompt_content = messages[0]["content"]
+            response.choices[0].message.content = (
+                people_response if "people" in prompt_content else pathogens_response
+            )
+            return response
+
+        evaluator = DecomposedEvaluator()
+        with patch.object(evaluator.evaluator.client, "complete", side_effect=mock_complete):
+            result = await evaluator.evaluate(
+                documents=documents,
+                labels=labels,
+                sub_prompts=sub_prompts,
+                sub_schemas=sub_schemas,
+                split_info=split_info,
+                model="test-model",
+            )
+
+        pred = result.predictions[0]
+        assert pred.is_correct is True
+        assert pred.example_score == 1.0
+
+    @pytest.mark.asyncio
+    async def test_evaluate_scores_incorrect_without_field_metrics_config(self, mock_env_vars):
+        """Same setup, but the label doesn't match the merged output: must
+        score is_correct=False for the right reason (a real mismatch), the
+        same default exact-match behavior every other recipe already has."""
+        split_info = find_split_point(ExtractionSchema)
+        assert split_info is not None
+        sub_schemas = create_sub_schemas(split_info, ExtractionSchema)
+        sub_prompts = {
+            "people": "Extract ONLY people from: {content}",
+            "pathogens": "Extract ONLY pathogens from: {content}",
+        }
+
+        documents = [Document(id="doc-1", content="Alice found E.coli in the sample.")]
+        labels = [
+            Label(
+                document_id="doc-1",
+                value=json.dumps({"entities": {"people": [], "pathogens": []}}),
+            )
+        ]
+
+        async def mock_complete(model, messages, **kwargs):
+            response = Mock()
+            response.choices = [Mock()]
+            response.choices[0].message = Mock()
+            response._hidden_params = {"response_cost": 0.0001}
+            prompt_content = messages[0]["content"]
+            if "people" in prompt_content:
+                response.choices[0].message.content = json.dumps(
+                    {"entities": {"people": [{"name": "Alice", "type": "person"}]}}
+                )
+            else:
+                response.choices[0].message.content = json.dumps(
+                    {"entities": {"pathogens": [{"name": "E.coli", "type": "bacteria"}]}}
+                )
+            return response
+
+        evaluator = DecomposedEvaluator()
+        with patch.object(evaluator.evaluator.client, "complete", side_effect=mock_complete):
+            result = await evaluator.evaluate(
+                documents=documents,
+                labels=labels,
+                sub_prompts=sub_prompts,
+                sub_schemas=sub_schemas,
+                split_info=split_info,
+                model="test-model",
+            )
+
+        pred = result.predictions[0]
+        assert pred.is_correct is False
+        assert pred.example_score == 0.0
+
+    @pytest.mark.asyncio
     async def test_evaluate_fires_on_document_complete_per_doc(self, mock_env_vars):
         """The on_document_complete callback fires once per document (live progress)."""
         split_info = find_split_point(ExtractionSchema)

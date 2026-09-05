@@ -23,7 +23,7 @@ from rapidfuzz import fuzz
 
 from valtron_core.client import LLMClient
 from valtron_core.evaluation.stages import LLMGenerator, RawPrediction
-from valtron_core.evaluator import PromptEvaluator
+from valtron_core.evaluator import PromptEvaluator, _score_prediction
 from valtron_core.models import (
     Document,
     EvaluationResult,
@@ -927,38 +927,28 @@ class DecomposedEvaluator:
         )
         merged_json = raw.predicted_value
 
-        # Grade the merged result against the real label
-        from valtron_core.scoring.json_eval import JsonEvaluator
-
-        is_correct = False
-        example_score = 0.0
-        field_metrics = None
-
+        # Grade the merged result against the real label. comparison_fn, given
+        # explicitly, overrides the default scoring entirely (kept for API
+        # compatibility; no current caller passes one). Otherwise this goes
+        # through the same _score_prediction/Scorer path every other recipe
+        # uses: case-insensitive exact match by default, or field-level
+        # JsonEvaluator scoring when field_metrics_config is set. This fixes a
+        # real bug the inline version had: with no field_metrics_config and no
+        # comparison_fn, a decomposed prediction was always scored
+        # is_correct=False regardless of whether merged_json actually matched
+        # the label.
         if comparison_fn:
             is_correct = comparison_fn(merged_json, label.value, document.content)
             example_score = 1.0 if is_correct else 0.0
-
-        total_evaluation_cost = 0.0
-
-        if field_metrics_config:
-            try:
-                evaluator = JsonEvaluator(
-                    custom_metrics=field_metrics_config.custom_metrics,
-                    custom_aggs=field_metrics_config.custom_aggs,
-                )
-                field_metrics, total_evaluation_cost = evaluator.evaluate(
-                    field_metrics_config.config,
-                    label.value,
-                    merged_json,
-                )
-                example_score = field_metrics.score
-                is_correct = field_metrics.is_correct
-            except Exception as e:
-                logger.warning(
-                    "decomposed_field_metrics_error",
-                    document_id=document.id,
-                    error=str(e),
-                )
+            field_metrics = None
+            total_evaluation_cost = 0.0
+        else:
+            field_metrics, example_score, is_correct, total_evaluation_cost = _score_prediction(
+                predicted_value=merged_json,
+                expected_value=label.value,
+                field_metrics_config=field_metrics_config,
+                document_id=document.id,
+            )
 
         model_name = model if isinstance(model, str) else model.get("model", "unknown")
 
