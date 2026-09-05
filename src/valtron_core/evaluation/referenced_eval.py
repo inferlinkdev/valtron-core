@@ -33,7 +33,11 @@ from valtron_core.evaluation.config import (
     TransformerModelConfig,
 )
 from valtron_core.evaluation.model_eval import ModelEval
-from valtron_core.evaluation.stages import TransformerGenerator
+from valtron_core.evaluation.stages import (
+    StructuredLabelIngestor,
+    TransformerGenerator,
+    serialize_structured_label,
+)
 from valtron_core.evaluator import _score_prediction
 from valtron_core.few_shot_training_data_generator import (
     FewShotTrainingDataGenerator,
@@ -66,6 +70,12 @@ class ReferencedEval(ModelEval):
     for extraction-mode data with upfront validation that a schema was actually
     given.
     """
+
+    _ingestor: StructuredLabelIngestor
+    """Narrows ModelEval's ``Ingestor`` to the concrete type this class assigns,
+    so ``self._ingestor.auto_wrap_string_labels`` type-checks where it's kept in
+    sync with ``self._auto_wrap_string_labels`` (see ``_post_init``,
+    ``_check_model_param_support``)."""
 
     def __init__(
         self,
@@ -123,6 +133,7 @@ class ReferencedEval(ModelEval):
         self._field_metrics_config_raw = self.config.field_metrics_config
         self.few_shot_examples: list[Any] = []
         self._auto_wrap_string_labels: bool = self._compute_auto_wrap_string_labels()
+        self._ingestor = StructuredLabelIngestor(self._auto_wrap_string_labels)
 
         logger.info(
             "model_eval_initialized",
@@ -145,6 +156,7 @@ class ReferencedEval(ModelEval):
         wants_response_format = self.response_format is not None
 
         self._auto_wrap_string_labels = self._compute_auto_wrap_string_labels()
+        self._ingestor.auto_wrap_string_labels = self._auto_wrap_string_labels
 
         if wants_response_format and self.data and not self._auto_wrap_string_labels:
             all_plain_string_labels = all(
@@ -452,6 +464,7 @@ class ReferencedEval(ModelEval):
                     instance.response_format = synthesized
                     instance.decomposed_evaluator = DecomposedEvaluator(client=instance.client)
                     instance._auto_wrap_string_labels = instance._compute_auto_wrap_string_labels()
+                    instance._ingestor.auto_wrap_string_labels = instance._auto_wrap_string_labels
 
         label_map = {
             str(d.get("id", "")): (
@@ -667,17 +680,14 @@ class ReferencedEval(ModelEval):
         if resolved_data is not None:
             self.data = resolved_data
             self._auto_wrap_string_labels = self._compute_auto_wrap_string_labels()
+            self._ingestor.auto_wrap_string_labels = self._auto_wrap_string_labels
 
-            new_label_map: dict[str, str] = {}
-            for item in resolved_data:
-                label_raw = item.get("label", "")
-                if isinstance(label_raw, (dict, list)):
-                    serialized = json.dumps(label_raw)
-                elif self._auto_wrap_string_labels:
-                    serialized = json.dumps({"label": str(label_raw)})
-                else:
-                    serialized = str(label_raw)
-                new_label_map[str(item.get("id", ""))] = serialized
+            new_label_map: dict[str, str] = {
+                str(item.get("id", "")): serialize_structured_label(
+                    item.get("label", ""), auto_wrap_string_labels=self._auto_wrap_string_labels
+                )
+                for item in resolved_data
+            }
 
             existing_ids: set[str] = {p.document_id for er in self.results for p in er.predictions}
             for doc_id in new_label_map:
@@ -821,34 +831,6 @@ class ReferencedEval(ModelEval):
             total_cost=result["costs"]["total_cost"],
             duration_s=round(time.perf_counter() - phase_start, 2),
         )
-
-    # -------------------------------------------------------------------------
-    # Data loading
-    # -------------------------------------------------------------------------
-
-    def _load_documents_and_labels(self) -> tuple[list[Document], list[Label]]:
-        """Convert self.data into Document and Label objects (no disk I/O)."""
-        documents: list[Document] = []
-        labels: list[Label] = []
-        for idx, item in enumerate(self.data):
-            doc_id = str(item.get("id", f"doc_{idx}"))
-            label_raw = item.get("label", "")
-            if isinstance(label_raw, (dict, list)):
-                label_value = json.dumps(label_raw)
-            elif self._auto_wrap_string_labels:
-                label_value = json.dumps({"label": str(label_raw)})
-            else:
-                label_value = str(label_raw)
-            documents.append(
-                Document(
-                    id=doc_id,
-                    content=resolve_content(item, self._data_base_dir),
-                    metadata=item.get("metadata", {}),
-                    attachments=item.get("attachments", []),
-                )
-            )
-            labels.append(Label(document_id=doc_id, value=label_value))
-        return documents, labels
 
     # -------------------------------------------------------------------------
     # Per-model evaluation
@@ -1056,16 +1038,12 @@ class ReferencedEval(ModelEval):
         generator = TransformerGenerator(model_path, model_name)
 
         # Build label map from self.data (no file I/O)
-        label_map: dict[str, str] = {}
-        for idx, item in enumerate(self.data):
-            doc_id = str(item.get("id", f"doc_{idx}"))
-            label_raw = item.get("label", "")
-            if isinstance(label_raw, (dict, list)):
-                label_map[doc_id] = json.dumps(label_raw)
-            elif self._auto_wrap_string_labels:
-                label_map[doc_id] = json.dumps({"label": str(label_raw)})
-            else:
-                label_map[doc_id] = str(label_raw)
+        label_map: dict[str, str] = {
+            str(item.get("id", f"doc_{idx}")): serialize_structured_label(
+                item.get("label", ""), auto_wrap_string_labels=self._auto_wrap_string_labels
+            )
+            for idx, item in enumerate(self.data)
+        }
 
         run_id = str(uuid.uuid4())
         result = EvaluationResult(

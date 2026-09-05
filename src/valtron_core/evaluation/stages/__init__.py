@@ -15,6 +15,12 @@ from valtron_core.evaluation.stages.generate import (
     TransformerGenerator,
     format_prompt,
 )
+from valtron_core.evaluation.stages.ingest import (
+    DefaultIngestor,
+    Ingestor,
+    StructuredLabelIngestor,
+    serialize_structured_label,
+)
 from valtron_core.evaluation.stages.score import (
     ExactMatchScorer,
     FieldMetricsScorer,
@@ -23,6 +29,10 @@ from valtron_core.evaluation.stages.score import (
 )
 
 __all__ = [
+    "Ingestor",
+    "DefaultIngestor",
+    "StructuredLabelIngestor",
+    "serialize_structured_label",
     "Scorer",
     "ScoreOutcome",
     "ExactMatchScorer",

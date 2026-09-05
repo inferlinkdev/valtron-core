@@ -43,8 +43,9 @@ import structlog
 from tqdm import tqdm  # type: ignore[import-untyped]
 
 from valtron_core.client import LLMClient
-from valtron_core.content_resolution import absolutize_local_path, is_local_path, resolve_content
+from valtron_core.content_resolution import absolutize_local_path, is_local_path
 from valtron_core.evaluation.config import BaseRecipeConfig, LLMModelConfig, ModelEvalConfig
+from valtron_core.evaluation.stages import DefaultIngestor, Ingestor
 from valtron_core.models import Document, EvaluationMetrics, FieldMetricsConfig, PredictionResult
 from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
 from valtron_core.progress import ProgressTracker, write_status
@@ -74,8 +75,8 @@ class ModelEval(ABC):
     no field-level scoring" evaluation.
 
     Populated after ``__init__``: ``self.runner``, ``self.client``, ``self.config``,
-    ``self.data``, ``self._data_base_dir``, ``self.models``, ``self.prompt_template``,
-    ``self.output_dir``, ``self.use_case``, ``self.temperature``.
+    ``self.data``, ``self._data_base_dir``, ``self._ingestor``, ``self.models``,
+    ``self.prompt_template``, ``self.output_dir``, ``self.use_case``, ``self.temperature``.
 
     Populated after ``aevaluate()`` / ``evaluate()``: ``self.results``,
     ``self._manipulations_applied``, ``self._model_prompts``, ``self._task_statistics``.
@@ -86,6 +87,7 @@ class ModelEval(ABC):
     models: list[Any]
     data: list[dict[str, Any]]
     _data_base_dir: Path
+    _ingestor: Ingestor
     output_dir: Path | None
     use_case: str
     prompt_template: str
@@ -125,6 +127,10 @@ class ModelEval(ABC):
 
         self.runner = EvaluationRunner()
         self.client = LLMClient()
+        # Label-optional by default (see DefaultIngestor); a recipe with ground
+        # truth of its own shape overrides this in its own _post_init (e.g.
+        # ReferencedEval sets a StructuredLabelIngestor there instead).
+        self._ingestor = DefaultIngestor()
 
         self.models = []
         self.add_models(self.config.models)
@@ -531,30 +537,21 @@ class ModelEval(ABC):
     def _load_documents_and_labels(self) -> "tuple[list[Document], list[Any]]":
         """Convert ``self.data`` into ``Document`` objects plus a parallel label list.
 
-        No disk I/O beyond resolving a document's ``content_path`` if it has one
-        (see ``resolve_content``). Default builds one ``Document`` per entry
-        (``id``, ``content``, ``metadata``, ``attachments``) and takes ``label``
-        verbatim, defaulting to ``None`` when absent -- groundtruth is optional out
-        of the box. Override for a richer label shape, or to require groundtruth.
+        A thin delegation to ``self._ingestor`` (see
+        ``valtron_core.evaluation.stages.ingest``), which does the actual
+        record-to-``Document`` conversion and decides what a label is. Default
+        is ``DefaultIngestor``: one ``Document`` per entry (``id``, ``content``,
+        ``metadata``, ``attachments``), label taken verbatim and defaulting to
+        ``None`` when absent: groundtruth is optional out of the box. A
+        subclass with a richer label shape, or that requires groundtruth,
+        assigns a different ``Ingestor`` to ``self._ingestor`` in its own
+        ``_post_init`` rather than overriding this method.
 
         Returns:
             ``(documents, labels)``, both of length ``len(self.data)`` and
             index-aligned.
         """
-        documents: list[Document] = []
-        labels: list[Any] = []
-        for idx, item in enumerate(self.data):
-            doc_id = str(item.get("id", f"doc_{idx}"))
-            documents.append(
-                Document(
-                    id=doc_id,
-                    content=resolve_content(item, self._data_base_dir),
-                    metadata=item.get("metadata", {}),
-                    attachments=item.get("attachments", []),
-                )
-            )
-            labels.append(item.get("label"))
-        return documents, labels
+        return self._ingestor.ingest(self.data, self._data_base_dir)
 
     def _build_save_documents(self) -> list[dict[str, Any]]:
         """Build the document list used when writing the run directory.
