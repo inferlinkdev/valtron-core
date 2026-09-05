@@ -9,6 +9,7 @@ stage at a time as each is extracted from where it lives today.
 
 from valtron_core.evaluation.stages.generate import (
     Generator,
+    HallucinationFilterGenerator,
     LLMGenerator,
     RawPrediction,
     TransformerGenerator,
@@ -30,5 +31,6 @@ __all__ = [
     "RawPrediction",
     "LLMGenerator",
     "TransformerGenerator",
+    "HallucinationFilterGenerator",
     "format_prompt",
 ]

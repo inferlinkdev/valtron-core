@@ -250,3 +250,68 @@ class TransformerGenerator:
             confidence_score=confidence,
             metadata={"content": document.content},
         )
+
+
+class HallucinationFilterGenerator:
+    """Decorator: wraps a Generator, filtering hallucinated values out of its output.
+
+    Calls the inner Generator, then runs the result's ``predicted_value``
+    through ``filter_hallucinated_values`` before returning it (a failed
+    generation, ``raw.error is not None``, is returned untouched, nothing to
+    filter). Composes with any Generator: ``HallucinationFilterGenerator(LLMGenerator())``
+    reproduces exactly what ``ReferencedEval``'s ``post_extraction_filter``
+    callback does today, applied once to the final (post-multi-pass) output.
+
+    Not yet wired into ``ReferencedEval._evaluate_model_documents``: that
+    still builds and passes a ``post_extraction_filter`` callback down through
+    ``runner.evaluate``/``PromptEvaluator.evaluate_single`` (unchanged,
+    ``LLMGenerator.generate()`` still accepts that parameter directly).
+    Rewiring it to construct a decorated Generator per model instead belongs
+    with ``_generator_for(model_config)``, the seam the fan-out-unification
+    commits introduce for deciding which Generator (and which decorators) a
+    given model gets; this class is that decorator, ready for it.
+    """
+
+    def __init__(self, inner: Generator, model: str, client: "LLMClient | None" = None) -> None:
+        self._inner = inner
+        self._model = model
+        self._client = client or LLMClient()
+
+    async def generate(
+        self,
+        document: Document,
+        prompt_template: str,
+        model: "str | dict[str, Any]",
+        *,
+        temperature: float = 0.0,
+        max_tokens: "int | None" = None,
+        response_format: "type[BaseModel] | None" = None,
+        post_extraction_filter: "Callable[[Any, Document], Any] | None" = None,
+        multi_pass: int = 1,
+    ) -> RawPrediction:
+        raw = await self._inner.generate(
+            document,
+            prompt_template,
+            model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            response_format=response_format,
+            post_extraction_filter=post_extraction_filter,
+            multi_pass=multi_pass,
+        )
+        if raw.error is not None:
+            return raw
+
+        # Inline: avoids a module-level dependency on decompose.py, which
+        # itself imports evaluator.py, which imports this package (see
+        # LLMGenerator.generate()'s identical use of this same pattern for
+        # _multi_pass_merge).
+        from valtron_core.decompose import filter_hallucinated_values
+
+        raw.predicted_value = await filter_hallucinated_values(
+            raw.predicted_value,
+            document.content,
+            self._model,
+            self._client,
+        )
+        return raw
