@@ -1,6 +1,5 @@
 """Evaluation engine for LLM prompt testing."""
 
-import asyncio
 import traceback
 import uuid
 from datetime import datetime
@@ -11,6 +10,7 @@ from litellm import BaseModel
 
 from valtron_core.attachments import check_attachment_support
 from valtron_core.client import LLMClient
+from valtron_core.evaluation.document_fan_out import fan_out_over_documents
 from valtron_core.evaluation.stages import (
     ExactMatchScorer,
     FieldMetricsScorer,
@@ -296,8 +296,6 @@ class PromptEvaluator:
         check_attachment_support(eval_input.documents, model_name)
 
         try:
-            # Use semaphore to limit concurrent requests
-            semaphore = asyncio.Semaphore(max_concurrent)
             _fallback_warning_logged = False
             _has_user_cost_rate = (
                 isinstance(eval_input.model, dict) and eval_input.model.get("cost_rate") is not None
@@ -312,49 +310,46 @@ class PromptEvaluator:
                 else None
             )
 
-            async def evaluate_with_semaphore(doc: Document) -> PredictionResult | None:
+            # Documents without a label are skipped entirely (never occupy a
+            # concurrency slot), matching today's behavior; the "missing_label"
+            # warning above already covers them.
+            labeled_documents = [doc for doc in eval_input.documents if doc.id in label_map]
+
+            async def process_one(doc: Document) -> PredictionResult:
                 nonlocal _fallback_warning_logged
-                if doc.id not in label_map:
-                    return None
-
-                async with semaphore:
-                    pred = await self.evaluate_single(
-                        document=doc,
-                        label=label_map[doc.id],
-                        prompt_template=eval_input.prompt_template,
-                        model=eval_input.model,
-                        temperature=eval_input.temperature,
-                        max_tokens=eval_input.max_tokens,
-                        response_format=response_format,
-                        field_metrics_config=field_metrics_config,
-                        post_extraction_filter=post_extraction_filter,
-                        multi_pass=multi_pass,
-                        json_evaluator=json_evaluator,
+                pred = await self.evaluate_single(
+                    document=doc,
+                    label=label_map[doc.id],
+                    prompt_template=eval_input.prompt_template,
+                    model=eval_input.model,
+                    temperature=eval_input.temperature,
+                    max_tokens=eval_input.max_tokens,
+                    response_format=response_format,
+                    field_metrics_config=field_metrics_config,
+                    post_extraction_filter=post_extraction_filter,
+                    multi_pass=multi_pass,
+                    json_evaluator=json_evaluator,
+                )
+                if (
+                    not _fallback_warning_logged
+                    and not _has_user_cost_rate
+                    and pred.original_cost == 0.0
+                    and pred.llm_cost > 0.0
+                ):
+                    logger.warning(
+                        "using_estimated_cost",
+                        model=model_name,
+                        note="no litellm pricing found; costs are approximate",
                     )
-                    if pred is not None:
-                        if (
-                            not _fallback_warning_logged
-                            and not _has_user_cost_rate
-                            and pred.original_cost == 0.0
-                            and pred.llm_cost > 0.0
-                        ):
-                            logger.warning(
-                                "using_estimated_cost",
-                                model=model_name,
-                                note="no litellm pricing found; costs are approximate",
-                            )
-                            _fallback_warning_logged = True
-                        if on_document_complete is not None:
-                            on_document_complete(pred)
-                    return pred
+                    _fallback_warning_logged = True
+                return pred
 
-            # Evaluate all documents concurrently
-            predictions = await asyncio.gather(
-                *[evaluate_with_semaphore(doc) for doc in eval_input.documents]
+            result.predictions = await fan_out_over_documents(
+                labeled_documents,
+                max_concurrent,
+                process_one,
+                on_document_complete=on_document_complete,
             )
-
-            # Filter out None predictions (documents without labels)
-            result.predictions = [p for p in predictions if p is not None]
 
             # Propagate fallback rate info to result metadata if it was used
             fallback_rate_info = _get_fallback_rate_info(eval_input.model)
