@@ -43,6 +43,7 @@ from tqdm import tqdm  # type: ignore[import-untyped]
 from valtron_core.attachments import check_attachment_support
 from valtron_core.cost_utils import _fallback_cost, _parse_time_unit_to_seconds
 from valtron_core.evaluation.config import BaseRecipeConfig, SummarizationConfig
+from valtron_core.evaluation.document_fan_out import fan_out_over_documents
 from valtron_core.evaluation.model_eval import ModelEval
 from valtron_core.evaluation.stages.summarization_generate import JudgeCandidateGenerator
 from valtron_core.evaluation.stages.summarization_score import JudgeScorer
@@ -464,20 +465,18 @@ class SummarizationExperiment(ModelEval):
             status="running",
         )
 
-        semaphore = asyncio.Semaphore(self._settings.max_concurrent_documents)
+        async def process_one(document: Document) -> PredictionResult:
+            return await self._evaluate_one(document, model, model_config, prompt)
 
-        async def one(document: Document) -> PredictionResult:
-            async with semaphore:
-                prediction = await self._evaluate_one(document, model, model_config, prompt)
-            if on_document_complete is not None:
-                on_document_complete(prediction)
-            if progress_bar is not None:
-                progress_bar.update(1)
-            return prediction
-
-        # Gathered so predictions keep the input document order, which is what
-        # makes a saved run diffable against another.
-        for prediction in await asyncio.gather(*(one(document) for document in documents)):
+        # fan_out_over_documents gathers so predictions keep the input document
+        # order, which is what makes a saved run diffable against another.
+        for prediction in await fan_out_over_documents(
+            documents,
+            self._settings.max_concurrent_documents,
+            process_one,
+            on_document_complete=on_document_complete,
+            progress_bar=progress_bar,
+        ):
             result.add_prediction(prediction)
 
         result.completed_at = datetime.now()
