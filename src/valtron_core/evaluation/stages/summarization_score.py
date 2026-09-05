@@ -16,9 +16,8 @@ Generator/RawPrediction/Ingestor split lands and every Scorer is rewired
 onto a shape that accommodates both.
 
 Wraps valtron_core.summarization.pipeline.grade_summary, the grading half of
-evaluate_candidate. Generation (the other half, generate_summary) is a
-separate, not-yet-extracted concern; SummarizationExperiment currently calls
-it directly rather than through a Generator.
+evaluate_candidate; JudgeCandidateGenerator (summarization_generate.py) wraps
+the other half, generate_summary.
 """
 
 from __future__ import annotations

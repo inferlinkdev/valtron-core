@@ -44,6 +44,7 @@ from valtron_core.attachments import check_attachment_support
 from valtron_core.cost_utils import _fallback_cost, _parse_time_unit_to_seconds
 from valtron_core.evaluation.config import BaseRecipeConfig, SummarizationConfig
 from valtron_core.evaluation.model_eval import ModelEval
+from valtron_core.evaluation.stages.summarization_generate import JudgeCandidateGenerator
 from valtron_core.evaluation.stages.summarization_score import JudgeScorer
 from valtron_core.models import Document, EvaluationResult, PredictionResult
 from valtron_core.summarization import (
@@ -60,7 +61,6 @@ from valtron_core.summarization import (
     Usage,
     evaluate_candidate,
     extract_document_facts,
-    generate_summary,
     mean_axes,
     rank,
     render_requirements,
@@ -247,6 +247,7 @@ class SummarizationExperiment(ModelEval):
         self._judge = Judge(
             ClientModel(self._settings.judge_model, client=self.client, name=JUDGE_LABEL)
         )
+        self._generator = JudgeCandidateGenerator()
         self._scorer = JudgeScorer(self._judge)
         # How many models split each document's shared judge cost. Set per pass
         # in _run_evaluations, since add_models() + evaluate() can run a subset.
@@ -498,7 +499,7 @@ class SummarizationExperiment(ModelEval):
 
         try:
             started = time.monotonic()
-            summary, generation_usage, generation_seconds = await generate_summary(
+            summary, generation_usage, generation_seconds = await self._generator.generate(
                 Doc(text, attachments=document.attachments),
                 model,
                 self._checklist,
