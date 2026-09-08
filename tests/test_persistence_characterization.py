@@ -2,12 +2,13 @@
 
 Locks in today's exact on-disk shape (written by ``save_run_dir`` /
 ``save_single_model_result`` in ``runner.py``) and documents the known divergence in
-how the three existing readers default ``is_correct``/``example_score`` when those
+how the four existing readers default ``is_correct``/``example_score`` when those
 keys are absent from a stored prediction:
 
 - ``ModelEval._result_from_model_data`` defaults both to ``None``.
 - ``ReferencedEval.load_experiment_results`` defaults them to ``False``/``0.0``.
 - ``EvaluationRunner._load_results_from_run_dir`` defaults them to ``False``/``0.0``.
+- ``utilities.aggregate_reports.load_results_from_run_dir`` defaults them to ``False``/``0.0``.
 
 This is the safety net for the persistence-consolidation work described in
 ``ARCHITECTURE_PROPOSAL.md`` (commit "unify run-directory read/write into
@@ -143,7 +144,7 @@ class TestWriterShapeIsStable:
 
 
 class TestReadersAgreeWhenKeysArePresent:
-    """When a prediction has is_correct/example_score, all three readers agree."""
+    """When a prediction has is_correct/example_score, all four readers agree."""
 
     def test_model_eval_result_from_model_data(self, tmp_path):
         run_dir = _write_run_dir(tmp_path, with_scoring_keys=True)
@@ -171,9 +172,18 @@ class TestReadersAgreeWhenKeysArePresent:
         assert results[0].predictions[0].is_correct is True
         assert results[0].predictions[0].example_score == 1.0
 
+    def test_aggregate_reports_load_results_from_run_dir(self, tmp_path):
+        from valtron_core.utilities.aggregate_reports import load_results_from_run_dir
+
+        run_dir = _write_run_dir(tmp_path, with_scoring_keys=True)
+        results, _metadata = load_results_from_run_dir(run_dir)
+
+        assert results[0].predictions[0].is_correct is True
+        assert results[0].predictions[0].example_score == 1.0
+
 
 class TestReadersDivergeWhenKeysAreMissing:
-    """Known, pre-existing divergence: the three loaders disagree on defaults.
+    """Known, pre-existing divergence: the four loaders disagree on defaults.
 
     This is not desired behavior, it is today's actual behavior, kept passing on
     purpose so the divergence is visible and testable rather than silent. The
@@ -204,6 +214,15 @@ class TestReadersDivergeWhenKeysAreMissing:
         run_dir = _write_run_dir(tmp_path, with_scoring_keys=False)
         runner = EvaluationRunner(client=mock_llm_client)
         results, _metadata = runner._load_results_from_run_dir(run_dir)
+
+        assert results[0].predictions[0].is_correct is False
+        assert results[0].predictions[0].example_score == 0.0
+
+    def test_aggregate_reports_defaults_to_false_and_zero(self, tmp_path):
+        from valtron_core.utilities.aggregate_reports import load_results_from_run_dir
+
+        run_dir = _write_run_dir(tmp_path, with_scoring_keys=False)
+        results, _metadata = load_results_from_run_dir(run_dir)
 
         assert results[0].predictions[0].is_correct is False
         assert results[0].predictions[0].example_score == 0.0
