@@ -45,6 +45,7 @@ from tqdm import tqdm  # type: ignore[import-untyped]
 from valtron_core.client import LLMClient
 from valtron_core.content_resolution import absolutize_local_path, is_local_path
 from valtron_core.evaluation.config import BaseRecipeConfig, LLMModelConfig, ModelEvalConfig
+from valtron_core.evaluation.persistence import RunDirectoryCodec
 from valtron_core.evaluation.stages import DefaultIngestor, Ingestor
 from valtron_core.models import Document, EvaluationMetrics, FieldMetricsConfig, PredictionResult
 from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
@@ -244,8 +245,7 @@ class ModelEval(ABC):
 
         The saved-file shape is shared across every task, so this needs no override.
         """
-        with open(model_file) as f:
-            raw = json.load(f)
+        raw = RunDirectoryCodec.read_json(model_file)
 
         llm_config: dict[str, Any] = raw.get("llm_config") or {}
         model_name = llm_config.get("model") or raw.get("model", "")
@@ -296,38 +296,16 @@ class ModelEval(ABC):
         """
         model_label = md["label"] or md["name"]
 
-        try:
-            from valtron_core.scoring.json_eval import EvalResult
-
-            _eval_result_cls: Any = EvalResult
-        except ImportError:
-            _eval_result_cls = None
-
-        predictions = []
-        for p in md.get("predictions", []):
-            field_metrics = None
-            if p.get("field_metrics") and _eval_result_cls is not None:
-                try:
-                    field_metrics = _eval_result_cls.model_validate(p["field_metrics"])
-                except Exception:
-                    pass
-            predictions.append(
-                PredictionResult(
-                    document_id=p["document_id"],
-                    predicted_value=p["predicted_value"],
-                    expected_value=p.get("expected_value", label_map.get(p["document_id"])),
-                    is_correct=p.get("is_correct"),
-                    example_score=p.get("example_score"),
-                    error=p.get("error"),
-                    task_scores=p.get("task_scores"),
-                    response_time=p.get("response_time", 0.0),
-                    original_cost=p.get("original_cost", 0.0),
-                    llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
-                    evaluation_cost=p.get("evaluation_cost", 0.0),
-                    model=model_label,
-                    field_metrics=field_metrics,
-                )
+        predictions = [
+            RunDirectoryCodec.build_prediction(
+                p,
+                model_label=model_label,
+                expected_value_fallback=label_map.get(p["document_id"]),
+                legacy_defaults=False,
+                include_error_and_task_scores=True,
             )
+            for p in md.get("predictions", [])
+        ]
 
         result = EvaluationResult(
             run_id=md["run_id"],
@@ -338,12 +316,7 @@ class ModelEval(ABC):
             llm_config=md.get("llm_config", {}),
             status=md.get("status", "completed"),
         )
-        if md.get("started_at"):
-            result.started_at = md["started_at"]
-        if md.get("completed_at"):
-            result.completed_at = md["completed_at"]
-        if not result.metrics and result.predictions:
-            result.compute_metrics()
+        RunDirectoryCodec.finalize_evaluation_result(result, md)
         return result
 
     @classmethod
@@ -355,8 +328,7 @@ class ModelEval(ABC):
         ``models`` is filled in separately by the caller from the model files.
         Task-specific extras come from ``_restore_config``.
         """
-        with open(metadata_path) as f:
-            meta = json.load(f)
+        meta = RunDirectoryCodec.read_json(metadata_path)
 
         config_dict: dict[str, Any] = {
             "prompt": meta.get("original_prompt") or "{content}",
@@ -411,8 +383,7 @@ class ModelEval(ABC):
         ]
 
         instance = cls(config=config_dict, data=data)
-        with open(metadata_path) as f:
-            instance._post_restore(json.load(f))
+        instance._post_restore(RunDirectoryCodec.read_json(metadata_path))
 
         label_map = {str(d.get("id", "")): cls._stringify_label(d.get("label")) for d in data}
 
@@ -1150,7 +1121,7 @@ class ModelEval(ABC):
         if self.results is None:
             raise RuntimeError("Call evaluate() before save_experiment_results().")
 
-        from valtron_core.runner import save_run_dir
+        from valtron_core.evaluation.persistence import save_run_dir
 
         dest = self._resolve_output_dir(output_dir)
 

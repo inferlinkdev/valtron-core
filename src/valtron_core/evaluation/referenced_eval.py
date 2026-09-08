@@ -33,6 +33,7 @@ from valtron_core.evaluation.config import (
     TransformerModelConfig,
 )
 from valtron_core.evaluation.model_eval import ModelEval
+from valtron_core.evaluation.persistence import RunDirectoryCodec
 from valtron_core.evaluation.stages import (
     StructuredLabelIngestor,
     TransformerGenerator,
@@ -339,8 +340,7 @@ class ReferencedEval(ModelEval):
         evaluation-result fields (predictions, metrics, etc.) so that
         ``load_experiment_results`` can reconstruct both from a single parse.
         """
-        with open(model_file) as f:
-            raw = json.load(f)
+        raw = RunDirectoryCodec.read_json(model_file)
 
         llm_config: dict[str, Any] = raw.get("llm_config") or {}
         model_name = llm_config.get("model") or raw.get("model", "")
@@ -385,8 +385,7 @@ class ReferencedEval(ModelEval):
         ``response_format_schema`` is the Pydantic JSON Schema stored from the
         original run, or ``None`` if absent.
         """
-        with open(metadata_path) as f:
-            meta = json.load(f)
+        meta = RunDirectoryCodec.read_json(metadata_path)
 
         original_prompt = meta.get("original_prompt") or "{content}"
         config_dict: dict[str, Any] = {
@@ -404,9 +403,7 @@ class ReferencedEval(ModelEval):
     # -------------------------------------------------------------------------
 
     @classmethod
-    def load_experiment_results(  # noqa: C901, PLR0912, PLR0915
-        cls, dir_path: "str | Path"
-    ) -> "ReferencedEval":
+    def load_experiment_results(cls, dir_path: "str | Path") -> "ReferencedEval":
         """Restore a previously saved experiment from disk.
 
         Returns a ``ReferencedEval`` instance in the same state as after
@@ -487,36 +484,15 @@ class ReferencedEval(ModelEval):
             if md.get("override_prompt"):
                 model_override_prompts[model_label] = md["override_prompt"]
 
-            try:
-                from valtron_core.scoring.json_eval import EvalResult
-
-                _eval_result_cls = EvalResult
-            except ImportError:
-                _eval_result_cls = None
-
-            predictions = []
-            for p in md.get("predictions", []):
-                field_metrics = None
-                if p.get("field_metrics") and _eval_result_cls is not None:
-                    try:
-                        field_metrics = _eval_result_cls.model_validate(p["field_metrics"])
-                    except Exception:
-                        pass
-                predictions.append(
-                    PredictionResult(
-                        document_id=p["document_id"],
-                        predicted_value=p["predicted_value"],
-                        expected_value=p.get("expected_value", label_map.get(p["document_id"], "")),
-                        is_correct=p.get("is_correct", False),
-                        example_score=p.get("example_score", 0.0),
-                        response_time=p.get("response_time", 0.0),
-                        original_cost=p.get("original_cost", 0.0),
-                        llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
-                        evaluation_cost=p.get("evaluation_cost", 0.0),
-                        model=model_label,
-                        field_metrics=field_metrics,
-                    )
+            predictions = [
+                RunDirectoryCodec.build_prediction(
+                    p,
+                    model_label=model_label,
+                    expected_value_fallback=label_map.get(p["document_id"], ""),
+                    legacy_defaults=True,
                 )
+                for p in md.get("predictions", [])
+            ]
 
             result = EvaluationResult(
                 run_id=md["run_id"],
@@ -527,12 +503,7 @@ class ReferencedEval(ModelEval):
                 llm_config=md.get("llm_config", {}),
                 status=md.get("status", "completed"),
             )
-            if md.get("started_at"):
-                result.started_at = md["started_at"]
-            if md.get("completed_at"):
-                result.completed_at = md["completed_at"]
-            if not result.metrics and result.predictions:
-                result.compute_metrics()
+            RunDirectoryCodec.finalize_evaluation_result(result, md)
             results.append(result)
 
         instance.results = results
@@ -1006,7 +977,7 @@ class ReferencedEval(ModelEval):
     # Transformer evaluation (label mode only)
     # -------------------------------------------------------------------------
 
-    async def _evaluate_transformer(  # noqa: C901, PLR0912, PLR0915
+    async def _evaluate_transformer(
         self,
         model_config: Any,
         documents: list[Document],
