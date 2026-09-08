@@ -364,7 +364,7 @@ def _analyze_extraction(  # noqa: C901
 
 
 @app.route("/api/analyze-data", methods=["POST"])
-def api_analyze_data() -> Response | tuple[Response, int]:  # noqa: C901, PLR0911, PLR0912
+def api_analyze_data() -> Response | tuple[Response, int]:  # noqa: PLR0911
     """Analyze training data to detect JSON labels and infer field metrics config."""
     payload = request.json
     inline_data = payload.get("data")
@@ -393,20 +393,23 @@ def api_analyze_data() -> Response | tuple[Response, int]:  # noqa: C901, PLR091
             list(first_content.keys()) if isinstance(first_content, dict) else ["content"]
         )
 
-        if "label" not in first_item:
+        # Importing the package (not just .registry) runs classification.py's/
+        # extraction.py's/summarization.py's @register_experiment decorators,
+        # which is what actually populates the registry; importing .registry
+        # alone would leave it empty.
+        import valtron_core.evaluation  # noqa: F401
+        from valtron_core.evaluation.registry import ExperimentRegistry
+
+        task_type = ExperimentRegistry.sniff_best_match(data_list)
+
+        if task_type == "no_label":
             return jsonify(_analyze_no_label(data_list, content_keys))
 
         first_label = first_item.get("label", "")
         if isinstance(first_label, (dict, list)):
             first_label = json.dumps(first_label)
 
-        try:
-            label_value = json.loads(first_label)
-            is_json = isinstance(label_value, (dict, list))
-        except (json.JSONDecodeError, TypeError):
-            is_json = False
-
-        if is_json:
+        if task_type == "extraction":
             return jsonify(_analyze_extraction(data_list, first_label, content_keys))
         return jsonify(_analyze_classification(data_list, first_label, content_keys))
 
