@@ -45,6 +45,7 @@ from valtron_core.cost_utils import _fallback_cost, _parse_time_unit_to_seconds
 from valtron_core.evaluation.config import BaseRecipeConfig, SummarizationConfig
 from valtron_core.evaluation.document_fan_out import fan_out_over_documents
 from valtron_core.evaluation.model_eval import ModelEval
+from valtron_core.evaluation.registry import register_experiment
 from valtron_core.evaluation.stages.summarization_generate import JudgeCandidateGenerator
 from valtron_core.evaluation.stages.summarization_score import JudgeScorer
 from valtron_core.models import Document, EvaluationResult, PredictionResult
@@ -182,6 +183,18 @@ class _StoredSummary(Model):
         return self._summary
 
 
+def _looks_like_summarization(data: "list[dict[str, Any]]") -> bool:
+    """No label at all: ``utilities/config_wizard.py``'s ``"no_label"``.
+
+    Today's best guess for what a reference-free task's data looks like,
+    matching that endpoint's own ``_analyze_no_label`` comment: a task with
+    no ground truth in the data at all, not a classification/extraction
+    dataset that merely happens to have empty label values.
+    """
+    return bool(data) and "label" not in data[0]
+
+
+@register_experiment("no_label", sniff=_looks_like_summarization)
 class SummarizationExperiment(ModelEval):
     """Rank summarization models on a corpus, with no reference summaries.
 
