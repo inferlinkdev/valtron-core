@@ -50,6 +50,7 @@ from valtron_core.evaluation.stages import DefaultIngestor, Ingestor
 from valtron_core.models import Document, EvaluationMetrics, FieldMetricsConfig, PredictionResult
 from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
 from valtron_core.progress import ProgressTracker, write_status
+from valtron_core.reports import ReportWriter
 from valtron_core.runner import EvaluationResult, EvaluationRunner, PreflightError
 
 logger = structlog.get_logger()
@@ -89,6 +90,7 @@ class ModelEval(ABC):
     data: list[dict[str, Any]]
     _data_base_dir: Path
     _ingestor: Ingestor
+    _report_writers: dict[str, ReportWriter]
     output_dir: Path | None
     use_case: str
     prompt_template: str
@@ -132,6 +134,10 @@ class ModelEval(ABC):
         # truth of its own shape overrides this in its own _post_init (e.g.
         # ReferencedEval sets a StructuredLabelIngestor there instead).
         self._ingestor = DefaultIngestor()
+        # No formats registered by default, matching save_html_report/save_pdf_report's
+        # historical NotImplementedError; a recipe that can build reports populates
+        # this in its own _post_init instead of overriding either method.
+        self._report_writers = {}
 
         self.models = []
         self.add_models(self.config.models)
@@ -1141,20 +1147,82 @@ class ModelEval(ABC):
         )
         return run_dir
 
-    def save_html_report(self, output_dir: "str | Path | None" = None) -> Path:
-        """Generate an HTML report. Not implemented at this level.
+    def save_report(self, fmt: str, output_dir: "str | Path | None" = None) -> Path:
+        """Write one report format via whichever ``ReportWriter`` this recipe registered for it.
 
-        Rich HTML/PDF reports (accuracy charts, correct/incorrect badges) assume a
-        correctness notion this generic class makes no assumption about -- a
-        capability a task opts into by overriding this, not one forced on it (same
-        idiom as ``reevaluate()``). See ``ReferencedEval`` for the real
-        implementation classification/extraction use.
+        ``save_html_report()``/``save_pdf_report()`` are one-line calls to this
+        (``"html"``/``"pdf"``). A task that can build reports registers
+        ``ReportWriter``s in ``self._report_writers`` in its own ``_post_init``
+        (see ``_report_context``/``_after_report_written`` for the two hooks a
+        writer's call usually needs); a task that doesn't leaves the default
+        empty dict and gets the same ``NotImplementedError`` every format used
+        to raise individually. A new report format for an existing task is a
+        new ``ReportWriter``, registered under a new key here: zero edits to
+        this method or to any existing ``ReportWriter``.
+
+        Args:
+            fmt: The format key a ``ReportWriter`` is registered under (e.g. ``"html"``, ``"pdf"``).
+            output_dir: Override the output directory for this call. Falls back
+                to ``config.output_dir`` if omitted. Raises if neither is set.
+
+        Raises:
+            NotImplementedError: No ``ReportWriter`` is registered for ``fmt``.
+            RuntimeError: ``evaluate()`` has not produced results yet.
         """
-        raise NotImplementedError(f"{type(self).__name__} does not implement save_html_report().")
+        writer = self._report_writers.get(fmt)
+        if writer is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not implement save_{fmt}_report()."
+            )
+        if self.results is None:
+            raise RuntimeError(f"Call evaluate() before save_{fmt}_report().")
+
+        destination = self._resolve_output_dir(output_dir)
+        path, recommendation = writer.write(self.results, destination, **self._report_context(fmt))
+        self._after_report_written(fmt, recommendation)
+        return path
+
+    def _report_context(self, fmt: str) -> "dict[str, Any]":
+        """Extra keyword context passed to this format's ``ReportWriter.write()``.
+
+        Default is ``{}``, matching a writer that needs nothing beyond
+        ``results``/``output_path``. Override alongside ``self._report_writers``
+        when a writer needs more (e.g. ``SummarizationExperiment`` passes its
+        ``ranking``, since its reports have no correctness notion to render
+        instead). ``fmt`` lets one recipe give each of its formats different
+        context, the way ``SummarizationExperiment``'s PDF writer takes a
+        pre-computed ``recommendation`` its HTML writer does not.
+        """
+        return {}
+
+    def _after_report_written(self, fmt: str, recommendation: "str | None") -> None:
+        """Extension point for state a recipe wants to keep after writing a report.
+
+        Default is a no-op. ``SummarizationExperiment`` overrides this to cache
+        an HTML report's recommendation so a following ``save_pdf_report()``
+        reuses it instead of generating a second one.
+        """
+        return None
+
+    def save_html_report(self, output_dir: "str | Path | None" = None) -> Path:
+        """Write the HTML report.
+
+        A thin call to ``save_report("html", ...)``; register an ``"html"``
+        ``ReportWriter`` in ``self._report_writers`` (in your own ``_post_init``)
+        instead of overriding this method, as ``SummarizationExperiment`` does.
+        Rich HTML/PDF reports (accuracy charts, correct/incorrect badges) assume
+        a correctness notion this generic class makes no assumption about, so
+        the base default (``self._report_writers == {}``) still raises
+        ``NotImplementedError`` for any task that hasn't registered one;
+        ``ReferencedEval`` overrides this method directly instead, since its
+        report generation goes through ``EvaluationRunner.generate_report()``,
+        not yet through a ``ReportWriter``.
+        """
+        return self.save_report("html", output_dir)
 
     def save_pdf_report(self, output_dir: "str | Path | None" = None) -> Path:
-        """Generate a PDF report. Not implemented at this level; see ``save_html_report``."""
-        raise NotImplementedError(f"{type(self).__name__} does not implement save_pdf_report().")
+        """Write the PDF report; see ``save_html_report``."""
+        return self.save_report("pdf", output_dir)
 
     async def arun(self, output_dir: "str | Path | None" = None) -> Path:
         """Run ``aevaluate()`` then save outputs per ``config.output_formats`` (async).

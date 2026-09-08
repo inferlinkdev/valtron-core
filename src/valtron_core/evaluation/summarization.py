@@ -35,7 +35,7 @@ import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable
 
 import structlog
 from tqdm import tqdm  # type: ignore[import-untyped]
@@ -48,6 +48,7 @@ from valtron_core.evaluation.model_eval import ModelEval
 from valtron_core.evaluation.stages.summarization_generate import JudgeCandidateGenerator
 from valtron_core.evaluation.stages.summarization_score import JudgeScorer
 from valtron_core.models import Document, EvaluationResult, PredictionResult
+from valtron_core.reports.writers import SummarizationHtmlReportWriter, SummarizationPdfReportWriter
 from valtron_core.summarization import (
     Axes,
     ClientModel,
@@ -67,11 +68,6 @@ from valtron_core.summarization import (
     render_requirements,
     score,
 )
-
-if TYPE_CHECKING:
-    from valtron_core.reports.generate_summarization_report import (
-        SummarizationReportGenerator,
-    )
 
 logger = structlog.get_logger()
 
@@ -253,6 +249,11 @@ class SummarizationExperiment(ModelEval):
         # How many models split each document's shared judge cost. Set per pass
         # in _run_evaluations, since add_models() + evaluate() can run a subset.
         self._models_in_pass = max(len(self.models), 1)
+
+        self._report_writers = {
+            "html": SummarizationHtmlReportWriter(client=self.client),
+            "pdf": SummarizationPdfReportWriter(client=self.client),
+        }
 
     # -------------------------------------------------------------------------
     # Persistence: round-tripping config through load_experiment_results()
@@ -909,62 +910,39 @@ class SummarizationExperiment(ModelEval):
     # Reports
     # -------------------------------------------------------------------------
 
-    def save_html_report(self, output_dir: str | Path | None = None) -> Path:
-        """Write the HTML report and return its path.
+    def _report_context(self, fmt: str) -> dict[str, Any]:
+        """``ranking`` for both formats, plus whatever else each one's writer needs.
 
-        Overrides the base class's ``NotImplementedError``: the reason it refuses
-        by default is that its report assumes a correctness notion, and this
-        recipe brings its own report which does not.
+        Overrides the base class's default (``{}``): the reason it refuses to
+        write a report by default is that its report assumes a correctness
+        notion, and this recipe brings its own report which does not, so it
+        always has something to pass. Also rebuilds the ranking first if it's
+        missing: a run reloaded from disk has predictions but was never ranked,
+        since ``compute_task_statistics`` only runs as part of ``aevaluate()``.
         """
-        generator, destination = self._report_setup(output_dir, "save_html_report")
         assert self.results is not None
-        path, recommendation = generator.generate_html_report(
-            self.results,
-            self.ranking,
-            destination,
-            use_case=self.use_case,
-            original_prompt=self.prompt_template,
-            model_prompts=self._model_prompts,
-        )
-        # Held so a following save_pdf_report() reuses it rather than paying for
-        # a second one; arun() calls both.
-        self._recommendation = recommendation
-        return path
-
-    def save_pdf_report(self, output_dir: str | Path | None = None) -> Path:
-        """Write the PDF report and return its path.
-
-        Reuses the recommendation from a preceding ``save_html_report()`` if there
-        was one, and generates none of its own -- the same division of labour the
-        classification reports use.
-        """
-        generator, destination = self._report_setup(output_dir, "save_pdf_report")
-        assert self.results is not None
-        return generator.generate_pdf_report(
-            self.results,
-            self.ranking,
-            destination,
-            use_case=self.use_case,
-            recommendation=self._recommendation,
-        )
-
-    def _report_setup(
-        self, output_dir: str | Path | None, caller: str
-    ) -> tuple["SummarizationReportGenerator", Path]:
-        """Shared preamble: check there is something to report, and rebuild the ranking."""
-        from valtron_core.reports.generate_summarization_report import (
-            SummarizationReportGenerator,
-        )
-
-        if self.results is None:
-            raise RuntimeError(f"Call evaluate() before {caller}().")
-        # A run reloaded from disk has predictions but has never been ranked,
-        # since compute_task_statistics only runs as part of aevaluate().
         if self._ranking is None:
             self.compute_task_statistics(self.results)
-        return SummarizationReportGenerator(client=self.client), self._resolve_output_dir(
-            output_dir
-        )
+        context: dict[str, Any] = {"ranking": self.ranking, "use_case": self.use_case}
+        if fmt == "html":
+            context["original_prompt"] = self.prompt_template
+            context["model_prompts"] = self._model_prompts
+        elif fmt == "pdf":
+            # Reuses the recommendation from a preceding save_html_report() if
+            # there was one, and generates none of its own; the PDF writer
+            # never computes a recommendation itself, only the HTML one does.
+            context["recommendation"] = self._recommendation
+        return context
+
+    def _after_report_written(self, fmt: str, recommendation: str | None) -> None:
+        """Cache an HTML report's recommendation for a following save_pdf_report().
+
+        Held so save_pdf_report() reuses it rather than paying for a second
+        one; arun() calls both. A no-op for "pdf" itself, which never
+        produces a recommendation of its own to cache.
+        """
+        if fmt == "html":
+            self._recommendation = recommendation
 
     @property
     def ranking(self) -> SummarizationRanking:
