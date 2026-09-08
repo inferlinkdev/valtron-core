@@ -1,26 +1,38 @@
 """Characterization tests for the run-directory persistence format.
 
 Locks in today's exact on-disk shape (written by ``save_run_dir`` /
-``save_single_model_result`` in ``runner.py``) and documents the known divergence in
-how the four existing readers default ``is_correct``/``example_score`` when those
-keys are absent from a stored prediction:
+``save_single_model_result`` in ``runner.py``) and the reconciled rule its four
+readers now share for defaulting ``is_correct``/``example_score`` when those
+keys are absent from a stored prediction: ``None``, meaning "not scored".
 
-- ``ModelEval._result_from_model_data`` defaults both to ``None``.
-- ``ReferencedEval.load_experiment_results`` defaults them to ``False``/``0.0``.
-- ``EvaluationRunner._load_results_from_run_dir`` defaults them to ``False``/``0.0``.
-- ``utilities.aggregate_reports.load_results_from_run_dir`` defaults them to ``False``/``0.0``.
+That rule used to diverge: ``ModelEval._result_from_model_data`` always
+defaulted to ``None``, while ``ReferencedEval.load_experiment_results``,
+``EvaluationRunner._load_results_from_run_dir``, and
+``utilities.aggregate_reports.load_results_from_run_dir`` all defaulted to
+``False``/``0.0`` instead, a value that misleadingly reads as "scored, and
+wrong" for a prediction that was never scored at all. The persistence-
+consolidation commit collapsed all four readers into
+``RunDirectoryCodec.build_prediction`` while deliberately preserving that
+divergence behind a ``legacy_defaults`` flag; a later, separately tested
+commit removed the flag and reconciled every reader to ``None``, which is
+what ``TestReadersAgreeOnMissingScoreDefaults`` below now locks in. See
+``ARCHITECTURE_PROPOSAL.md`` for both commits.
 
-This is the safety net for the persistence-consolidation work described in
-``ARCHITECTURE_PROPOSAL.md`` (commit "unify run-directory read/write into
-evaluation/persistence.py", and the later commit that intentionally reconciles this
-divergence). Any accidental change to the writer's shape or to a reader's
-defaulting behavior should show up as a failure here first, before it shows up as a
+Also locks in ``format_version``: every run directory written from the
+reconciliation commit onward records ``metadata.json["format_version"]``, and
+a run directory written before that field existed (no key at all) is read
+back as version 1 and reconstructed with the same reconciled rule, not the
+old per-reader behavior the file might have been written under.
+
+Any accidental change to the writer's shape or to a reader's defaulting
+behavior should show up as a failure here first, before it shows up as a
 silent difference between a fresh run and a reloaded one.
 """
 
 import json
 
 from valtron_core.evaluation.model_eval import ModelEval
+from valtron_core.evaluation.persistence import FORMAT_VERSION, RunDirectoryCodec
 from valtron_core.evaluation.referenced_eval import ReferencedEval
 from valtron_core.models import EvaluationMetrics, EvaluationResult, PredictionResult
 from valtron_core.runner import save_run_dir
@@ -88,6 +100,16 @@ def _write_run_dir(tmp_path, *, with_scoring_keys: bool):
     return run_dir
 
 
+def _strip_format_version(run_dir):
+    """Simulate a run directory written before ``format_version`` existed at all."""
+    metadata_path = run_dir / "metadata.json"
+    with open(metadata_path) as f:
+        meta = json.load(f)
+    del meta["format_version"]
+    with open(metadata_path, "w") as f:
+        json.dump(meta, f)
+
+
 class TestWriterShapeIsStable:
     """Pins today's exact on-disk shape so a future rewrite can diff against it."""
 
@@ -98,6 +120,7 @@ class TestWriterShapeIsStable:
 
         assert set(meta.keys()) == {
             "timestamp",
+            "format_version",
             "use_case",
             "original_prompt",
             "field_metrics_config",
@@ -107,7 +130,7 @@ class TestWriterShapeIsStable:
             "total_cost",
             "cost",
         }
-        assert "format_version" not in meta
+        assert meta["format_version"] == FORMAT_VERSION
 
     def test_model_file_keys(self, tmp_path):
         run_dir = _write_run_dir(tmp_path, with_scoring_keys=True)
@@ -182,14 +205,13 @@ class TestReadersAgreeWhenKeysArePresent:
         assert results[0].predictions[0].example_score == 1.0
 
 
-class TestReadersDivergeWhenKeysAreMissing:
-    """Known, pre-existing divergence: the four loaders disagree on defaults.
+class TestReadersAgreeOnMissingScoreDefaults:
+    """The reconciled rule: every reader defaults a missing score to None.
 
-    This is not desired behavior, it is today's actual behavior, kept passing on
-    purpose so the divergence is visible and testable rather than silent. The
-    architecture proposal's persistence-consolidation commit reconciles this to a
-    single rule (None, meaning "not scored") in its own dedicated, explicitly
-    tested commit, not silently alongside the deduplication itself.
+    Before the reconciliation commit, three of these four asserted
+    ``False``/``0.0`` here instead (see this module's own docstring). Kept as
+    one test per reader, same shape as ``TestReadersAgreeWhenKeysArePresent``
+    above, so a future regression in any single reader still fails precisely.
     """
 
     def test_model_eval_defaults_to_none(self, tmp_path):
@@ -201,28 +223,58 @@ class TestReadersDivergeWhenKeysAreMissing:
         assert result.predictions[0].is_correct is None
         assert result.predictions[0].example_score is None
 
-    def test_referenced_eval_defaults_to_false_and_zero(self, tmp_path):
+    def test_referenced_eval_defaults_to_none(self, tmp_path):
         run_dir = _write_run_dir(tmp_path, with_scoring_keys=False)
         loaded = ReferencedEval.load_experiment_results(run_dir)
 
-        assert loaded.results[0].predictions[0].is_correct is False
-        assert loaded.results[0].predictions[0].example_score == 0.0
+        assert loaded.results[0].predictions[0].is_correct is None
+        assert loaded.results[0].predictions[0].example_score is None
 
-    def test_evaluation_runner_defaults_to_false_and_zero(self, mock_llm_client, tmp_path):
+    def test_evaluation_runner_defaults_to_none(self, mock_llm_client, tmp_path):
         from valtron_core.runner import EvaluationRunner
 
         run_dir = _write_run_dir(tmp_path, with_scoring_keys=False)
         runner = EvaluationRunner(client=mock_llm_client)
         results, _metadata = runner._load_results_from_run_dir(run_dir)
 
-        assert results[0].predictions[0].is_correct is False
-        assert results[0].predictions[0].example_score == 0.0
+        assert results[0].predictions[0].is_correct is None
+        assert results[0].predictions[0].example_score is None
 
-    def test_aggregate_reports_defaults_to_false_and_zero(self, tmp_path):
+    def test_aggregate_reports_defaults_to_none(self, tmp_path):
         from valtron_core.utilities.aggregate_reports import load_results_from_run_dir
 
         run_dir = _write_run_dir(tmp_path, with_scoring_keys=False)
         results, _metadata = load_results_from_run_dir(run_dir)
 
-        assert results[0].predictions[0].is_correct is False
-        assert results[0].predictions[0].example_score == 0.0
+        assert results[0].predictions[0].is_correct is None
+        assert results[0].predictions[0].example_score is None
+
+
+class TestFormatVersion:
+    """``format_version`` is written going forward and defaults to 1 on read."""
+
+    def test_read_format_version_missing_key_is_version_1(self, tmp_path):
+        run_dir = _write_run_dir(tmp_path, with_scoring_keys=True)
+        _strip_format_version(run_dir)
+
+        meta = RunDirectoryCodec.read_json(run_dir / "metadata.json")
+
+        assert RunDirectoryCodec.read_format_version(meta) == 1
+
+    def test_read_format_version_present_key(self, tmp_path):
+        run_dir = _write_run_dir(tmp_path, with_scoring_keys=True)
+        meta = RunDirectoryCodec.read_json(run_dir / "metadata.json")
+
+        assert RunDirectoryCodec.read_format_version(meta) == FORMAT_VERSION
+
+    def test_legacy_run_dir_with_no_format_version_still_gets_reconciled_defaults(self, tmp_path):
+        """A version-1 file (predating format_version entirely) is not a special
+        case: it reloads under the same None-default rule as a brand-new run,
+        not whatever behavior its original writer happened to have."""
+        run_dir = _write_run_dir(tmp_path, with_scoring_keys=False)
+        _strip_format_version(run_dir)
+
+        loaded = ReferencedEval.load_experiment_results(run_dir)
+
+        assert loaded.results[0].predictions[0].is_correct is None
+        assert loaded.results[0].predictions[0].example_score is None

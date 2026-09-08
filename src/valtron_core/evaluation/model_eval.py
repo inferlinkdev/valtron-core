@@ -301,7 +301,6 @@ class ModelEval(ABC):
                 p,
                 model_label=model_label,
                 expected_value_fallback=label_map.get(p["document_id"]),
-                legacy_defaults=False,
                 include_error_and_task_scores=True,
             )
             for p in md.get("predictions", [])

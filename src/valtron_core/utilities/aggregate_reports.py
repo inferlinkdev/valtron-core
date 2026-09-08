@@ -97,7 +97,6 @@ def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], 
                 p,
                 model_label=model_name,
                 expected_value_fallback=label_map.get(p["document_id"], ""),
-                legacy_defaults=True,
             )
             for p in model_data.get("predictions", [])
         ]

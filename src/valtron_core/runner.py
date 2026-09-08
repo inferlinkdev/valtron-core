@@ -186,8 +186,14 @@ def save_run_dir(
             for result in results
         }
         total_cost = sum(v["llm_cost"] + v["evaluation_cost"] for v in model_costs.values())
+        # Local import: evaluation.persistence imports save_run_dir/save_single_model_result
+        # from this module at its own top level, so importing it back here at
+        # runner.py's top level would be circular (see persistence.py's own docstring).
+        from valtron_core.evaluation.persistence import FORMAT_VERSION
+
         metadata = {
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
+            "format_version": FORMAT_VERSION,
             "use_case": use_case,
             "original_prompt": original_prompt,
             "field_metrics_config": {"config": field_config} if field_config else None,
@@ -475,7 +481,6 @@ class EvaluationRunner:
                     p,
                     model_label=model_name,
                     expected_value_fallback=label_map.get(p["document_id"], ""),
-                    legacy_defaults=True,
                     include_confidence_score=True,
                 )
                 for p in model_data.get("predictions", [])
