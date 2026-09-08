@@ -1,7 +1,7 @@
 """Shared base class and module-level setup for report generators."""
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -325,3 +325,33 @@ class _ReportBase:
                 if bins[i] <= value < bins[i + 1]:
                     return i
         return None
+
+
+class ReportWriter(Protocol):
+    """Renders one result set into one report format at one path.
+
+    The seam ``ModelEval.save_html_report``/``save_pdf_report`` already
+    declares (today a bare ``NotImplementedError``), made concrete. A new
+    report format is a new class implementing this, registered wherever
+    a recipe picks its writers; zero edits to any existing writer.
+
+    Takes ``**context`` rather than a fixed parameter list because the three
+    generators this wraps genuinely need different things:
+    ``SummarizationReportGenerator`` requires a ``ranking`` no classification/
+    extraction report has, and ``PdfReportGenerator`` takes a pre-computed
+    ``recommendation`` instead of generating its own (see each concrete
+    writer's own docstring in ``reports/writers.py``). Forcing one fixed
+    signature onto all of them would mean either a lowest-common-denominator
+    interface that drops real capability, or rewriting the underlying
+    generators just to satisfy this Protocol, exactly what "byte-identical
+    output" for this commit rules out.
+    """
+
+    def write(
+        self,
+        results: "list[EvaluationResult]",
+        output_path: "str | Path",
+        **context: Any,
+    ) -> "tuple[Path, str | None]":
+        """Write the report; return (path written, recommendation text or None)."""
+        ...
