@@ -7,7 +7,6 @@ import shutil
 from typing import Any
 
 from valtron_core.attachments import _MAGIC, detect_mime_hint
-from valtron_core.client import LLMClient
 from valtron_core.models import EvaluationResult
 from valtron_core.reports._base import TEMPLATES_DIR, _ReportBase, _jinja_env
 
@@ -72,7 +71,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
             )
 
             return response.choices[0].message.content.strip()
-        except Exception as e:
+        except Exception:
             return None
 
     def _encode_image(self, image_path: Path) -> str:

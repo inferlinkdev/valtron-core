@@ -28,7 +28,6 @@ from reportlab.platypus import (  # type: ignore[import-untyped]
     TableStyle,
 )
 
-from valtron_core.client import LLMClient
 from valtron_core.models import EvaluationResult
 from valtron_core.reports._base import _ReportBase
 

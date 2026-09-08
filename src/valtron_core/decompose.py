@@ -15,7 +15,7 @@ import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, get_args, get_origin
+from typing import Any, get_origin
 
 import structlog
 from pydantic import BaseModel, Field, create_model
@@ -266,7 +266,6 @@ def _deep_merge_dicts(dicts: list[dict]) -> dict:
     if not dicts:
         return {}
 
-    base = dicts[0]
     result: dict = {}
 
     all_keys: list[str] = list(dict.fromkeys(k for d in dicts for k in d))

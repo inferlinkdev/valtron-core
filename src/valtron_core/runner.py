@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Union
+from typing import Any, Callable
 
 import litellm
 from litellm import BaseModel
