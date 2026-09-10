@@ -52,7 +52,7 @@ transformers = [
     # no `tokenizer.json` (e.g. prajjwal1/bert-tiny, used in tests), which
     # breaks bert_trainer.py/transformer_classifier.py as written. Left
     # pinned below 5 until that tokenizer-loading path is updated.
-    "transformers>=4.35.0,<5",
+    "transformers>=4.35.0,<6",
     "scikit-learn>=1.3.0,<2",
     "datasets>=2.18.0",
     "accelerate>=0.26.0",
