@@ -3,7 +3,7 @@
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Union
+from typing import Any, Callable
 
 import litellm
 from litellm import BaseModel
@@ -186,8 +186,14 @@ def save_run_dir(
             for result in results
         }
         total_cost = sum(v["llm_cost"] + v["evaluation_cost"] for v in model_costs.values())
+        # Local import: evaluation.persistence imports save_run_dir/save_single_model_result
+        # from this module at its own top level, so importing it back here at
+        # runner.py's top level would be circular (see persistence.py's own docstring).
+        from valtron_core.evaluation.persistence import FORMAT_VERSION
+
         metadata = {
             "timestamp": datetime.now().strftime("%Y%m%d_%H%M%S"),
+            "format_version": FORMAT_VERSION,
             "use_case": use_case,
             "original_prompt": original_prompt,
             "field_metrics_config": {"config": field_config} if field_config else None,
@@ -226,7 +232,7 @@ class EvaluationRunner:
         self.evaluator = PromptEvaluator(client=self.client)
         self.loader = DocumentLoader()
 
-    def _check_api_keys(self, models: "list[Any]") -> None:
+    def _check_api_keys(self, models: "list[Any]") -> None:  # noqa: C901, PLR0912
         """Raise ValueError if any model is missing its required API key env vars."""
         missing_by_model: dict[str, list[str]] = {}
         for model in models:
@@ -432,10 +438,13 @@ class EvaluationRunner:
         self, run_dir: Path
     ) -> "tuple[list[EvaluationResult], dict[str, Any]]":
         """Load results from new-format run directory (metadata.json + models/)."""
-        from valtron_core.scoring.json_eval import EvalResult
+        # Local import: evaluation.persistence imports save_run_dir/save_single_model_result
+        # from this module at its own top level, so importing it back at runner.py's top
+        # level would be circular. By call time (long after both modules finish loading),
+        # there is nothing left to cycle.
+        from valtron_core.evaluation.persistence import RunDirectoryCodec
 
-        with open(run_dir / "metadata.json") as f:
-            meta = json.load(f)
+        meta = RunDirectoryCodec.read_json(run_dir / "metadata.json")
 
         label_map = {d["id"]: d["label"] for d in meta.get("documents", [])}
         # content_path entries in metadata.json were absolutized when saved (see
@@ -458,8 +467,7 @@ class EvaluationRunner:
         models_dir = run_dir / "models"
 
         for model_file in sorted(models_dir.glob("*.json")):
-            with open(model_file) as f:
-                model_data = json.load(f)
+            model_data = RunDirectoryCodec.read_json(model_file)
 
             model_name = model_data["model"]
             model_prompts[model_name] = model_data.get("prompt_template", "")
@@ -468,42 +476,19 @@ class EvaluationRunner:
             if override:
                 model_override_prompts[model_name] = override
 
-            predictions = []
-            for p in model_data.get("predictions", []):
-                doc_id = p["document_id"]
-                field_metrics = None
-                if p.get("field_metrics"):
-                    try:
-                        field_metrics = EvalResult.model_validate(p["field_metrics"])
-                    except Exception:
-                        pass
-                predictions.append(
-                    PredictionResult(
-                        document_id=doc_id,
-                        predicted_value=p["predicted_value"],
-                        expected_value=p.get("expected_value", label_map.get(doc_id, "")),
-                        is_correct=p.get("is_correct", False),
-                        example_score=p.get("example_score", 0.0),
-                        response_time=p.get("response_time", 0.0),
-                        original_cost=p.get("original_cost", 0.0),
-                        llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
-                        evaluation_cost=p.get("evaluation_cost", 0.0),
-                        model=model_name,
-                        field_metrics=field_metrics,
-                        confidence_score=p.get("confidence_score"),
-                    )
+            predictions = [
+                RunDirectoryCodec.build_prediction(
+                    p,
+                    model_label=model_name,
+                    expected_value_fallback=label_map.get(p["document_id"], ""),
+                    include_confidence_score=True,
                 )
+                for p in model_data.get("predictions", [])
+            ]
 
-            result_kwargs: dict[str, Any] = {
-                "run_id": model_data.get("run_id", model_file.stem),
-                "predictions": predictions,
-            }
-            if model_data.get("started_at"):
-                result_kwargs["started_at"] = model_data["started_at"]
-            if model_data.get("completed_at"):
-                result_kwargs["completed_at"] = model_data["completed_at"]
             result = EvaluationResult(
-                **result_kwargs,
+                run_id=model_data.get("run_id", model_file.stem),
+                predictions=predictions,
                 metrics=(
                     EvaluationMetrics(**model_data["metrics"])
                     if model_data.get("metrics")
@@ -515,8 +500,7 @@ class EvaluationRunner:
                 field_config=(meta.get("field_metrics_config") or {}).get("config"),
                 status=model_data.get("status", "completed"),
             )
-            if not result.metrics and result.predictions:
-                result.compute_metrics()
+            RunDirectoryCodec.finalize_evaluation_result(result, model_data)
             results.append(result)
 
         metadata_out = {
@@ -721,7 +705,7 @@ class EvaluationRunner:
         self.loader.save_results_to_json(result, output_file)
         console.print(f"[green]Results saved to {output_file}[/green]")
 
-    def generate_report(
+    def generate_report(  # noqa: C901, PLR0912, PLR0915
         self,
         results: list[EvaluationResult] | None = None,
         output_dir: str | Path | None = None,

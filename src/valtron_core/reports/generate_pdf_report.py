@@ -28,7 +28,6 @@ from reportlab.platypus import (  # type: ignore[import-untyped]
     TableStyle,
 )
 
-from valtron_core.client import LLMClient
 from valtron_core.models import EvaluationResult
 from valtron_core.reports._base import _ReportBase
 
@@ -319,7 +318,7 @@ class PdfReportGenerator(_ReportBase):
     # Chart generation
     # ------------------------------------------------------------------
 
-    def _generate_charts(
+    def _generate_charts(  # noqa: PLR0915
         self,
         results: list[EvaluationResult],
     ) -> list[io.BytesIO]:
@@ -557,7 +556,7 @@ class PdfReportGenerator(_ReportBase):
         elems.extend(self._build_perf_table(data))
         return elems
 
-    def _build_perf_table(self, data: dict) -> list[Any]:
+    def _build_perf_table(self, data: dict) -> list[Any]:  # noqa: C901, PLR0912, PLR0915
         results = data["results"]
         performance_best = data["performance_best"]
         has_field_metrics = data["has_field_metrics"]

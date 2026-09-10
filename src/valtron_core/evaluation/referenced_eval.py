@@ -25,8 +25,20 @@ from valtron_core.decompose import (
     generate_sub_prompts,
     inject_few_shot_into_sub_prompts,
 )
-from valtron_core.evaluation.config import STRUCTURED_MANIPULATIONS, Manipulation, ModelEvalConfig
+from valtron_core.evaluation.config import (
+    STRUCTURED_MANIPULATIONS,
+    LLMModelConfig,
+    Manipulation,
+    ModelEvalConfig,
+    TransformerModelConfig,
+)
 from valtron_core.evaluation.model_eval import ModelEval
+from valtron_core.evaluation.persistence import RunDirectoryCodec
+from valtron_core.evaluation.stages import (
+    StructuredLabelIngestor,
+    TransformerGenerator,
+    serialize_structured_label,
+)
 from valtron_core.evaluator import _score_prediction
 from valtron_core.few_shot_training_data_generator import (
     FewShotTrainingDataGenerator,
@@ -59,6 +71,12 @@ class ReferencedEval(ModelEval):
     for extraction-mode data with upfront validation that a schema was actually
     given.
     """
+
+    _ingestor: StructuredLabelIngestor
+    """Narrows ModelEval's ``Ingestor`` to the concrete type this class assigns,
+    so ``self._ingestor.auto_wrap_string_labels`` type-checks where it's kept in
+    sync with ``self._auto_wrap_string_labels`` (see ``_post_init``,
+    ``_check_model_param_support``)."""
 
     def __init__(
         self,
@@ -116,6 +134,7 @@ class ReferencedEval(ModelEval):
         self._field_metrics_config_raw = self.config.field_metrics_config
         self.few_shot_examples: list[Any] = []
         self._auto_wrap_string_labels: bool = self._compute_auto_wrap_string_labels()
+        self._ingestor = StructuredLabelIngestor(self._auto_wrap_string_labels)
 
         logger.info(
             "model_eval_initialized",
@@ -135,11 +154,10 @@ class ReferencedEval(ModelEval):
         self._validate_labels_against_schema()
 
     def _check_model_param_support(self) -> None:
-        from valtron_core.evaluation.config import LLMModelConfig
-
         wants_response_format = self.response_format is not None
 
         self._auto_wrap_string_labels = self._compute_auto_wrap_string_labels()
+        self._ingestor.auto_wrap_string_labels = self._auto_wrap_string_labels
 
         if wants_response_format and self.data and not self._auto_wrap_string_labels:
             all_plain_string_labels = all(
@@ -210,7 +228,7 @@ class ReferencedEval(ModelEval):
             or (isinstance(annotation, type) and issubclass(annotation, enum.Enum))
         )
 
-    def _validate_labels_against_schema(self) -> None:
+    def _validate_labels_against_schema(self) -> None:  # noqa: C901, PLR0912
         """Validate each label against the response schema, raising if any fail.
 
         Handles both Pydantic response_format (via model_validate_json) and
@@ -260,62 +278,38 @@ class ReferencedEval(ModelEval):
     # Model management
     # -------------------------------------------------------------------------
 
+    def _build_model_config(self, entry: "str | dict[str, Any] | Any") -> Any:
+        """Normalize one raw model entry, additionally accepting transformer-model dicts.
+
+        Falls back to ``ModelEval._build_model_config`` (str -> ``LLMModelConfig``,
+        dict -> ``LLMModelConfig``, already-a-config-object -> passthrough) for
+        everything else.
+        """
+        if isinstance(entry, dict) and entry.get("type", "llm") == "transformer":
+            return TransformerModelConfig.model_validate(entry)
+        return super()._build_model_config(entry)
+
     def add_models(self, models: "Sequence[str | dict[str, Any] | Any]") -> None:
         """Add new models to the experiment.
 
-        All model validation (uniqueness, structured-manipulation guards) is
-        handled here — ``__init__`` delegates to this method for its own model
-        initialization.  On the next ``evaluate()`` / ``run()`` call only newly
-        added models are evaluated; models that already have results are skipped
-        automatically.
+        Label-uniqueness validation and normalization (including transformer-model
+        dicts, via the ``_build_model_config`` override above) are handled by
+        ``ModelEval.add_models``; this method only adds the extra guard that a
+        structured prompt manipulation (decompose, hallucination_filter,
+        multi_pass) requires ``response_format`` to be set. ``__init__``
+        delegates to this method for its own model initialization. On the next
+        ``evaluate()`` / ``run()`` call only newly added models are evaluated;
+        models that already have results are skipped automatically.
 
         Args:
             models: Model name strings, model config dicts, or ``ModelConfig`` objects.
 
         Raises:
-            ValueError: Duplicate label or structured manipulation without
-                ``response_format``.
+            ValueError: Duplicate label (raised by the base class), structured
+                manipulation without ``response_format``, or an unrecognized
+                model entry.
         """
-        from valtron_core.evaluation.config import LLMModelConfig, TransformerModelConfig
-
-        normalized: list[Any] = []
-        for m in models:
-            if isinstance(m, str):
-                normalized.append(LLMModelConfig(name=m))
-            elif isinstance(m, dict):
-                model_type = m.get("type", "llm")
-                if model_type == "transformer":
-                    normalized.append(TransformerModelConfig.model_validate(m))
-                else:
-                    normalized.append(LLMModelConfig.model_validate(m))
-            else:
-                normalized.append(m)
-
-        existing_labels = {str(mc.label or getattr(mc, "name", None)) for mc in self.models}
-        seen_in_batch: set[str] = set()
-        for mc in normalized:
-            model_name = getattr(mc, "name", None)
-            label = str(mc.label or model_name)
-            label_source = (
-                f"label={mc.label!r}"
-                if mc.label
-                else f"name={model_name!r} (label inferred from name)"
-            )
-            if label in existing_labels:
-                raise ValueError(
-                    f"Duplicate model label {label!r} in config ({label_source}). "
-                    "Each model entry must have a unique label. "
-                    "You can use the same model twice by giving one entry a distinct label "
-                    "(e.g. label='gpt-5-mini-v2')."
-                )
-            if label in seen_in_batch:
-                raise ValueError(
-                    f"Duplicate model label {label!r} in config ({label_source}). "
-                    "Each model entry must have a unique label. "
-                    "You can use the same model twice by giving one entry a distinct label "
-                    "(e.g. label='gpt-5-mini-v2')."
-                )
-            seen_in_batch.add(label)
+        normalized = [self._build_model_config(m) for m in models]
 
         structured_requested = [
             (str(mc.label or getattr(mc, "name", None)), manip)
@@ -332,8 +326,7 @@ class ReferencedEval(ModelEval):
                 "which require response_format to be provided."
             )
 
-        self.models.extend(normalized)
-        self.config.models.extend(normalized)
+        super().add_models(models)
 
     # -------------------------------------------------------------------------
     # Parsing helpers (used by load_experiment_results)
@@ -347,8 +340,7 @@ class ReferencedEval(ModelEval):
         evaluation-result fields (predictions, metrics, etc.) so that
         ``load_experiment_results`` can reconstruct both from a single parse.
         """
-        with open(model_file) as f:
-            raw = json.load(f)
+        raw = RunDirectoryCodec.read_json(model_file)
 
         llm_config: dict[str, Any] = raw.get("llm_config") or {}
         model_name = llm_config.get("model") or raw.get("model", "")
@@ -393,8 +385,7 @@ class ReferencedEval(ModelEval):
         ``response_format_schema`` is the Pydantic JSON Schema stored from the
         original run, or ``None`` if absent.
         """
-        with open(metadata_path) as f:
-            meta = json.load(f)
+        meta = RunDirectoryCodec.read_json(metadata_path)
 
         original_prompt = meta.get("original_prompt") or "{content}"
         config_dict: dict[str, Any] = {
@@ -470,6 +461,7 @@ class ReferencedEval(ModelEval):
                     instance.response_format = synthesized
                     instance.decomposed_evaluator = DecomposedEvaluator(client=instance.client)
                     instance._auto_wrap_string_labels = instance._compute_auto_wrap_string_labels()
+                    instance._ingestor.auto_wrap_string_labels = instance._auto_wrap_string_labels
 
         label_map = {
             str(d.get("id", "")): (
@@ -492,36 +484,14 @@ class ReferencedEval(ModelEval):
             if md.get("override_prompt"):
                 model_override_prompts[model_label] = md["override_prompt"]
 
-            try:
-                from valtron_core.scoring.json_eval import EvalResult
-
-                _eval_result_cls = EvalResult
-            except ImportError:
-                _eval_result_cls = None
-
-            predictions = []
-            for p in md.get("predictions", []):
-                field_metrics = None
-                if p.get("field_metrics") and _eval_result_cls is not None:
-                    try:
-                        field_metrics = _eval_result_cls.model_validate(p["field_metrics"])
-                    except Exception:
-                        pass
-                predictions.append(
-                    PredictionResult(
-                        document_id=p["document_id"],
-                        predicted_value=p["predicted_value"],
-                        expected_value=p.get("expected_value", label_map.get(p["document_id"], "")),
-                        is_correct=p.get("is_correct", False),
-                        example_score=p.get("example_score", 0.0),
-                        response_time=p.get("response_time", 0.0),
-                        original_cost=p.get("original_cost", 0.0),
-                        llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
-                        evaluation_cost=p.get("evaluation_cost", 0.0),
-                        model=model_label,
-                        field_metrics=field_metrics,
-                    )
+            predictions = [
+                RunDirectoryCodec.build_prediction(
+                    p,
+                    model_label=model_label,
+                    expected_value_fallback=label_map.get(p["document_id"], ""),
                 )
+                for p in md.get("predictions", [])
+            ]
 
             result = EvaluationResult(
                 run_id=md["run_id"],
@@ -532,12 +502,7 @@ class ReferencedEval(ModelEval):
                 llm_config=md.get("llm_config", {}),
                 status=md.get("status", "completed"),
             )
-            if md.get("started_at"):
-                result.started_at = md["started_at"]
-            if md.get("completed_at"):
-                result.completed_at = md["completed_at"]
-            if not result.metrics and result.predictions:
-                result.compute_metrics()
+            RunDirectoryCodec.finalize_evaluation_result(result, md)
             results.append(result)
 
         instance.results = results
@@ -624,7 +589,7 @@ class ReferencedEval(ModelEval):
             }
         )
 
-    def reevaluate(  # type: ignore[override]
+    def reevaluate(  # type: ignore[override]  # noqa: C901, PLR0912
         self,
         data: "list[dict[str, Any]] | str | Path | None" = None,
         output_dir: "str | Path | None" = None,
@@ -685,17 +650,14 @@ class ReferencedEval(ModelEval):
         if resolved_data is not None:
             self.data = resolved_data
             self._auto_wrap_string_labels = self._compute_auto_wrap_string_labels()
+            self._ingestor.auto_wrap_string_labels = self._auto_wrap_string_labels
 
-            new_label_map: dict[str, str] = {}
-            for item in resolved_data:
-                label_raw = item.get("label", "")
-                if isinstance(label_raw, (dict, list)):
-                    serialized = json.dumps(label_raw)
-                elif self._auto_wrap_string_labels:
-                    serialized = json.dumps({"label": str(label_raw)})
-                else:
-                    serialized = str(label_raw)
-                new_label_map[str(item.get("id", ""))] = serialized
+            new_label_map: dict[str, str] = {
+                str(item.get("id", "")): serialize_structured_label(
+                    item.get("label", ""), auto_wrap_string_labels=self._auto_wrap_string_labels
+                )
+                for item in resolved_data
+            }
 
             existing_ids: set[str] = {p.document_id for er in self.results for p in er.predictions}
             for doc_id in new_label_map:
@@ -839,34 +801,6 @@ class ReferencedEval(ModelEval):
             total_cost=result["costs"]["total_cost"],
             duration_s=round(time.perf_counter() - phase_start, 2),
         )
-
-    # -------------------------------------------------------------------------
-    # Data loading
-    # -------------------------------------------------------------------------
-
-    def _load_documents_and_labels(self) -> tuple[list[Document], list[Label]]:
-        """Convert self.data into Document and Label objects (no disk I/O)."""
-        documents: list[Document] = []
-        labels: list[Label] = []
-        for idx, item in enumerate(self.data):
-            doc_id = str(item.get("id", f"doc_{idx}"))
-            label_raw = item.get("label", "")
-            if isinstance(label_raw, (dict, list)):
-                label_value = json.dumps(label_raw)
-            elif self._auto_wrap_string_labels:
-                label_value = json.dumps({"label": str(label_raw)})
-            else:
-                label_value = str(label_raw)
-            documents.append(
-                Document(
-                    id=doc_id,
-                    content=resolve_content(item, self._data_base_dir),
-                    metadata=item.get("metadata", {}),
-                    attachments=item.get("attachments", []),
-                )
-            )
-            labels.append(Label(document_id=doc_id, value=label_value))
-        return documents, labels
 
     # -------------------------------------------------------------------------
     # Per-model evaluation
@@ -1071,21 +1005,15 @@ class ReferencedEval(ModelEval):
 
         logger.info("evaluating_transformer", model=model_name, path=model_path)
 
-        from valtron_core.transformer_wrapper import TransformerModelWrapper
-
-        transformer = TransformerModelWrapper(model_path, model_name)
+        generator = TransformerGenerator(model_path, model_name)
 
         # Build label map from self.data (no file I/O)
-        label_map: dict[str, str] = {}
-        for idx, item in enumerate(self.data):
-            doc_id = str(item.get("id", f"doc_{idx}"))
-            label_raw = item.get("label", "")
-            if isinstance(label_raw, (dict, list)):
-                label_map[doc_id] = json.dumps(label_raw)
-            elif self._auto_wrap_string_labels:
-                label_map[doc_id] = json.dumps({"label": str(label_raw)})
-            else:
-                label_map[doc_id] = str(label_raw)
+        label_map: dict[str, str] = {
+            str(item.get("id", f"doc_{idx}")): serialize_structured_label(
+                item.get("label", ""), auto_wrap_string_labels=self._auto_wrap_string_labels
+            )
+            for idx, item in enumerate(self.data)
+        }
 
         run_id = str(uuid.uuid4())
         result = EvaluationResult(
@@ -1110,9 +1038,10 @@ class ReferencedEval(ModelEval):
         for doc in documents:
             expected_label = label_map.get(doc.id, "")
 
-            pred_start = time.time()
-            prediction, confidence = transformer.predict_with_confidence(doc.content)
-            pred_time = time.time() - pred_start
+            raw = await generator.generate(doc)
+            prediction = raw.predicted_value
+            confidence = raw.confidence_score
+            pred_time = raw.response_time
 
             if self._auto_wrap_string_labels:
                 prediction = json.dumps({"label": prediction})
@@ -1177,7 +1106,7 @@ class ReferencedEval(ModelEval):
     # Evaluation loop
     # -------------------------------------------------------------------------
 
-    async def _evaluate_model_documents(
+    async def _evaluate_model_documents(  # noqa: C901
         self,
         model_config: Any,
         documents: list[Document],

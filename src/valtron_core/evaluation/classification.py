@@ -8,8 +8,17 @@ from pydantic import BaseModel, ConfigDict, Field, create_model
 from valtron_core.evaluation.config import BaseRecipeConfig, ClassificationConfig
 from valtron_core.evaluation.model_eval import _normalize_label
 from valtron_core.evaluation.referenced_eval import ReferencedEval
+from valtron_core.evaluation.registry import label_looks_like_json, register_experiment
 
 
+def _looks_like_classification(data: "list[dict[str, Any]]") -> bool:
+    """A plain-string-labeled dataset: ``utilities/config_wizard.py``'s ``"classification"``."""
+    if not data or "label" not in data[0]:
+        return False
+    return not label_looks_like_json(data[0].get("label", ""))
+
+
+@register_experiment("classification", sniff=_looks_like_classification)
 class ClassificationExperiment(ReferencedEval):
     """Recipe for classification-shaped data: plain string labels, compared by exact match.
 

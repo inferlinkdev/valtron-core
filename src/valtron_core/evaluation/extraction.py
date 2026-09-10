@@ -8,8 +8,17 @@ from pydantic import BaseModel
 from valtron_core.evaluation.config import ModelEvalConfig
 from valtron_core.evaluation.model_eval import _normalize_label
 from valtron_core.evaluation.referenced_eval import ReferencedEval
+from valtron_core.evaluation.registry import label_looks_like_json, register_experiment
 
 
+def _looks_like_extraction(data: "list[dict[str, Any]]") -> bool:
+    """A JSON-labeled dataset: ``utilities/config_wizard.py``'s ``"extraction"``."""
+    if not data or "label" not in data[0]:
+        return False
+    return label_looks_like_json(data[0].get("label", ""))
+
+
+@register_experiment("extraction", sniff=_looks_like_extraction)
 class ExtractionExperiment(ReferencedEval):
     """Recipe for structured extraction: labels are nested JSON objects, scored per field.
 

@@ -41,14 +41,34 @@ def detect_mime_hint(s: str) -> str:
     return _EXT_MIME.get(suffix, "")
 
 
+def _sniff_remote_mime_type(url: str) -> str:
+    """
+    Best-effort MIME type for a URL whose extension/data-URI header didn't
+    resolve one. Issues a lightweight HEAD request to read Content-Type,
+    without downloading the body.
+
+    Returns an empty string if the type still cannot be determined this way.
+    """
+    request = urllib.request.Request(url, method="HEAD")
+    try:
+        with urllib.request.urlopen(request) as resp:
+            content_type: str = resp.headers.get("Content-Type", "")
+            return content_type.split(";")[0].strip()
+    except Exception as e:
+        logger.warning("attachment_head_request_failed", attachment=url, error=str(e))
+        return ""
+
+
 def check_attachment_support(documents: list[Document], model_name: str) -> None:
     """
     Verify the model supports every attachment type across all documents before
-    any evaluation runs. Uses extension/data-URI detection only, no I/O.
+    any evaluation runs. Uses extension/data-URI detection first; for URLs whose
+    extension is inconclusive (e.g. a query-string-driven image endpoint), falls
+    back to a HEAD request for the Content-Type rather than failing outright.
 
     Raises:
         ValueError: If any document has an attachment type the model cannot handle,
-                    or if an attachment's type cannot be determined from its extension.
+                    or if an attachment's type cannot be determined at all.
     """
     supported_exts = ", ".join(_EXT_MIME.keys())
 
@@ -58,11 +78,16 @@ def check_attachment_support(documents: list[Document], model_name: str) -> None
         for attachment in doc.attachments:
             mime_type = detect_mime_hint(attachment)
 
+            if not mime_type and attachment.startswith(("http://", "https://")):
+                mime_type = _sniff_remote_mime_type(attachment)
+
             if not mime_type:
                 raise ValueError(
                     f"Cannot determine attachment type for document '{doc.id}' "
                     f"(attachment: '{attachment}'). "
-                    f"Supported extensions: {supported_exts}."
+                    f"Supported extensions: {supported_exts}. "
+                    f"For URLs without one of these extensions, the server's "
+                    f"Content-Type response header must identify the type."
                 )
 
             if mime_type.startswith("image/") and not litellm.supports_vision(model_name):

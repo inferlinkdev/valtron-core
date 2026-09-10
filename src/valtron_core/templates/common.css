@@ -14,6 +14,9 @@ body {
     color: #c9d1d9;
     margin: 0 auto;
     background: #0d1117;
+    max-width: 1400px;
+    padding: 40px 20px;
+    background-attachment: fixed;
 }
 
 h1 {
@@ -33,4 +36,63 @@ h1 {
 .footer strong {
     color: #58a6ff;
     font-weight: 600;
+}
+
+/* Shared by evaluation_report.jinja2.html and summarization_report.jinja2.html
+   only: byte-identical between the two before this move (verified, not
+   assumed; see the commit that added this section). detailed_analysis.jinja2.html
+   and tradeoff_report.jinja2.html each define their own .header (a genuinely
+   different layout in each case, not a copy of this one) and neither defines
+   .recommendation at all, so neither belongs here. */
+
+.header {
+    background: #161b22;
+    color: #c9d1d9;
+    padding: 40px;
+    border-radius: 6px;
+    margin-bottom: 30px;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+    border: 1px solid #30363d;
+}
+
+.recommendation h1 {
+    font-size: 1.3em;
+    color: #e6edf3;
+    margin: 16px 0 8px;
+}
+
+.recommendation h2 {
+    font-size: 1.15em;
+    color: #e6edf3;
+    margin: 16px 0 8px;
+}
+
+.recommendation h3 {
+    font-size: 1.05em;
+    color: #e6edf3;
+    margin: 16px 0 8px;
+}
+
+.recommendation ul, .recommendation ol {
+    padding-left: 24px;
+    margin: 8px 0;
+}
+
+.recommendation li {
+    margin: 4px 0;
+}
+
+.recommendation strong, .recommendation b {
+    color: #e6edf3;
+    font-weight: 700;
+}
+
+.recommendation code {
+    background: #0d1117;
+    padding: 2px 6px;
+    border-radius: 4px;
+}
+
+.recommendation p {
+    margin: 8px 0;
 }

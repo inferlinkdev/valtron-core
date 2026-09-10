@@ -30,11 +30,12 @@ How it uses the base class's seams:
 """
 
 import asyncio
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import Any, Callable
 
 import structlog
 from tqdm import tqdm  # type: ignore[import-untyped]
@@ -42,8 +43,13 @@ from tqdm import tqdm  # type: ignore[import-untyped]
 from valtron_core.attachments import check_attachment_support
 from valtron_core.cost_utils import _fallback_cost, _parse_time_unit_to_seconds
 from valtron_core.evaluation.config import BaseRecipeConfig, SummarizationConfig
+from valtron_core.evaluation.document_fan_out import fan_out_over_documents
 from valtron_core.evaluation.model_eval import ModelEval
+from valtron_core.evaluation.registry import register_experiment
+from valtron_core.evaluation.stages.summarization_generate import JudgeCandidateGenerator
+from valtron_core.evaluation.stages.summarization_score import JudgeScorer
 from valtron_core.models import Document, EvaluationResult, PredictionResult
+from valtron_core.reports.writers import SummarizationHtmlReportWriter, SummarizationPdfReportWriter
 from valtron_core.summarization import (
     Axes,
     ClientModel,
@@ -63,11 +69,6 @@ from valtron_core.summarization import (
     render_requirements,
     score,
 )
-
-if TYPE_CHECKING:
-    from valtron_core.reports.generate_summarization_report import (
-        SummarizationReportGenerator,
-    )
 
 logger = structlog.get_logger()
 
@@ -182,6 +183,18 @@ class _StoredSummary(Model):
         return self._summary
 
 
+def _looks_like_summarization(data: "list[dict[str, Any]]") -> bool:
+    """No label at all: ``utilities/config_wizard.py``'s ``"no_label"``.
+
+    Today's best guess for what a reference-free task's data looks like,
+    matching that endpoint's own ``_analyze_no_label`` comment: a task with
+    no ground truth in the data at all, not a classification/extraction
+    dataset that merely happens to have empty label values.
+    """
+    return bool(data) and "label" not in data[0]
+
+
+@register_experiment("no_label", sniff=_looks_like_summarization)
 class SummarizationExperiment(ModelEval):
     """Rank summarization models on a corpus, with no reference summaries.
 
@@ -244,9 +257,16 @@ class SummarizationExperiment(ModelEval):
         self._judge = Judge(
             ClientModel(self._settings.judge_model, client=self.client, name=JUDGE_LABEL)
         )
+        self._generator = JudgeCandidateGenerator()
+        self._scorer = JudgeScorer(self._judge)
         # How many models split each document's shared judge cost. Set per pass
         # in _run_evaluations, since add_models() + evaluate() can run a subset.
         self._models_in_pass = max(len(self.models), 1)
+
+        self._report_writers = {
+            "html": SummarizationHtmlReportWriter(client=self.client),
+            "pdf": SummarizationPdfReportWriter(client=self.client),
+        }
 
     # -------------------------------------------------------------------------
     # Persistence: round-tripping config through load_experiment_results()
@@ -459,20 +479,18 @@ class SummarizationExperiment(ModelEval):
             status="running",
         )
 
-        semaphore = asyncio.Semaphore(self._settings.max_concurrent_documents)
+        async def process_one(document: Document) -> PredictionResult:
+            return await self._evaluate_one(document, model, model_config, prompt)
 
-        async def one(document: Document) -> PredictionResult:
-            async with semaphore:
-                prediction = await self._evaluate_one(document, model, model_config, prompt)
-            if on_document_complete is not None:
-                on_document_complete(prediction)
-            if progress_bar is not None:
-                progress_bar.update(1)
-            return prediction
-
-        # Gathered so predictions keep the input document order, which is what
-        # makes a saved run diffable against another.
-        for prediction in await asyncio.gather(*(one(document) for document in documents)):
+        # fan_out_over_documents gathers so predictions keep the input document
+        # order, which is what makes a saved run diffable against another.
+        for prediction in await fan_out_over_documents(
+            documents,
+            self._settings.max_concurrent_documents,
+            process_one,
+            on_document_complete=on_document_complete,
+            progress_bar=progress_bar,
+        ):
             result.add_prediction(prediction)
 
         result.completed_at = datetime.now()
@@ -493,14 +511,15 @@ class SummarizationExperiment(ModelEval):
         shared = self._document_facts[document.id]
 
         try:
-            evaluation = await evaluate_candidate(
+            started = time.monotonic()
+            summary, generation_usage, generation_seconds = await self._generator.generate(
                 Doc(text, attachments=document.attachments),
                 model,
-                self._judge,
-                shared,
                 self._checklist,
                 summary_prompt=TemplatePrompt(prompt, document.content),
             )
+            grade = await self._scorer.score(summary, shared, self._checklist)
+            seconds = time.monotonic() - started
         except Exception as error:
             # One document must not void a model's whole run: record the failure
             # and let it be ranked on the documents it managed. An unscored
@@ -520,29 +539,27 @@ class SummarizationExperiment(ModelEval):
                 metadata={"content": document.content, "error": str(error)},
             )
 
-        self._generation_usage.merge(evaluation.generation_usage)
-        self._candidate_judge_usage.merge(evaluation.judge_usage)
+        self._generation_usage.merge(generation_usage)
+        self._candidate_judge_usage.merge(grade.judge_usage)
 
-        original_cost = evaluation.generation_usage.cost_usd
-        llm_cost = self._effective_cost(model_config, original_cost, evaluation.generation_seconds)
+        original_cost = generation_usage.cost_usd
+        llm_cost = self._effective_cost(model_config, original_cost, generation_seconds)
         # The shared per-document judge work is divided evenly: it belongs to no
         # single candidate, but leaving it out would make the run's total cost
         # understate what was actually spent.
-        evaluation_cost = (
-            evaluation.judge_usage.cost_usd + shared.usage.cost_usd / self._models_in_pass
-        )
+        evaluation_cost = grade.judge_usage.cost_usd + shared.usage.cost_usd / self._models_in_pass
 
-        axes = evaluation.axes
+        axes = grade.axes
         task_scores = {
             name: value for name in AXIS_NAMES if (value := getattr(axes, name)) is not None
         }
 
         return PredictionResult(
             document_id=document.id,
-            predicted_value=evaluation.summary.text,
+            predicted_value=summary.text,
             # No ground truth, so expected_value/is_correct/example_score stay unset.
             task_scores=task_scores or None,
-            response_time=evaluation.seconds,
+            response_time=seconds,
             original_cost=original_cost,
             llm_cost=llm_cost,
             evaluation_cost=evaluation_cost,
@@ -551,17 +568,17 @@ class SummarizationExperiment(ModelEval):
                 # Required: _run_evaluations hashes this to decide what a resumed
                 # run can skip. Without it, partial-result caching silently no-ops.
                 "content": document.content,
-                "generation_seconds": evaluation.generation_seconds,
+                "generation_seconds": generation_seconds,
                 "document_facts": [fact.text for fact in shared.facts],
                 "salient_facts": [fact.text for fact in shared.salient],
-                "summary_facts": [fact.text for fact in evaluation.summary_facts],
-                "faithful_verdicts": evaluation.faithful_verdicts,
-                "coverage_verdicts": evaluation.coverage_verdicts,
-                "precision_verdicts": evaluation.precision_verdicts,
-                "requirement_verdicts": evaluation.requirement_verdicts,
+                "summary_facts": [fact.text for fact in grade.summary_facts],
+                "faithful_verdicts": grade.faithful_verdicts,
+                "coverage_verdicts": grade.coverage_verdicts,
+                "precision_verdicts": grade.precision_verdicts,
+                "requirement_verdicts": grade.requirement_verdicts,
                 "requirements": list(self._settings.requirements),
-                "generation_usage": _usage_dict(evaluation.generation_usage),
-                "judge_usage": _usage_dict(evaluation.judge_usage),
+                "generation_usage": _usage_dict(generation_usage),
+                "judge_usage": _usage_dict(grade.judge_usage),
             },
         )
 
@@ -906,62 +923,39 @@ class SummarizationExperiment(ModelEval):
     # Reports
     # -------------------------------------------------------------------------
 
-    def save_html_report(self, output_dir: str | Path | None = None) -> Path:
-        """Write the HTML report and return its path.
+    def _report_context(self, fmt: str) -> dict[str, Any]:
+        """``ranking`` for both formats, plus whatever else each one's writer needs.
 
-        Overrides the base class's ``NotImplementedError``: the reason it refuses
-        by default is that its report assumes a correctness notion, and this
-        recipe brings its own report which does not.
+        Overrides the base class's default (``{}``): the reason it refuses to
+        write a report by default is that its report assumes a correctness
+        notion, and this recipe brings its own report which does not, so it
+        always has something to pass. Also rebuilds the ranking first if it's
+        missing: a run reloaded from disk has predictions but was never ranked,
+        since ``compute_task_statistics`` only runs as part of ``aevaluate()``.
         """
-        generator, destination = self._report_setup(output_dir, "save_html_report")
         assert self.results is not None
-        path, recommendation = generator.generate_html_report(
-            self.results,
-            self.ranking,
-            destination,
-            use_case=self.use_case,
-            original_prompt=self.prompt_template,
-            model_prompts=self._model_prompts,
-        )
-        # Held so a following save_pdf_report() reuses it rather than paying for
-        # a second one; arun() calls both.
-        self._recommendation = recommendation
-        return path
-
-    def save_pdf_report(self, output_dir: str | Path | None = None) -> Path:
-        """Write the PDF report and return its path.
-
-        Reuses the recommendation from a preceding ``save_html_report()`` if there
-        was one, and generates none of its own -- the same division of labour the
-        classification reports use.
-        """
-        generator, destination = self._report_setup(output_dir, "save_pdf_report")
-        assert self.results is not None
-        return generator.generate_pdf_report(
-            self.results,
-            self.ranking,
-            destination,
-            use_case=self.use_case,
-            recommendation=self._recommendation,
-        )
-
-    def _report_setup(
-        self, output_dir: str | Path | None, caller: str
-    ) -> tuple["SummarizationReportGenerator", Path]:
-        """Shared preamble: check there is something to report, and rebuild the ranking."""
-        from valtron_core.reports.generate_summarization_report import (
-            SummarizationReportGenerator,
-        )
-
-        if self.results is None:
-            raise RuntimeError(f"Call evaluate() before {caller}().")
-        # A run reloaded from disk has predictions but has never been ranked,
-        # since compute_task_statistics only runs as part of aevaluate().
         if self._ranking is None:
             self.compute_task_statistics(self.results)
-        return SummarizationReportGenerator(client=self.client), self._resolve_output_dir(
-            output_dir
-        )
+        context: dict[str, Any] = {"ranking": self.ranking, "use_case": self.use_case}
+        if fmt == "html":
+            context["original_prompt"] = self.prompt_template
+            context["model_prompts"] = self._model_prompts
+        elif fmt == "pdf":
+            # Reuses the recommendation from a preceding save_html_report() if
+            # there was one, and generates none of its own; the PDF writer
+            # never computes a recommendation itself, only the HTML one does.
+            context["recommendation"] = self._recommendation
+        return context
+
+    def _after_report_written(self, fmt: str, recommendation: str | None) -> None:
+        """Cache an HTML report's recommendation for a following save_pdf_report().
+
+        Held so save_pdf_report() reuses it rather than paying for a second
+        one; arun() calls both. A no-op for "pdf" itself, which never
+        produces a recommendation of its own to cache.
+        """
+        if fmt == "html":
+            self._recommendation = recommendation
 
     @property
     def ranking(self) -> SummarizationRanking:

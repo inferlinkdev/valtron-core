@@ -7,7 +7,6 @@ import shutil
 from typing import Any
 
 from valtron_core.attachments import _MAGIC, detect_mime_hint
-from valtron_core.client import LLMClient
 from valtron_core.models import EvaluationResult
 from valtron_core.reports._base import TEMPLATES_DIR, _ReportBase, _jinja_env
 
@@ -72,7 +71,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
             )
 
             return response.choices[0].message.content.strip()
-        except Exception as e:
+        except Exception:
             return None
 
     def _encode_image(self, image_path: Path) -> str:
@@ -169,7 +168,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
 
         return field_max_values
 
-    def _build_field_metrics_tree(
+    def _build_field_metrics_tree(  # noqa: C901
         self, results: list[EvaluationResult], all_field_names: list[str]
     ) -> dict[str, Any]:
         """Build a hierarchical tree from flat dot-separated field paths."""
@@ -241,7 +240,7 @@ Format your response as Markdown using headers, bullet points, and bold text whe
         except Exception:
             return {"url": s, "mime_type": "", "type": "", "data": None}
 
-    def _prepare_detailed_analysis_data(
+    def _prepare_detailed_analysis_data(  # noqa: C901, PLR0912
         self, results: list[EvaluationResult], documents: list[Any] | None = None
     ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Prepare data for detailed input/output analysis page."""

@@ -27,8 +27,15 @@ Layout: :mod:`~valtron_core.summarization.judge` and
 :mod:`~valtron_core.summarization.scoring` the metric,
 :mod:`~valtron_core.summarization.pipeline` the flow, and
 :mod:`~valtron_core.summarization.client_model` the one adapter that binds all of
-it to ``LLMClient``. Everything except that adapter is shared verbatim with the
-standalone research package it was ported from, so keep it that way.
+it to ``LLMClient``. Everything except that adapter, and :func:`~valtron_core.summarization.pipeline.evaluate_candidate`'s
+split into :func:`~valtron_core.summarization.pipeline.generate_summary` and
+:func:`~valtron_core.summarization.pipeline.grade_summary` (to give the host
+framework's Generator/Scorer strategy pattern, see
+:mod:`valtron_core.evaluation.stages`, a real generate/grade seam),
+is shared verbatim with the standalone research package it was ported from --
+keep the rest that way. ``evaluate_candidate`` itself is unchanged for its
+other callers; only its body is now a composition of the two split-out
+functions instead of one inline sequence.
 """
 
 from .client_model import ClientModel
@@ -38,9 +45,12 @@ from .pipeline import (
     CandidateEvaluation,
     DocumentEvaluation,
     DocumentFacts,
+    GradeResult,
     evaluate_candidate,
     evaluate_document,
     extract_document_facts,
+    generate_summary,
+    grade_summary,
 )
 from .prompts import SALIENCE_SUMMARY_PROMPT, Prompt, TemplatePrompt, render_requirements
 from .scoring import (
@@ -69,6 +79,7 @@ __all__ = [
     "DocumentFacts",
     "Fact",
     "FactSource",
+    "GradeResult",
     "Judge",
     "Prompt",
     "Model",
@@ -79,6 +90,8 @@ __all__ = [
     "evaluate_candidate",
     "evaluate_document",
     "extract_document_facts",
+    "generate_summary",
+    "grade_summary",
     "mean_axes",
     "rank",
     "render_requirements",

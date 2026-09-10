@@ -118,33 +118,33 @@ async def extract_document_facts(doc: Doc, judge: Judge) -> DocumentFacts:
     return DocumentFacts(facts=facts, salient=salient, salience=salience, usage=usage)
 
 
-async def evaluate_candidate(
+async def generate_summary(
     doc: Doc,
     model: Model,
-    judge: Judge,
-    shared: DocumentFacts,
     checklist: list[Requirement],
     *,
     summary_prompt: Prompt | None = None,
-) -> CandidateEvaluation:
-    """Summarize one document with one candidate and derive its four axes.
+) -> "tuple[Summary, Usage, float]":
+    """Summarize one document with one candidate. The generation half of :func:`evaluate_candidate`.
 
-    The four judge calls are independent, so they are issued concurrently; how
-    many actually fly at once is the caller's business, not this function's.
+    Split out so a caller that wants to score an already-generated summary
+    separately (see :func:`grade_summary`) can do so without going through
+    :func:`evaluate_candidate`'s single fused call.
 
     Args:
         doc: The document to summarize.
         model: The candidate being evaluated.
-        judge: The judge, shared across candidates so its fact cache is too.
-        shared: This document's facts and salience, from
-            :func:`extract_document_facts`.
-        checklist: The requirements to score against; may be empty.
+        checklist: The requirements to score against; may be empty. Rendered
+            into the default request (see ``summary_prompt`` below).
         summary_prompt: What to ask the candidate. Defaults to
             :class:`SummaryPrompt`, which renders the checklist into the request
             as well as scoring against it. A host whose prompt comes from
             configuration passes its own -- in which case ``checklist`` governs
             scoring alone, and it is the caller's business whether the
             requirements reach the candidate at all.
+
+    Returns:
+        ``(summary, generation_usage, generation_seconds)``.
     """
     started = time.monotonic()
     generation_usage = Usage()
@@ -152,8 +152,42 @@ async def evaluate_candidate(
     summary = Summary(
         (await model.run(request, attachments=doc.attachments, usage=generation_usage)).strip()
     )
-    generation_seconds = time.monotonic() - started
+    return summary, generation_usage, time.monotonic() - started
 
+
+@dataclass(frozen=True)
+class GradeResult:
+    """One candidate's grading only, no generation info: the axes and verdicts behind them."""
+
+    axes: Axes
+    summary_facts: list[Fact]
+    faithful_verdicts: dict[str, bool]
+    coverage_verdicts: dict[str, bool]
+    precision_verdicts: dict[str, bool]
+    requirement_verdicts: dict[str, bool]
+    judge_usage: Usage
+
+
+async def grade_summary(
+    summary: Summary,
+    judge: Judge,
+    shared: DocumentFacts,
+    checklist: list[Requirement],
+) -> GradeResult:
+    """Grade an already-generated summary against the document's shared facts.
+
+    The grading half of :func:`evaluate_candidate`, split out so it can be
+    driven independently of generation (see :func:`generate_summary`). The
+    four judge calls are independent, so they are issued concurrently; how
+    many actually fly at once is the caller's business, not this function's.
+
+    Args:
+        summary: The candidate's already-generated summary.
+        judge: The judge, shared across candidates so its fact cache is too.
+        shared: This document's facts and salience, from
+            :func:`extract_document_facts`.
+        checklist: The requirements to score against; may be empty.
+    """
     judge_usage = Usage()
     summary_facts = await judge.facts(summary.text, FactSource.GENERATED, usage=judge_usage)
 
@@ -177,22 +211,67 @@ async def evaluate_candidate(
         if shared.salient
         else None
     )
-    return CandidateEvaluation(
-        model=model.name,
+    return GradeResult(
         axes=Axes(
             correctness=correctness,
             salient_coverage=salient_coverage,
             salient_precision=salient_precision,
             requirements_met=requirements_met,
         ),
-        summary=summary,
         summary_facts=summary_facts,
         faithful_verdicts=faithful_verdicts,
         coverage_verdicts=coverage_verdicts,
         precision_verdicts=precision_verdicts,
         requirement_verdicts=requirement_verdicts,
-        generation_usage=generation_usage,
         judge_usage=judge_usage,
+    )
+
+
+async def evaluate_candidate(
+    doc: Doc,
+    model: Model,
+    judge: Judge,
+    shared: DocumentFacts,
+    checklist: list[Requirement],
+    *,
+    summary_prompt: Prompt | None = None,
+) -> CandidateEvaluation:
+    """Summarize one document with one candidate and derive its four axes.
+
+    A thin composition of :func:`generate_summary` and :func:`grade_summary`,
+    kept as one call for the common case (and for callers, like a stored-summary
+    regrade, that swap in a different ``model`` but still want one call site).
+
+    Args:
+        doc: The document to summarize.
+        model: The candidate being evaluated.
+        judge: The judge, shared across candidates so its fact cache is too.
+        shared: This document's facts and salience, from
+            :func:`extract_document_facts`.
+        checklist: The requirements to score against; may be empty.
+        summary_prompt: What to ask the candidate. Defaults to
+            :class:`SummaryPrompt`, which renders the checklist into the request
+            as well as scoring against it. A host whose prompt comes from
+            configuration passes its own, in which case ``checklist`` governs
+            scoring alone, and it is the caller's business whether the
+            requirements reach the candidate at all.
+    """
+    started = time.monotonic()
+    summary, generation_usage, generation_seconds = await generate_summary(
+        doc, model, checklist, summary_prompt=summary_prompt
+    )
+    grade = await grade_summary(summary, judge, shared, checklist)
+    return CandidateEvaluation(
+        model=model.name,
+        axes=grade.axes,
+        summary=summary,
+        summary_facts=grade.summary_facts,
+        faithful_verdicts=grade.faithful_verdicts,
+        coverage_verdicts=grade.coverage_verdicts,
+        precision_verdicts=grade.precision_verdicts,
+        requirement_verdicts=grade.requirement_verdicts,
+        generation_usage=generation_usage,
+        judge_usage=grade.judge_usage,
         generation_seconds=generation_seconds,
         seconds=time.monotonic() - started,
     )

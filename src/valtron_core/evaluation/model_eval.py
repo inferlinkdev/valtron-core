@@ -43,11 +43,14 @@ import structlog
 from tqdm import tqdm  # type: ignore[import-untyped]
 
 from valtron_core.client import LLMClient
-from valtron_core.content_resolution import absolutize_local_path, is_local_path, resolve_content
+from valtron_core.content_resolution import absolutize_local_path, is_local_path
 from valtron_core.evaluation.config import BaseRecipeConfig, LLMModelConfig, ModelEvalConfig
+from valtron_core.evaluation.persistence import RunDirectoryCodec
+from valtron_core.evaluation.stages import DefaultIngestor, Ingestor
 from valtron_core.models import Document, EvaluationMetrics, FieldMetricsConfig, PredictionResult
 from valtron_core.partial_results import PartialResultStore, compute_prediction_hash
 from valtron_core.progress import ProgressTracker, write_status
+from valtron_core.reports import ReportWriter
 from valtron_core.runner import EvaluationResult, EvaluationRunner, PreflightError
 
 logger = structlog.get_logger()
@@ -74,8 +77,8 @@ class ModelEval(ABC):
     no field-level scoring" evaluation.
 
     Populated after ``__init__``: ``self.runner``, ``self.client``, ``self.config``,
-    ``self.data``, ``self._data_base_dir``, ``self.models``, ``self.prompt_template``,
-    ``self.output_dir``, ``self.use_case``, ``self.temperature``.
+    ``self.data``, ``self._data_base_dir``, ``self._ingestor``, ``self.models``,
+    ``self.prompt_template``, ``self.output_dir``, ``self.use_case``, ``self.temperature``.
 
     Populated after ``aevaluate()`` / ``evaluate()``: ``self.results``,
     ``self._manipulations_applied``, ``self._model_prompts``, ``self._task_statistics``.
@@ -86,6 +89,8 @@ class ModelEval(ABC):
     models: list[Any]
     data: list[dict[str, Any]]
     _data_base_dir: Path
+    _ingestor: Ingestor
+    _report_writers: dict[str, ReportWriter]
     output_dir: Path | None
     use_case: str
     prompt_template: str
@@ -125,6 +130,14 @@ class ModelEval(ABC):
 
         self.runner = EvaluationRunner()
         self.client = LLMClient()
+        # Label-optional by default (see DefaultIngestor); a recipe with ground
+        # truth of its own shape overrides this in its own _post_init (e.g.
+        # ReferencedEval sets a StructuredLabelIngestor there instead).
+        self._ingestor = DefaultIngestor()
+        # No formats registered by default, matching save_html_report/save_pdf_report's
+        # historical NotImplementedError; a recipe that can build reports populates
+        # this in its own _post_init instead of overriding either method.
+        self._report_writers = {}
 
         self.models = []
         self.add_models(self.config.models)
@@ -238,8 +251,7 @@ class ModelEval(ABC):
 
         The saved-file shape is shared across every task, so this needs no override.
         """
-        with open(model_file) as f:
-            raw = json.load(f)
+        raw = RunDirectoryCodec.read_json(model_file)
 
         llm_config: dict[str, Any] = raw.get("llm_config") or {}
         model_name = llm_config.get("model") or raw.get("model", "")
@@ -290,38 +302,15 @@ class ModelEval(ABC):
         """
         model_label = md["label"] or md["name"]
 
-        try:
-            from valtron_core.scoring.json_eval import EvalResult
-
-            _eval_result_cls: Any = EvalResult
-        except ImportError:
-            _eval_result_cls = None
-
-        predictions = []
-        for p in md.get("predictions", []):
-            field_metrics = None
-            if p.get("field_metrics") and _eval_result_cls is not None:
-                try:
-                    field_metrics = _eval_result_cls.model_validate(p["field_metrics"])
-                except Exception:
-                    pass
-            predictions.append(
-                PredictionResult(
-                    document_id=p["document_id"],
-                    predicted_value=p["predicted_value"],
-                    expected_value=p.get("expected_value", label_map.get(p["document_id"])),
-                    is_correct=p.get("is_correct"),
-                    example_score=p.get("example_score"),
-                    error=p.get("error"),
-                    task_scores=p.get("task_scores"),
-                    response_time=p.get("response_time", 0.0),
-                    original_cost=p.get("original_cost", 0.0),
-                    llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
-                    evaluation_cost=p.get("evaluation_cost", 0.0),
-                    model=model_label,
-                    field_metrics=field_metrics,
-                )
+        predictions = [
+            RunDirectoryCodec.build_prediction(
+                p,
+                model_label=model_label,
+                expected_value_fallback=label_map.get(p["document_id"]),
+                include_error_and_task_scores=True,
             )
+            for p in md.get("predictions", [])
+        ]
 
         result = EvaluationResult(
             run_id=md["run_id"],
@@ -332,12 +321,7 @@ class ModelEval(ABC):
             llm_config=md.get("llm_config", {}),
             status=md.get("status", "completed"),
         )
-        if md.get("started_at"):
-            result.started_at = md["started_at"]
-        if md.get("completed_at"):
-            result.completed_at = md["completed_at"]
-        if not result.metrics and result.predictions:
-            result.compute_metrics()
+        RunDirectoryCodec.finalize_evaluation_result(result, md)
         return result
 
     @classmethod
@@ -349,8 +333,7 @@ class ModelEval(ABC):
         ``models`` is filled in separately by the caller from the model files.
         Task-specific extras come from ``_restore_config``.
         """
-        with open(metadata_path) as f:
-            meta = json.load(f)
+        meta = RunDirectoryCodec.read_json(metadata_path)
 
         config_dict: dict[str, Any] = {
             "prompt": meta.get("original_prompt") or "{content}",
@@ -405,8 +388,7 @@ class ModelEval(ABC):
         ]
 
         instance = cls(config=config_dict, data=data)
-        with open(metadata_path) as f:
-            instance._post_restore(json.load(f))
+        instance._post_restore(RunDirectoryCodec.read_json(metadata_path))
 
         label_map = {str(d.get("id", "")): cls._stringify_label(d.get("label")) for d in data}
 
@@ -531,30 +513,21 @@ class ModelEval(ABC):
     def _load_documents_and_labels(self) -> "tuple[list[Document], list[Any]]":
         """Convert ``self.data`` into ``Document`` objects plus a parallel label list.
 
-        No disk I/O beyond resolving a document's ``content_path`` if it has one
-        (see ``resolve_content``). Default builds one ``Document`` per entry
-        (``id``, ``content``, ``metadata``, ``attachments``) and takes ``label``
-        verbatim, defaulting to ``None`` when absent -- groundtruth is optional out
-        of the box. Override for a richer label shape, or to require groundtruth.
+        A thin delegation to ``self._ingestor`` (see
+        ``valtron_core.evaluation.stages.ingest``), which does the actual
+        record-to-``Document`` conversion and decides what a label is. Default
+        is ``DefaultIngestor``: one ``Document`` per entry (``id``, ``content``,
+        ``metadata``, ``attachments``), label taken verbatim and defaulting to
+        ``None`` when absent: groundtruth is optional out of the box. A
+        subclass with a richer label shape, or that requires groundtruth,
+        assigns a different ``Ingestor`` to ``self._ingestor`` in its own
+        ``_post_init`` rather than overriding this method.
 
         Returns:
             ``(documents, labels)``, both of length ``len(self.data)`` and
             index-aligned.
         """
-        documents: list[Document] = []
-        labels: list[Any] = []
-        for idx, item in enumerate(self.data):
-            doc_id = str(item.get("id", f"doc_{idx}"))
-            documents.append(
-                Document(
-                    id=doc_id,
-                    content=resolve_content(item, self._data_base_dir),
-                    metadata=item.get("metadata", {}),
-                    attachments=item.get("attachments", []),
-                )
-            )
-            labels.append(item.get("label"))
-        return documents, labels
+        return self._ingestor.ingest(self.data, self._data_base_dir)
 
     def _build_save_documents(self) -> list[dict[str, Any]]:
         """Build the document list used when writing the run directory.
@@ -682,7 +655,7 @@ class ModelEval(ABC):
             f"{type(self).__name__} must implement _evaluate_model_documents()."
         )
 
-    async def _run_evaluations(
+    async def _run_evaluations(  # noqa: C901, PLR0915
         self,
         model_prompts: "dict[str, str]",
         field_metrics_config: Any = None,
@@ -775,7 +748,7 @@ class ModelEval(ABC):
             except Exception as e:
                 logger.warning("eager_model_save_failed", model=model_label, error=str(e))
 
-        async def _evaluate_single_model(
+        async def _evaluate_single_model(  # noqa: C901, PLR0912
             index: int, model_config: Any
         ) -> "tuple[int, EvaluationResult, str, list[Any], str | None]":
             model_name = getattr(model_config, "name", None) or model_config.label
@@ -1153,7 +1126,7 @@ class ModelEval(ABC):
         if self.results is None:
             raise RuntimeError("Call evaluate() before save_experiment_results().")
 
-        from valtron_core.runner import save_run_dir
+        from valtron_core.evaluation.persistence import save_run_dir
 
         dest = self._resolve_output_dir(output_dir)
 
@@ -1174,20 +1147,82 @@ class ModelEval(ABC):
         )
         return run_dir
 
-    def save_html_report(self, output_dir: "str | Path | None" = None) -> Path:
-        """Generate an HTML report. Not implemented at this level.
+    def save_report(self, fmt: str, output_dir: "str | Path | None" = None) -> Path:
+        """Write one report format via whichever ``ReportWriter`` this recipe registered for it.
 
-        Rich HTML/PDF reports (accuracy charts, correct/incorrect badges) assume a
-        correctness notion this generic class makes no assumption about -- a
-        capability a task opts into by overriding this, not one forced on it (same
-        idiom as ``reevaluate()``). See ``ReferencedEval`` for the real
-        implementation classification/extraction use.
+        ``save_html_report()``/``save_pdf_report()`` are one-line calls to this
+        (``"html"``/``"pdf"``). A task that can build reports registers
+        ``ReportWriter``s in ``self._report_writers`` in its own ``_post_init``
+        (see ``_report_context``/``_after_report_written`` for the two hooks a
+        writer's call usually needs); a task that doesn't leaves the default
+        empty dict and gets the same ``NotImplementedError`` every format used
+        to raise individually. A new report format for an existing task is a
+        new ``ReportWriter``, registered under a new key here: zero edits to
+        this method or to any existing ``ReportWriter``.
+
+        Args:
+            fmt: The format key a ``ReportWriter`` is registered under (e.g. ``"html"``, ``"pdf"``).
+            output_dir: Override the output directory for this call. Falls back
+                to ``config.output_dir`` if omitted. Raises if neither is set.
+
+        Raises:
+            NotImplementedError: No ``ReportWriter`` is registered for ``fmt``.
+            RuntimeError: ``evaluate()`` has not produced results yet.
         """
-        raise NotImplementedError(f"{type(self).__name__} does not implement save_html_report().")
+        writer = self._report_writers.get(fmt)
+        if writer is None:
+            raise NotImplementedError(
+                f"{type(self).__name__} does not implement save_{fmt}_report()."
+            )
+        if self.results is None:
+            raise RuntimeError(f"Call evaluate() before save_{fmt}_report().")
+
+        destination = self._resolve_output_dir(output_dir)
+        path, recommendation = writer.write(self.results, destination, **self._report_context(fmt))
+        self._after_report_written(fmt, recommendation)
+        return path
+
+    def _report_context(self, fmt: str) -> "dict[str, Any]":
+        """Extra keyword context passed to this format's ``ReportWriter.write()``.
+
+        Default is ``{}``, matching a writer that needs nothing beyond
+        ``results``/``output_path``. Override alongside ``self._report_writers``
+        when a writer needs more (e.g. ``SummarizationExperiment`` passes its
+        ``ranking``, since its reports have no correctness notion to render
+        instead). ``fmt`` lets one recipe give each of its formats different
+        context, the way ``SummarizationExperiment``'s PDF writer takes a
+        pre-computed ``recommendation`` its HTML writer does not.
+        """
+        return {}
+
+    def _after_report_written(self, fmt: str, recommendation: "str | None") -> None:
+        """Extension point for state a recipe wants to keep after writing a report.
+
+        Default is a no-op. ``SummarizationExperiment`` overrides this to cache
+        an HTML report's recommendation so a following ``save_pdf_report()``
+        reuses it instead of generating a second one.
+        """
+        return None
+
+    def save_html_report(self, output_dir: "str | Path | None" = None) -> Path:
+        """Write the HTML report.
+
+        A thin call to ``save_report("html", ...)``; register an ``"html"``
+        ``ReportWriter`` in ``self._report_writers`` (in your own ``_post_init``)
+        instead of overriding this method, as ``SummarizationExperiment`` does.
+        Rich HTML/PDF reports (accuracy charts, correct/incorrect badges) assume
+        a correctness notion this generic class makes no assumption about, so
+        the base default (``self._report_writers == {}``) still raises
+        ``NotImplementedError`` for any task that hasn't registered one;
+        ``ReferencedEval`` overrides this method directly instead, since its
+        report generation goes through ``EvaluationRunner.generate_report()``,
+        not yet through a ``ReportWriter``.
+        """
+        return self.save_report("html", output_dir)
 
     def save_pdf_report(self, output_dir: "str | Path | None" = None) -> Path:
-        """Generate a PDF report. Not implemented at this level; see ``save_html_report``."""
-        raise NotImplementedError(f"{type(self).__name__} does not implement save_pdf_report().")
+        """Write the PDF report; see ``save_html_report``."""
+        return self.save_report("pdf", output_dir)
 
     async def arun(self, output_dir: "str | Path | None" = None) -> Path:
         """Run ``aevaluate()`` then save outputs per ``config.output_formats`` (async).

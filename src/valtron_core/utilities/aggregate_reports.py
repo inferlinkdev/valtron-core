@@ -27,18 +27,18 @@ import asyncio
 import json
 from pathlib import Path
 from typing import Any
-from valtron_core.scoring.json_eval import EvalResult, JsonEvaluator
+from valtron_core.scoring.json_eval import JsonEvaluator
 from valtron_core.cost_utils import (
     _parse_time_unit_to_seconds,
     _get_fallback_rate_info,
     _fallback_cost,
 )
+from valtron_core.evaluation.persistence import RunDirectoryCodec
 from valtron_core.loader import DocumentLoader
 from valtron_core.models import (
     EvaluationResult,
     EvaluationMetrics,
     FieldMetricsConfig,
-    PredictionResult,
 )
 from valtron_core.scoring.json_eval import ExpensiveListComparisonError
 from valtron_core.runner import EvaluationRunner, save_run_dir
@@ -71,8 +71,7 @@ def _apply_cost_rates(results: list[EvaluationResult]) -> None:
 
 def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], dict[str, Any]]:
     """Load results from new-format run directory (metadata.json + models/)."""
-    with open(input_dir / "metadata.json") as f:
-        meta = json.load(f)
+    meta = RunDirectoryCodec.read_json(input_dir / "metadata.json")
 
     label_map = {d["id"]: d["label"] for d in meta.get("documents", [])}
     use_case = meta.get("use_case")
@@ -85,8 +84,7 @@ def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], 
     models_dir = input_dir / "models"
 
     for model_file in sorted(models_dir.glob("*.json")):
-        with open(model_file) as f:
-            model_data = json.load(f)
+        model_data = RunDirectoryCodec.read_json(model_file)
 
         model_name = model_data["model"]
         prompt_manipulations = model_data.get("prompt_manipulations", [])
@@ -94,35 +92,17 @@ def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], 
         prompt_optimizations[model_name] = prompt_manipulations
         model_prompts[model_name] = prompt_template
 
-        predictions = []
-        for p in model_data.get("predictions", []):
-            doc_id = p["document_id"]
-            field_metrics = None
-            if p.get("field_metrics"):
-                try:
-                    field_metrics = EvalResult.model_validate(p["field_metrics"])
-                except Exception:
-                    pass
-            predictions.append(
-                PredictionResult(
-                    document_id=doc_id,
-                    predicted_value=p["predicted_value"],
-                    expected_value=p.get("expected_value", label_map.get(doc_id, "")),
-                    is_correct=p.get("is_correct", False),
-                    example_score=p.get("example_score", 0.0),
-                    response_time=p.get("response_time", 0.0),
-                    original_cost=p.get("original_cost", 0.0),
-                    llm_cost=p.get("llm_cost", p.get("cost", 0.0)),
-                    evaluation_cost=p.get("evaluation_cost", 0.0),
-                    model=model_name,
-                    field_metrics=field_metrics,
-                )
+        predictions = [
+            RunDirectoryCodec.build_prediction(
+                p,
+                model_label=model_name,
+                expected_value_fallback=label_map.get(p["document_id"], ""),
             )
+            for p in model_data.get("predictions", [])
+        ]
 
         result = EvaluationResult(
             run_id=model_data.get("run_id", model_file.stem),
-            started_at=model_data.get("started_at"),
-            completed_at=model_data.get("completed_at"),
             predictions=predictions,
             metrics=(
                 EvaluationMetrics(**model_data["metrics"]) if model_data.get("metrics") else None
@@ -133,8 +113,7 @@ def load_results_from_run_dir(input_dir: Path) -> tuple[list[EvaluationResult], 
             field_config=field_config,
             status=model_data.get("status", "completed"),
         )
-        if not result.metrics and result.predictions:
-            result.compute_metrics()
+        RunDirectoryCodec.finalize_evaluation_result(result, model_data)
         results.append(result)
 
     _apply_cost_rates(results)

@@ -96,6 +96,46 @@ target-version = ['py312']
 line-length = 100
 target-version = "py312"
 
+[tool.ruff.lint]
+# extend-select (not select) so ruff's existing default checks (E4, E7, E9, F)
+# keep running unchanged; this only adds complexity/size gates on top of them.
+# See ARCHITECTURE_PROPOSAL.md's "Code quality gates" section: C901 is
+# cyclomatic complexity; PLR0911/PLR0912/PLR0915 (returns/branches/statements)
+# are the closest practical proxy this toolchain has for cognitive complexity,
+# since there is no dedicated rule for it here. PLR0913 (too-many-arguments)
+# was tried and dropped: at its default threshold of 5 it flagged ~40 functions
+# across unrelated modules (training/, scoring/comparisons.py, model_catalog.py,
+# etc.) with no real complexity signal, just a long-established keyword-args
+# style in this codebase; it is a parameter-list-shape concern, not a
+# control-flow complexity one. Thresholds below are ruff's own defaults, not
+# tightened.
+extend-select = ["C901", "PLR0911", "PLR0912", "PLR0915"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+# Files this migration does not touch and has no plan to: existing violations
+# are suppressed at the file level here rather than per-function, since there
+# is no new code landing in these files for the gate to protect against. Every
+# file this plan DOES actively evolve (evaluation/model_eval.py,
+# evaluation/referenced_eval.py, evaluator.py, runner.py, reports/_base.py,
+# reports/generate_html_report.py, reports/generate_pdf_report.py,
+# scoring/json_eval/evaluator.py, utilities/config_wizard.py) instead gets a
+# targeted `# noqa` on each specific already-known-complex function, so a NEW
+# complex function added to one of those files during this migration still
+# gets caught.
+"src/valtron_core/analysis/_report.py" = ["C901", "PLR0912", "PLR0915"]
+"src/valtron_core/analysis/tradeoff_analyzer.py" = ["C901"]
+"src/valtron_core/attachments.py" = ["C901", "PLR0912"]
+"src/valtron_core/client.py" = ["C901", "PLR0912", "PLR0915"]
+"src/valtron_core/few_shot_training_data_generator.py" = ["C901", "PLR0912", "PLR0915"]
+"src/valtron_core/loader.py" = ["C901", "PLR0912", "PLR0915"]
+"src/valtron_core/models.py" = ["C901"]
+"src/valtron_core/schema_synthesis.py" = ["C901", "PLR0911"]
+"src/valtron_core/utilities/cli_introspect.py" = ["C901", "PLR0912", "PLR0915"]
+"src/valtron_core/utilities/code_introspection.py" = ["C901", "PLR0911", "PLR0912"]
+
 [tool.mypy]
 python_version = "3.12"
 strict = true
